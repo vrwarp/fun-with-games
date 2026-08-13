@@ -13,6 +13,8 @@ import { KeyboardInput, mergeIntents } from './render/input.js';
 import { TouchInput } from './render/touch.js';
 import { keepScreenAwake, tapFeedback } from './render/device.js';
 import { loadManifest, loadModel } from './render/assets.js';
+import type { AssetManifest } from './shared/manifest.js';
+import { Credits } from './ui/credits.js';
 import { Hud } from './ui/hud.js';
 import { Lobby, normalizeRoomId, randomRoomId } from './ui/lobby.js';
 
@@ -97,6 +99,8 @@ async function launch(app: HTMLElement, options: LaunchOptions): Promise<void> {
   renderer.setLocalPlayer(session.selfId);
 
   const hud = new Hud(app);
+  // Created once the manifest resolves, so it can list real licences.
+  let credits: Credits | null = null;
   const input = new KeyboardInput(window);
   input.attach();
 
@@ -105,9 +109,13 @@ async function launch(app: HTMLElement, options: LaunchOptions): Promise<void> {
   const touch = new TouchInput(app);
   touch.attach();
 
-  // Art is optional: the game is fully playable on procedural geometry, so
-  // this runs in the background and upgrades the look if it succeeds.
-  void applyOptionalAssets(renderer);
+  // The manifest is read once and shared: the renderer needs it to upgrade the
+  // player model, and the credits panel needs it to show licences. Art is
+  // optional, so this runs in the background and upgrades things if it lands.
+  void loadManifest(import.meta.env.BASE_URL).then((manifest) => {
+    void applyOptionalAssets(renderer, manifest);
+    credits = new Credits(app, manifest);
+  });
 
   // A phone dims and locks after seconds of not being touched — including
   // while a player stands still watching the scoreboard.
@@ -163,6 +171,7 @@ async function launch(app: HTMLElement, options: LaunchOptions): Promise<void> {
     releaseWakeLock();
     input.detach();
     touch.dispose();
+    credits?.dispose();
     hud.dispose();
     renderer.dispose();
     void session.dispose();
@@ -187,9 +196,8 @@ function createTransport(options: LaunchOptions): Transport {
  * Failure here is expected and harmless — the repo ships without binary art.
  * See `docs/ASSETS.md` for how to populate the manifest.
  */
-async function applyOptionalAssets(renderer: Renderer): Promise<void> {
+async function applyOptionalAssets(renderer: Renderer, manifest: AssetManifest): Promise<void> {
   const baseUrl = import.meta.env.BASE_URL;
-  const manifest = await loadManifest(baseUrl);
   const playerEntry = manifest.models.find((model) => model.id === 'player');
   if (!playerEntry) return;
 

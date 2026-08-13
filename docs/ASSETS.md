@@ -226,9 +226,25 @@ meshes, unnecessary for placeholders.
 - `ATTRIBUTION.md` is out of sync with the manifest.
 
 `public/assets/ATTRIBUTION.md` is generated from the manifest and shipped with
-the site. **Assets under attribution licences (CC-BY and similar) must also
-have their credit visible in the running game** — a file in the deployment is
-usually not sufficient. Add a credits panel before shipping anything CC-BY.
+the site, which covers the repository. **Assets under attribution licences
+(CC-BY and similar) must also have their credit visible in the running game**,
+because a file in the deployment is generally not sufficient — so the game has
+an in-game credits panel (`src/ui/credits.ts`), reachable from a button in the
+corner of the HUD.
+
+It reads the same `manifest.json` the loader does, so **an asset that is
+catalogued is credited automatically**; there is no second list to keep in
+sync. Entries whose licence actually obliges the credit are marked, using
+`requiresAttribution()` in `src/shared/manifest.ts`. That check is deliberately
+strict: it only treats a licence as attribution-free when the _entire_ string
+is a public-domain dedication, because real metadata is often compound —
+Khronos's Fox is `CC0-1.0 (model) / CC-BY-4.0 (rigging, animation, glTF
+conversion)`, and a loose prefix match would read that as CC0 and silently drop
+a required credit.
+
+The panel also lists the third-party code that reaches the browser (Babylon.js,
+Trystero). That list is hardcoded in `credits.ts` — if you add a runtime
+dependency, add it there.
 
 CC0 assets need no attribution legally. They are credited anyway, because six
 months from now the useful question is "where did this come from and can we

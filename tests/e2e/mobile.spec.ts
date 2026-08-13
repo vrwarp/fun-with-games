@@ -186,6 +186,34 @@ test.describe('on a phone', () => {
     expect(beta).toBeLessThan(Math.PI / 3.2);
   });
 
+  test('the credits panel is usable with a thumb', async ({ page }) => {
+    await launch(page);
+
+    const open = page.getByTestId('credits-button');
+    await expect(open).toBeVisible({ timeout: 30_000 });
+
+    const box = await open.boundingBox();
+    expect(box?.height ?? 0).toBeGreaterThanOrEqual(44);
+    expect(box?.width ?? 0).toBeGreaterThanOrEqual(44);
+
+    await open.tap();
+    const dialog = page.getByTestId('credits-dialog');
+    await expect(dialog).toBeVisible();
+
+    // The panel must fit a phone rather than overflowing it.
+    const overflow = await page.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    );
+    expect(overflow).toBeLessThanOrEqual(1);
+
+    const close = page.getByTestId('credits-close');
+    const closeBox = await close.boundingBox();
+    expect(closeBox?.height ?? 0).toBeGreaterThanOrEqual(44);
+
+    await close.tap();
+    await expect(dialog).toBeHidden();
+  });
+
   test('logs no page errors', async ({ page }) => {
     const errors: string[] = [];
     page.on('pageerror', (error) => errors.push(error.message));

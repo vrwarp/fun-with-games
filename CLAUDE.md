@@ -283,9 +283,8 @@ Verify with `npm run test:e2e` — the `mobile-chrome` project runs against a
 desktop window. A narrow window would pass while the game stayed unplayable,
 because what actually breaks on a phone is input, not layout.
 
-Still open, if you want it: an in-game credits panel (needed before shipping
-any CC-BY art), richer haptics, a service worker for offline play, and analog
-stick magnitude — `integratePlayer` normalizes the input direction, so a
+Still open, if you want it: richer haptics, a service worker for offline play,
+and analog stick magnitude — `integratePlayer` normalizes the input direction, so a
 half-pushed stick currently moves at full speed. Fixing that last one means
 carrying magnitude through `PlayerInput`, which is a wire-format change.
 

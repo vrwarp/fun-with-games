@@ -22,8 +22,19 @@ jobs:
   # Jobs are split rather than chained so that a lint error and a failing test
   # surface in the same run instead of one hiding the other. Each is
   # independently re-runnable, which matters when several agents share CI.
+  #
+  # Every job carries the same `if:` guard, which skips the duplicate run.
+  # Pushing a same-repo branch and opening a pull request from it fires this
+  # workflow twice on the identical commit. The push run's check runs already
+  # attach to the pull request, so the second run buys nothing and costs
+  # double — and it puts two software-rendered WebGL suites on the same runner
+  # pool, where they slow each other down. Forks have no push run of their own,
+  # so their pull requests still need it.
   quality:
     name: Format, lint, types
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -50,6 +61,9 @@ jobs:
 
   test:
     name: Unit and integration tests
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -83,6 +97,9 @@ jobs:
 
   build:
     name: Production build
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -111,6 +128,9 @@ jobs:
 
   e2e:
     name: End-to-end tests
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:

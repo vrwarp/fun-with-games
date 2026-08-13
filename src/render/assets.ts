@@ -2,6 +2,12 @@ import { LoadAssetContainerAsync } from '@babylonjs/core/Loading/sceneLoader.js'
 import type { AssetContainer } from '@babylonjs/core/assetContainer.js';
 import type { Scene } from '@babylonjs/core/scene.js';
 import { createLogger } from '../shared/logger.js';
+import {
+  EMPTY_MANIFEST,
+  normalizeManifest,
+  type AssetEntry,
+  type AssetManifest,
+} from '../shared/manifest.js';
 
 const log = createLogger('render:assets');
 
@@ -20,25 +26,6 @@ function ensureGltfLoader(): Promise<unknown> {
   gltfLoaderPromise ??= import('@babylonjs/loaders/glTF/2.0/index.js');
   return gltfLoaderPromise;
 }
-
-/** One entry in `public/assets/manifest.json`. */
-export interface AssetEntry {
-  /** Logical name gameplay code refers to, e.g. `player`. */
-  id: string;
-  /** Path relative to the site base, e.g. `assets/vendor/robot.glb`. */
-  url: string;
-  /** Uniform scale applied after load, to normalise wildly-sized sources. */
-  scale?: number;
-  /** Where the file came from and under what licence. Required — see below. */
-  license?: { name: string; source: string; author?: string };
-}
-
-export interface AssetManifest {
-  version: number;
-  models: AssetEntry[];
-}
-
-export const EMPTY_MANIFEST: AssetManifest = { version: 1, models: [] };
 
 /**
  * Loads the asset manifest.
@@ -61,22 +48,6 @@ export async function loadManifest(baseUrl: string): Promise<AssetManifest> {
     log.warn('failed to read asset manifest; using procedural geometry', error);
     return EMPTY_MANIFEST;
   }
-}
-
-function normalizeManifest(raw: unknown): AssetManifest {
-  if (typeof raw !== 'object' || raw === null) return EMPTY_MANIFEST;
-  const models = (raw as { models?: unknown }).models;
-  if (!Array.isArray(models)) return EMPTY_MANIFEST;
-
-  const entries: AssetEntry[] = [];
-  for (const item of models) {
-    if (typeof item !== 'object' || item === null) continue;
-    const { id, url, scale } = item as Record<string, unknown>;
-    if (typeof id !== 'string' || typeof url !== 'string') continue;
-    entries.push({ id, url, ...(typeof scale === 'number' ? { scale } : {}) });
-  }
-
-  return { version: 1, models: entries };
 }
 
 /**

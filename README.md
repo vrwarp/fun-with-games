@@ -33,8 +33,8 @@ machine, open two tabs at
   framing, mobile-first CSS, safe-area insets, a capped pixel ratio, a screen
   wake lock, and a web app manifest so it installs. Verified by an e2e suite
   that runs on a real touch device profile, not a narrow desktop window.
-- **A test suite you will actually run.** 172 headless tests in ~1 second,
-  plus 29 Playwright tests that drive two real browser tabs and a phone.
+- **A test suite you will actually run.** 200 headless tests in ~1 second,
+  plus 31 Playwright tests that drive two real browser tabs and a phone.
 - **Enforced architecture.** The layering is checked by ESLint, so `src/sim`
   physically cannot import Babylon or reach for `Math.random()`.
 - **An asset pipeline with no binaries.** Procedural glTF generation, a
@@ -63,7 +63,7 @@ without touching gameplay.
 | `src/sim`    | The game: world, movement, pickups, arena — headless and deterministic |
 | `src/net`    | Transports, wire protocol, authority, prediction                       |
 | `src/render` | Babylon scene, meshes, follow-camera, input, device APIs               |
-| `src/ui`     | DOM overlay: lobby and HUD                                             |
+| `src/ui`     | DOM overlay: lobby, HUD, credits                                       |
 
 ## Commands
 
@@ -152,3 +152,8 @@ than one that is honest:
 
 MIT — see [`LICENSE`](./LICENSE). Bundled assets are procedurally generated and
 CC0; see [`public/assets/ATTRIBUTION.md`](./public/assets/ATTRIBUTION.md).
+
+The running game has its own credits panel, reachable from the corner of the
+HUD. It is generated from the asset manifest, so anything you catalogue is
+credited automatically — which is what keeps attribution licences (CC-BY and
+similar) satisfied for players, not just in the repository.

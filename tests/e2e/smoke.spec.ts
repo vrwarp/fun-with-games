@@ -112,6 +112,28 @@ test.describe('a running game', () => {
     await expect(page.getByTestId('score-row')).toHaveCount(1);
   });
 
+  test('credits the shipped assets in-game', async ({ page }) => {
+    // A licence obligation, not decoration: anything under an attribution
+    // licence has to be credited in the running game, not only in a file in
+    // the repository.
+    const open = page.getByTestId('credits-button');
+    await expect(open).toBeVisible({ timeout: 20_000 });
+    await open.click();
+
+    const dialog = page.getByTestId('credits-dialog');
+    await expect(dialog).toBeVisible();
+
+    // The build ships generated models, so they must be listed by name...
+    await expect(page.getByTestId('credits-entry')).not.toHaveCount(0);
+    await expect(dialog).toContainText('CC0-1.0');
+    // ...alongside the libraries that reach the browser.
+    await expect(dialog).toContainText('Babylon.js');
+    await expect(dialog).toContainText('Trystero');
+
+    await page.getByTestId('credits-close').click();
+    await expect(dialog).toBeHidden();
+  });
+
   test('logs no page errors while running', async ({ page }) => {
     const errors: string[] = [];
     page.on('pageerror', (error) => errors.push(error.message));

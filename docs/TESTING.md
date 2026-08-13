@@ -9,10 +9,10 @@ So the simulation and the netcode are headless by construction, and the test
 suite that matters runs in **about one second**:
 
 ```
-tests/unit         172 tests
+tests/unit         200 tests
 tests/integration   ← full multi-peer sessions, latency, packet loss
                    ~1.1s total, no browser
-tests/e2e           29 tests, ~3 minutes, real Chromium (desktop + phone)
+tests/e2e           31 tests, ~3 minutes, real Chromium (desktop + phone)
 ```
 
 That ratio is the point. A test you run on every save catches things a
@@ -92,6 +92,7 @@ sends `bye`), `setIntent`, `advance`, `host`, `state`, `score`, `network`.
 | Lobby, rendering, HUD, keyboard                                        | `e2e/smoke.spec.ts`               |
 | Two real tabs: discovery, roster, migration, isolation                 | `e2e/multiplayer.spec.ts`         |
 | Phone: thumbstick, one-handed follow-camera, portrait framing, install | `e2e/mobile.spec.ts`              |
+| Asset manifest parsing and attribution rules                           | `unit/shared/manifest.test.ts`    |
 
 ## Two tests that are load-bearing
 
@@ -214,5 +215,11 @@ a branch nobody exercises, the question is whether that branch should exist.
 They are parallel rather than chained so a lint error and a failing test show
 up in the same run instead of one hiding the other — which matters when several
 agents share CI.
+
+Each job is guarded so the workflow runs **once** per commit. Pushing a branch
+and opening a pull request from it would otherwise fire the whole thing twice on
+the same SHA; the push run's checks already attach to the pull request, so the
+second run costs double and makes two software-rendered WebGL suites compete for
+runners. Forks have no push run, so their pull requests still run everything.
 
 Locally, `npm run verify` runs everything except e2e.

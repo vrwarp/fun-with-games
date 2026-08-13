@@ -8,20 +8,20 @@ worse than none.
 
 ## Modules
 
-| Module             | Path                                                  | Public API                                      | Depends on                  | Typical work                                                                                     |
-| ------------------ | ----------------------------------------------------- | ----------------------------------------------- | --------------------------- | ------------------------------------------------------------------------------------------------ |
-| **shared**         | `src/shared/`                                         | `math.ts`, `emitter.ts`, `logger.ts`            | —                           | Utilities. Changes here touch everyone; prefer adding over modifying.                            |
-| **sim-core**       | `src/sim/world.ts`, `types.ts`, `config.ts`, `rng.ts` | `World`, `WorldSnapshot`, `SimConfig`           | shared                      | State container, tick pipeline, snapshots. **High-traffic — coordinate.**                        |
-| **sim-systems**    | `src/sim/systems/`                                    | one module per system                           | shared, sim-core types      | Movement, pickups, arena. **Best place for parallel gameplay work** — new systems are new files. |
-| **net-protocol**   | `src/net/protocol.ts`                                 | `NetMessage`, `decodeMessage`, `encodeSnapshot` | sim types                   | Wire format and validation. **Serialising — one agent at a time.**                               |
-| **net-session**    | `src/net/session.ts`, `prediction.ts`, `view.ts`      | `NetSession`, `ClientView`, `RenderState`       | shared, sim, net-protocol   | Authority, prediction, interpolation.                                                            |
-| **net-transports** | `src/net/transports/`                                 | `Transport` implementations                     | `transport.ts`              | Trystero, BroadcastChannel, Memory. Independent of each other — **parallel-friendly**.           |
-| **render**         | `src/render/`                                         | `Renderer`, `EntityViews`, `KeyboardInput`      | shared, sim types, net view | Babylon scene, meshes, camera, input.                                                            |
-| **ui**             | `src/ui/`                                             | `Hud`, `Lobby`, `styles.css`                    | net view                    | DOM overlay. Independent of `render` — **parallel-friendly**.                                    |
-| **bootstrap**      | `src/main.ts`, `index.html`                           | —                                               | everything                  | Wiring. Small, and touched by many features. **Coordinate.**                                     |
-| **assets**         | `scripts/`, `assets/sources.json`, `public/assets/`   | manifest schema                                 | —                           | Asset generation and catalogue.                                                                  |
-| **ci**             | `.github/workflows/`                                  | —                                               | —                           | Pipelines.                                                                                       |
-| **docs**           | `docs/`, `CLAUDE.md`, `README.md`                     | —                                               | —                           | Parallel-friendly, one file per agent.                                                           |
+| Module             | Path                                                  | Public API                                               | Depends on                  | Typical work                                                                                     |
+| ------------------ | ----------------------------------------------------- | -------------------------------------------------------- | --------------------------- | ------------------------------------------------------------------------------------------------ |
+| **shared**         | `src/shared/`                                         | `math.ts`, `emitter.ts`, `logger.ts`                     | —                           | Utilities. Changes here touch everyone; prefer adding over modifying.                            |
+| **sim-core**       | `src/sim/world.ts`, `types.ts`, `config.ts`, `rng.ts` | `World`, `WorldSnapshot`, `SimConfig`                    | shared                      | State container, tick pipeline, snapshots. **High-traffic — coordinate.**                        |
+| **sim-systems**    | `src/sim/systems/`                                    | one module per system                                    | shared, sim-core types      | Movement, pickups, arena. **Best place for parallel gameplay work** — new systems are new files. |
+| **net-protocol**   | `src/net/protocol.ts`                                 | `NetMessage`, `decodeMessage`, `encodeSnapshot`          | sim types                   | Wire format and validation. **Serialising — one agent at a time.**                               |
+| **net-session**    | `src/net/session.ts`, `prediction.ts`, `view.ts`      | `NetSession`, `ClientView`, `RenderState`                | shared, sim, net-protocol   | Authority, prediction, interpolation.                                                            |
+| **net-transports** | `src/net/transports/`                                 | `Transport` implementations                              | `transport.ts`              | Trystero, BroadcastChannel, Memory. Independent of each other — **parallel-friendly**.           |
+| **render**         | `src/render/`                                         | `Renderer`, `EntityViews`, `KeyboardInput`, `TouchInput` | shared, sim types, net view | Babylon scene, meshes, follow-camera, input (keyboard **and** touch), device APIs.               |
+| **ui**             | `src/ui/`                                             | `Hud`, `Lobby`, `styles.css`                             | net view                    | DOM overlay. Independent of `render` — **parallel-friendly**.                                    |
+| **bootstrap**      | `src/main.ts`, `index.html`                           | —                                                        | everything                  | Wiring. Small, and touched by many features. **Coordinate.**                                     |
+| **assets**         | `scripts/`, `assets/sources.json`, `public/assets/`   | manifest schema                                          | —                           | Asset generation and catalogue.                                                                  |
+| **ci**             | `.github/workflows/`                                  | —                                                        | —                           | Pipelines.                                                                                       |
+| **docs**           | `docs/`, `CLAUDE.md`, `README.md`                     | —                                                        | —                           | Parallel-friendly, one file per agent.                                                           |
 
 ## Shared files
 
@@ -49,18 +49,32 @@ import order and module resolution — which is exactly the class of bug that
 produces desyncs nobody can reproduce. An explicit, ordered pipeline that
 occasionally causes a one-line merge conflict is the better trade.
 
+### Input stays device-agnostic below `src/render`
+
+Mobile is a supported target, so there are two input devices (`KeyboardInput`,
+`TouchInput`) and there will likely be more (gamepad, on-screen buttons for new
+abilities). They all produce the same `InputIntent`, combined by
+`mergeIntents()`.
+
+Nothing below `src/render` knows which device was used, and nothing should
+start knowing. Do not add an `isMobile` flag to `PlayerInput` or branch on
+device type in the simulation: a peer's inputs must be interchangeable
+regardless of what produced them, or prediction and authority stop agreeing.
+
 ## Extension points
 
 Where to add things so the diff stays inside one module:
 
-| Add               | Where                                | Touches                              |
-| ----------------- | ------------------------------------ | ------------------------------------ |
-| Gameplay mechanic | `src/sim/systems/<name>.ts`          | sim-systems + one line in `world.ts` |
-| Tunable           | `src/sim/config.ts`                  | shared file, append only             |
-| Networked field   | `types.ts` + `protocol.ts`           | two shared files — announce it       |
-| Message type      | `src/net/protocol.ts` + `session.ts` | net-protocol, net-session            |
-| Transport         | `src/net/transports/<name>.ts`       | net-transports only                  |
-| Visual effect     | `src/render/`                        | render only                          |
-| HUD element       | `src/ui/hud.ts`                      | ui only                              |
-| Placeholder art   | `scripts/generate-assets.mjs`        | assets only                          |
-| Test helper       | `tests/helpers/`                     | tests only                           |
+| Add               | Where                                       | Touches                                            |
+| ----------------- | ------------------------------------------- | -------------------------------------------------- |
+| Gameplay mechanic | `src/sim/systems/<name>.ts`                 | sim-systems + one line in `world.ts`               |
+| Tunable           | `src/sim/config.ts`                         | shared file, append only                           |
+| Networked field   | `types.ts` + `protocol.ts`                  | two shared files — announce it                     |
+| Message type      | `src/net/protocol.ts` + `session.ts`        | net-protocol, net-session                          |
+| Transport         | `src/net/transports/<name>.ts`              | net-transports only                                |
+| Visual effect     | `src/render/`                               | render only                                        |
+| Input device      | `src/render/<device>.ts` + `mergeIntents`   | render only — see the mobile rule below            |
+| HUD element       | `src/ui/hud.ts`                             | ui only                                            |
+| Placeholder art   | `scripts/generate-assets.mjs`               | assets only                                        |
+| App icon          | `scripts/generate-assets.mjs` (`shardIcon`) | assets only — regenerate, never hand-edit the PNGs |
+| Test helper       | `tests/helpers/`                            | tests only                                         |

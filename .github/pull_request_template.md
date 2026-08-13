@@ -25,6 +25,8 @@
 
 - [ ] `npm run verify` passes
 - [ ] `npm run test:e2e` passes, or is not applicable to this change
+- [ ] Works on mobile: every new action is reachable by touch, touch targets
+      are ≥ 44px, and the layout survives a phone viewport
 - [ ] New mutable simulation state is included in `WorldSnapshot`
 - [ ] `PROTOCOL_VERSION` bumped if any wire shape changed
 - [ ] New assets have licence metadata and `npm run assets:verify` passes

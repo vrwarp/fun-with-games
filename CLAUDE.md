@@ -20,6 +20,7 @@ A peer-to-peer 3D arena. Players roam a seeded arena and collect shards.
 | Build      | Vite 7 + TypeScript 5.9 (strict, `noUncheckedIndexedAccess`)                                |
 | Tests      | Vitest (headless sim + net) and Playwright (browser)                                        |
 | Deploy     | GitHub Pages, on push to `main`                                                             |
+| Targets    | Desktop **and mobile browsers** — see §7, this is a hard constraint                         |
 
 Read `docs/ARCHITECTURE.md` before your first non-trivial change.
 
@@ -52,7 +53,8 @@ npm run verify           # everything CI runs, except e2e
 
 **Before you say you are done: `npm run verify` must pass.** Run
 `npm run test:e2e` too if you touched anything under `src/render/`, `src/ui/`,
-`src/main.ts`, or the transports.
+`src/main.ts`, or the transports — it covers desktop _and_ a phone
+(`--project=mobile-chrome` for just the mobile suite).
 
 ### Playing multiplayer locally
 
@@ -149,7 +151,9 @@ Say you are adding a dash ability.
   prediction and authority stay in agreement automatically.
 - `src/net/protocol.ts` — carry and **validate** the new input field; bump
   `PROTOCOL_VERSION` because the shape changed.
-- `src/render/input.ts` — bind a key.
+- `src/render/input.ts` — bind a key, **and** give it a touch affordance in
+  `src/render/touch.ts`. A keyboard-only ability is unreachable on a phone,
+  which is a supported target (§7).
 - Tests: a unit test for the mechanic, and a `SessionHarness` test that a
   dashing client converges with the host.
 
@@ -215,7 +219,79 @@ See `docs/TESTING.md`.
 
 ---
 
-## 7. Assets
+## 7. Mobile-first — this is the primary target
+
+**The phone is the design target, not a port.** Desktop is the enhancement.
+Treat this as a constraint on every change: a feature that is only reachable
+with a keyboard, or that drops the frame rate on a mid-range Android, is not
+done.
+
+The distinction matters. "Works on mobile" gets you a desktop game you can
+technically operate with a thumb. "Designed for mobile" means the default
+experience assumes a phone, and the things that only make sense with a mouse
+and a big screen are the special cases. Concretely, that shaped:
+
+- **The camera follows the direction of travel by itself.** A manual-only
+  camera needs a second thumb to drag — on the hand holding the device. Any
+  drag or wheel still takes over for a few seconds
+  (`MANUAL_CAMERA_HOLD_SECONDS`), so it never fights a player who wants to look
+  around.
+- **Portrait gets its own framing.** A phone viewport is narrow, so the camera
+  pulls back and tilts further down; otherwise a third of the screen is sky and
+  you walk into things you never saw. Applied on orientation flips only —
+  mobile browsers fire `resize` constantly as the URL bar retracts, and
+  resetting a player's zoom mid-game would be maddening.
+- **`src/ui/styles.css` is mobile-first.** Base rules are the phone. Larger
+  screens are `min-width` blocks at the bottom. Do not add `max-width`
+  overrides — that makes mobile a pile of exceptions, and exceptions rot.
+- **It installs.** Web app manifest, generated maskable icons, standalone
+  display, `theme-color`, safe-area insets, and a screen wake lock so the
+  display does not sleep while a player stands still.
+
+What this means in practice:
+
+- **Every action needs a touch affordance.** Keyboard bindings are an
+  addition, never the only way in. `src/render/touch.ts` owns the on-screen
+  thumbstick; `mergeIntents()` in `src/render/input.ts` combines devices, so a
+  new control means adding a source, not branching on device type.
+- **Both input paths must produce the same `InputIntent`.** Nothing below
+  `src/render` knows or cares how the player moved — the simulation, the wire
+  protocol and prediction are all device-agnostic. Keep it that way; do not
+  add a `isMobile` flag to `PlayerInput`.
+- **Touch targets ≥ 44px.** Anything smaller is genuinely hard to hit with a
+  thumb, and the mobile e2e suite asserts it for the join button.
+- **Watch the frame budget.** Phones report device pixel ratios of 3, which is
+  9× the fragments. The renderer caps the effective ratio at 2 and halves the
+  shadow map on coarse pointers. If you add a post-process or a second light,
+  check it on the mobile project before calling it done.
+- **Layout must survive a notch and a retracting URL bar.** Use `dvh` rather
+  than `vh`, and `env(safe-area-inset-*)` for anything pinned to an edge.
+- **Inputs at 16px minimum.** iOS zooms the page when focusing anything
+  smaller, and the player cannot zoom back out.
+- **`touch-action: none`** on any element that handles drags, or the browser
+  claims the gesture for scrolling and your pointer stream dies mid-drag.
+- **Controls must read against arbitrary game content.** The thumbstick sits
+  over the 3D scene, so it carries its own contrast — an opaque fill, a bright
+  rim and a dark outer shadow. A control that vanishes over a pale obstacle is
+  a broken control.
+- **Icons are generated, not committed as binaries.**
+  `npm run assets:generate` draws them via `scripts/lib/png.mjs`. An icon in a
+  diff is something no reviewer can check.
+
+Verify with `npm run test:e2e` — the `mobile-chrome` project runs against a
+`Pixel 5` device descriptor (real touch events, phone viewport), not a narrow
+desktop window. A narrow window would pass while the game stayed unplayable,
+because what actually breaks on a phone is input, not layout.
+
+Still open, if you want it: an in-game credits panel (needed before shipping
+any CC-BY art), richer haptics, a service worker for offline play, and analog
+stick magnitude — `integratePlayer` normalizes the input direction, so a
+half-pushed stick currently moves at full speed. Fixing that last one means
+carrying magnitude through `PlayerInput`, which is a wire-format change.
+
+---
+
+## 8. Assets
 
 **The game must always run with no art at all.** Procedural geometry is the
 baseline; models are an enhancement that fails soft. Never make a code path
@@ -233,7 +309,7 @@ Full guidance, including where to find CC0 art and how to generate it:
 
 ---
 
-## 8. Gotchas
+## 9. Gotchas
 
 - **Deep-import Babylon** (`@babylonjs/core/Meshes/meshBuilder.js`), never the
   package root. Some features additionally need a side-effect import to
@@ -252,7 +328,7 @@ Full guidance, including where to find CC0 art and how to generate it:
 
 ---
 
-## 9. Git
+## 10. Git
 
 - Branch from `main`, named `claude/<topic>-<id>`.
 - Commit messages: imperative subject, and say _why_ when it is not obvious.

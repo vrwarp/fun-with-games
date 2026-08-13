@@ -103,9 +103,9 @@ jobs:
         # generated file by hand or changed the generator without re-running it.
         run: |
           npm run assets:generate
-          if ! git diff --quiet -- public/assets; then
+          if ! git diff --quiet -- public; then
             echo "::error::Generated assets are stale. Run 'npm run assets:generate' and commit the result."
-            git diff --stat -- public/assets
+            git diff --stat -- public
             exit 1
           fi
 

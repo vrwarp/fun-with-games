@@ -1,7 +1,9 @@
 import { Color3 } from '@babylonjs/core/Maths/math.color.js';
 import { Vector3 } from '@babylonjs/core/Maths/math.vector.js';
 import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial.js';
-import { MeshBuilder } from '@babylonjs/core/Meshes/meshBuilder.js';
+import { CreateCapsule } from '@babylonjs/core/Meshes/Builders/capsuleBuilder.js';
+import { CreatePolyhedron } from '@babylonjs/core/Meshes/Builders/polyhedronBuilder.js';
+import { CreatePlane } from '@babylonjs/core/Meshes/Builders/planeBuilder.js';
 import type { AbstractMesh } from '@babylonjs/core/Meshes/abstractMesh.js';
 import type { Mesh } from '@babylonjs/core/Meshes/mesh.js';
 import { TransformNode } from '@babylonjs/core/Meshes/transformNode.js';
@@ -52,7 +54,7 @@ export class EntityViews {
     this.#config = config;
     this.#shadows = shadows;
 
-    this.#playerProto = MeshBuilder.CreateCapsule(
+    this.#playerProto = CreateCapsule(
       'player:proto',
       { radius: config.playerRadius, height: config.playerRadius * 3.4, tessellation: 12 },
       scene,
@@ -60,7 +62,7 @@ export class EntityViews {
     this.#playerProto.isVisible = false;
     this.#playerProto.setEnabled(false);
 
-    this.#pickupProto = MeshBuilder.CreatePolyhedron(
+    this.#pickupProto = CreatePolyhedron(
       'pickup:proto',
       { type: 1, size: config.pickupRadius * 0.7 },
       scene,
@@ -162,11 +164,7 @@ export class EntityViews {
   }
 
   #createLabel(player: RenderPlayer, parent: TransformNode): Mesh {
-    const label = MeshBuilder.CreatePlane(
-      `player:${player.id}:label`,
-      { width: 3, height: 0.75 },
-      this.#scene,
-    );
+    const label = CreatePlane(`player:${player.id}:label`, { width: 3, height: 0.75 }, this.#scene);
     label.parent = parent;
     label.position = new Vector3(0, this.#config.playerRadius * 2.6, 0);
     label.billboardMode = 2; // BILLBOARDMODE_Y — spin about Y only, stays upright.

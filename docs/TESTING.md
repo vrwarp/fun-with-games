@@ -12,7 +12,7 @@ suite that matters runs in **about one second**:
 tests/unit         172 tests
 tests/integration   ← full multi-peer sessions, latency, packet loss
                    ~1.1s total, no browser
-tests/e2e           17 tests, ~2 minutes, real Chromium
+tests/e2e           29 tests, ~3 minutes, real Chromium (desktop + phone)
 ```
 
 That ratio is the point. A test you run on every save catches things a
@@ -21,11 +21,20 @@ every save.
 
 ## The three tiers
 
-| Tier        | Location             | Runner     | Speed  | For                                          |
-| ----------- | -------------------- | ---------- | ------ | -------------------------------------------- |
-| Unit        | `tests/unit/`        | Vitest     | ~1 s   | Rules, math, protocol parsing, prediction    |
-| Integration | `tests/integration/` | Vitest     | ~1 s   | Whole sessions: election, migration, loss    |
-| End-to-end  | `tests/e2e/`         | Playwright | ~2 min | Babylon renders, DOM is wired, two real tabs |
+| Tier        | Location             | Runner     | Speed  | For                                                  |
+| ----------- | -------------------- | ---------- | ------ | ---------------------------------------------------- |
+| Unit        | `tests/unit/`        | Vitest     | ~1 s   | Rules, math, protocol parsing, prediction            |
+| Integration | `tests/integration/` | Vitest     | ~1 s   | Whole sessions: election, migration, loss            |
+| End-to-end  | `tests/e2e/`         | Playwright | ~3 min | Babylon renders, DOM is wired, two real tabs, phones |
+
+Playwright runs two projects:
+
+| Project         | Specs                              | Device                                   |
+| --------------- | ---------------------------------- | ---------------------------------------- |
+| `chromium`      | everything except `mobile.spec.ts` | Desktop Chrome                           |
+| `mobile-chrome` | `mobile.spec.ts`                   | `Pixel 5` — touch events, phone viewport |
+
+Run one with `npm run test:e2e -- --project=mobile-chrome`.
 
 **Anything expressible headlessly must be tested headlessly.** Reaching for
 Playwright to test a gameplay rule is a design smell: the rule belongs in
@@ -70,18 +79,19 @@ sends `bye`), `setIntent`, `advance`, `host`, `state`, `score`, `network`.
 
 ## What is already covered
 
-| Area                                                                  | Where                             |
-| --------------------------------------------------------------------- | --------------------------------- |
-| Movement, collision, sliding, degenerate cases                        | `unit/sim/movement.test.ts`       |
-| Pickups, respawn, contested collection                                | `unit/sim/pickups.test.ts`        |
-| Snapshot round-trip fidelity                                          | `unit/sim/world.snapshot.test.ts` |
-| Determinism, replay, split-and-resume                                 | `unit/sim/determinism.test.ts`    |
-| Protocol parsing incl. hostile input                                  | `unit/net/protocol.test.ts`       |
-| Host election, virtual network                                        | `unit/net/transport.test.ts`      |
-| Prediction, reconciliation, interpolation                             | `unit/net/prediction.test.ts`     |
-| Sessions: 1/2/3 peers, late joiners, loss, migration, malicious peers | `integration/session.test.ts`     |
-| Lobby, rendering, HUD, keyboard                                       | `e2e/smoke.spec.ts`               |
-| Two real tabs: discovery, roster, migration, isolation                | `e2e/multiplayer.spec.ts`         |
+| Area                                                                   | Where                             |
+| ---------------------------------------------------------------------- | --------------------------------- |
+| Movement, collision, sliding, degenerate cases                         | `unit/sim/movement.test.ts`       |
+| Pickups, respawn, contested collection                                 | `unit/sim/pickups.test.ts`        |
+| Snapshot round-trip fidelity                                           | `unit/sim/world.snapshot.test.ts` |
+| Determinism, replay, split-and-resume                                  | `unit/sim/determinism.test.ts`    |
+| Protocol parsing incl. hostile input                                   | `unit/net/protocol.test.ts`       |
+| Host election, virtual network                                         | `unit/net/transport.test.ts`      |
+| Prediction, reconciliation, interpolation                              | `unit/net/prediction.test.ts`     |
+| Sessions: 1/2/3 peers, late joiners, loss, migration, malicious peers  | `integration/session.test.ts`     |
+| Lobby, rendering, HUD, keyboard                                        | `e2e/smoke.spec.ts`               |
+| Two real tabs: discovery, roster, migration, isolation                 | `e2e/multiplayer.spec.ts`         |
+| Phone: thumbstick, one-handed follow-camera, portrait framing, install | `e2e/mobile.spec.ts`              |
 
 ## Two tests that are load-bearing
 
@@ -131,14 +141,41 @@ testing the transport itself.
 
 **Rendering** — Playwright. Assert via `data-testid` and the read-only
 `window.__FWG__` handle (declared in `tests/e2e/globals.d.ts`), which exposes
-`selfId`, `hostId`, `isHost`, `peerCount`, `tick`, `playerCount`, `fps`. It
-makes "the peers connected" distinguishable from "the HUD happened to update".
+`selfId`, `hostId`, `isHost`, `peerCount`, `tick`, `playerCount`, `players`,
+`fps` and the camera's `cameraAlpha`/`cameraRadius`/`cameraBeta`. It makes "the peers connected" distinguishable from "the HUD
+happened to update", and `players` lets a test assert that someone actually
+moved rather than that a control merely exists.
 
 Prefer `expect.poll` over fixed waits:
 
 ```ts
 await expect.poll(() => page.evaluate(() => window.__FWG__.tick)).toBeGreaterThan(30);
 ```
+
+### Gotcha: a stale preview server
+
+`playwright.config.ts` sets `reuseExistingServer: !process.env.CI`, so a
+`vite preview` you started by hand will be reused — **serving whatever build
+was current when you started it**. The symptom is a batch of new tests failing
+against code you can see is correct, usually with `undefined` where a new
+`window.__FWG__` field should be.
+
+If that happens, stop the stray server and re-run. Note that
+`pkill -f "vite preview"` is a trap: the pattern matches the shell command
+running it, so it kills your own session. Match on the listening port instead,
+or just use a different port for ad-hoc previews.
+
+### Why the mobile suite uses a device descriptor
+
+Mobile is a hard requirement (see `CLAUDE.md` §7), and the thing that actually
+breaks on a phone is **input**, not layout. A narrow desktop window would pass
+every layout assertion while the game remained completely unplayable, because
+there is no keyboard.
+
+So `mobile.spec.ts` runs under the `Pixel 5` descriptor — real touch events, a
+mobile user agent, a phone viewport — and its central test drags the on-screen
+thumbstick and asserts the player actually moved. That is the assertion that
+would have caught the original keyboard-only build.
 
 ### Why e2e multiplayer uses BroadcastChannel
 

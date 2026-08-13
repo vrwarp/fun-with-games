@@ -61,8 +61,19 @@ body:
         bug report into a fix.
       render: typescript
 
+  - type: dropdown
+    id: device
+    attributes:
+      label: Device
+      description: Mobile is a supported target, so this matters.
+      options:
+        - Desktop
+        - Phone
+        - Tablet
+        - Both desktop and mobile
+
   - type: input
     id: environment
     attributes:
       label: Browser and OS
-      placeholder: Chrome 141 / macOS 15
+      placeholder: Chrome 141 / macOS 15, or Safari / iOS 18

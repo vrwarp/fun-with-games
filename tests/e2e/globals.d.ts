@@ -12,7 +12,17 @@ interface FwgTestHandle {
   readonly peerCount: number;
   readonly tick: number;
   readonly playerCount: number;
+  readonly players: ReadonlyArray<{
+    id: string;
+    name: string;
+    x: number;
+    z: number;
+    score: number;
+  }>;
   readonly fps: number;
+  readonly cameraAlpha: number;
+  readonly cameraRadius: number;
+  readonly cameraBeta: number;
 }
 
 declare global {

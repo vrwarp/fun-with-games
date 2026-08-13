@@ -1,0 +1,32 @@
+{
+  "name": "Fun With Games",
+  "short_name": "FWG Arena",
+  "description": "A peer-to-peer 3D arena. Collect shards, outscore everyone else.",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0a0c12",
+  "theme_color": "#0a0c12",
+  "categories": ["games"],
+  "icons": [
+    {
+      "src": "icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

@@ -28,8 +28,13 @@ machine, open two tabs at
   channels.
 - **A headless simulation.** `src/sim` is pure TypeScript — no Babylon, no DOM,
   no clock. Which means multiplayer is testable in Node, in milliseconds.
+- **Designed for mobile, not ported to it.** A thumbstick, a camera that
+  follows the direction of travel so you can play one-handed, portrait-specific
+  framing, mobile-first CSS, safe-area insets, a capped pixel ratio, a screen
+  wake lock, and a web app manifest so it installs. Verified by an e2e suite
+  that runs on a real touch device profile, not a narrow desktop window.
 - **A test suite you will actually run.** 172 headless tests in ~1 second,
-  plus 17 Playwright tests that drive two real browser tabs.
+  plus 29 Playwright tests that drive two real browser tabs and a phone.
 - **Enforced architecture.** The layering is checked by ESLint, so `src/sim`
   physically cannot import Babylon or reach for `Math.random()`.
 - **An asset pipeline with no binaries.** Procedural glTF generation, a
@@ -57,7 +62,7 @@ without touching gameplay.
 | `src/shared` | Math, typed events, logging                                            |
 | `src/sim`    | The game: world, movement, pickups, arena — headless and deterministic |
 | `src/net`    | Transports, wire protocol, authority, prediction                       |
-| `src/render` | Babylon scene, meshes, camera, input                                   |
+| `src/render` | Babylon scene, meshes, follow-camera, input, device APIs               |
 | `src/ui`     | DOM overlay: lobby and HUD                                             |
 
 ## Commands
@@ -76,12 +81,35 @@ npm run assets:verify    # manifest + licence check
 
 ## Playing
 
+Desktop:
+
 | Input                    | Action                        |
 | ------------------------ | ----------------------------- |
 | `W` `A` `S` `D` / arrows | Move (relative to the camera) |
 | `Shift`                  | Sprint                        |
 | Drag                     | Orbit the camera              |
 | Scroll                   | Zoom                          |
+
+Mobile — the primary target:
+
+| Input                     | Action                 |
+| ------------------------- | ---------------------- |
+| Thumbstick (bottom left)  | Move                   |
+| Push the stick to the rim | Sprint                 |
+| _nothing_                 | The camera follows you |
+| Drag anywhere else        | Take over the camera   |
+| Pinch                     | Zoom                   |
+
+Playable one-handed: the camera swings behind your direction of travel by
+itself, so you never need a second thumb to see where you are going. Dragging
+takes over for a few seconds if you want to look around.
+
+The stick appears automatically on touch devices. Because it is a DOM overlay
+rather than a canvas widget, one thumb can steer while another orbits, with no
+gesture arbitration.
+
+On Android and iOS you can install it from the browser menu — it runs
+fullscreen, with its own icon, and keeps the screen awake while you play.
 
 URL parameters: `room`, `name`, `color`, `net=broadcast`, `autojoin=1`,
 `log=debug`.

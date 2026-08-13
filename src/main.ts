@@ -9,7 +9,9 @@ import { createBroadcastTransport } from './net/transports/broadcast.js';
 import { createTrysteroTransport } from './net/transports/trystero.js';
 import { Mesh } from '@babylonjs/core/Meshes/mesh.js';
 import { Renderer } from './render/renderer.js';
-import { KeyboardInput } from './render/input.js';
+import { KeyboardInput, mergeIntents } from './render/input.js';
+import { TouchInput } from './render/touch.js';
+import { keepScreenAwake, tapFeedback } from './render/device.js';
 import { loadManifest, loadModel } from './render/assets.js';
 import { Hud } from './ui/hud.js';
 import { Lobby, normalizeRoomId, randomRoomId } from './ui/lobby.js';
@@ -98,26 +100,50 @@ async function launch(app: HTMLElement, options: LaunchOptions): Promise<void> {
   const input = new KeyboardInput(window);
   input.attach();
 
+  // Mobile is a supported target, so the game ships with an on-screen stick.
+  // It reveals itself on touch devices and stays out of the way otherwise.
+  const touch = new TouchInput(app);
+  touch.attach();
+
   // Art is optional: the game is fully playable on procedural geometry, so
   // this runs in the background and upgrades the look if it succeeds.
   void applyOptionalAssets(renderer);
 
+  // A phone dims and locks after seconds of not being touched — including
+  // while a player stands still watching the scoreboard.
+  const releaseWakeLock = keepScreenAwake();
+
   const onResize = (): void => renderer.resize();
   window.addEventListener('resize', onResize);
+  // iOS fires `orientationchange` before the viewport has settled, so resize
+  // once more on the next frame or the canvas keeps the old aspect ratio.
+  const onOrientationChange = (): void => {
+    requestAnimationFrame(() => renderer.resize());
+  };
+  window.addEventListener('orientationchange', onOrientationChange);
 
   let lastFrameMs = performance.now();
+  let lastLocalScore = 0;
 
   renderer.engine.runRenderLoop(() => {
     const now = performance.now();
     const deltaSeconds = Math.min((now - lastFrameMs) / 1000, 0.25);
     lastFrameMs = now;
 
-    const intent = input.read(renderer.cameraYaw);
+    const yaw = renderer.cameraYaw;
+    const intent = mergeIntents(touch.read(yaw), input.read(yaw));
     session.setIntent(intent.moveX, intent.moveZ, intent.sprint);
     session.update(now);
 
     const state = session.sample(now);
     renderer.renderFrame(state, deltaSeconds);
+
+    // Buzz on scoring. Derived from the rendered score rather than a
+    // simulation event, so it works identically on the host and on clients —
+    // a client never runs the pickup system that raises the event.
+    const localScore = state.players.find((player) => player.id === session.selfId)?.score ?? 0;
+    if (localScore > lastLocalScore) tapFeedback();
+    lastLocalScore = localScore;
 
     hud.update(state, {
       roomId: options.roomId,
@@ -133,7 +159,10 @@ async function launch(app: HTMLElement, options: LaunchOptions): Promise<void> {
 
   const teardown = (): void => {
     window.removeEventListener('resize', onResize);
+    window.removeEventListener('orientationchange', onOrientationChange);
+    releaseWakeLock();
     input.detach();
+    touch.dispose();
     hud.dispose();
     renderer.dispose();
     void session.dispose();
@@ -237,8 +266,28 @@ function exposeTestHandle(session: NetSession, renderer: Renderer): void {
       get playerCount() {
         return session.sample(performance.now()).players.length;
       },
+      /** Positions as currently rendered, so tests can assert on movement. */
+      get players() {
+        return session.sample(performance.now()).players.map((player) => ({
+          id: player.id,
+          name: player.name,
+          x: player.x,
+          z: player.z,
+          score: player.score,
+        }));
+      },
       get fps() {
         return renderer.engine.getFps();
+      },
+      /** Camera orbit angle, so tests can assert auto-follow actually swings. */
+      get cameraAlpha() {
+        return renderer.camera.alpha;
+      },
+      get cameraRadius() {
+        return renderer.camera.radius;
+      },
+      get cameraBeta() {
+        return renderer.camera.beta;
       },
     },
   });

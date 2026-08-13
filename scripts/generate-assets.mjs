@@ -15,6 +15,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 import { box, merge, toGltf } from './lib/gltf.mjs';
+import { drawIcon } from './lib/png.mjs';
 import {
   ROOT as root,
   loadManifest,
@@ -24,6 +25,7 @@ import {
 } from './lib/manifest.mjs';
 
 const outputDir = join(root, 'public', 'assets', 'generated');
+const iconDir = join(root, 'public', 'icons');
 const ORIGIN = 'generated';
 
 /**
@@ -97,8 +99,73 @@ const MODELS = [
   },
 ];
 
+// ---------------------------------------------------------------------------
+// App icons
+// ---------------------------------------------------------------------------
+
+const BACKGROUND = [10, 12, 18];
+const ACCENT = [76, 201, 240];
+const SHARD = [245, 197, 24];
+
+/**
+ * The installed-app icon: a shard on the game's background colour.
+ *
+ * `inset` shrinks the artwork for the maskable variant. Android crops maskable
+ * icons to whatever shape the launcher uses, and only the inner ~80% is
+ * guaranteed to survive, so the shard has to sit well inside that circle.
+ */
+function shardIcon(inset) {
+  return (x, y) => {
+    // Rounded-square background, so the icon still looks deliberate on
+    // platforms that do not mask it.
+    const corner = 0.72;
+    const dx = Math.max(Math.abs(x) - corner, 0);
+    const dy = Math.max(Math.abs(y) - corner, 0);
+    if (Math.hypot(dx, dy) > 1 - corner) return [0, 0, 0, 0];
+
+    const scale = 1 / inset;
+    const sx = x * scale;
+    const sy = y * scale;
+
+    // Diamond: |x|/a + |y|/b <= 1.
+    const diamond = Math.abs(sx) / 0.5 + Math.abs(sy) / 0.72;
+    if (diamond <= 1) {
+      // A soft vertical ramp from accent to shard colour gives it some depth
+      // without needing a real gradient or lighting model.
+      const t = (sy + 0.72) / 1.44;
+      return [
+        Math.round(ACCENT[0] + (SHARD[0] - ACCENT[0]) * t),
+        Math.round(ACCENT[1] + (SHARD[1] - ACCENT[1]) * t),
+        Math.round(ACCENT[2] + (SHARD[2] - ACCENT[2]) * t),
+        255,
+      ];
+    }
+    if (diamond <= 1.14) return [...ACCENT, 90]; // faint halo
+
+    return [...BACKGROUND, 255];
+  };
+}
+
+const ICONS = [
+  { file: 'icon-192.png', size: 192, inset: 0.78 },
+  { file: 'icon-512.png', size: 512, inset: 0.78 },
+  // Maskable: extra margin so a circular or squircle crop keeps the shard.
+  { file: 'icon-maskable-512.png', size: 512, inset: 0.58 },
+];
+
+async function generateIcons() {
+  await mkdir(iconDir, { recursive: true });
+  for (const icon of ICONS) {
+    const png = drawIcon(icon.size, shardIcon(icon.inset));
+    const path = join(iconDir, icon.file);
+    await writeFile(path, png);
+    console.log(`generated ${relative(root, path)} (${png.length} bytes)`);
+  }
+}
+
 async function main() {
   await mkdir(outputDir, { recursive: true });
+  await generateIcons();
 
   const written = [];
   for (const model of MODELS) {

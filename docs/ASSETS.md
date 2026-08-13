@@ -42,7 +42,13 @@ Generates real `.gltf` files from a small dependency-free writer
 (`scripts/lib/gltf.mjs`). No network, no install step, deterministic output —
 re-running leaves git clean, and CI enforces that.
 
-Ships three placeholders in `public/assets/generated/`:
+It also draws the **app icons** (`public/icons/`) with a tiny PNG encoder in
+`scripts/lib/png.mjs` — including the maskable variant Android needs. Icons are
+generated rather than committed as binaries for the same reason as everything
+else here: a PNG in a diff is something no reviewer can actually check, whereas
+a function that draws one is.
+
+Ships three model placeholders in `public/assets/generated/`:
 
 | id       | file          | what it is                          |
 | -------- | ------------- | ----------------------------------- |

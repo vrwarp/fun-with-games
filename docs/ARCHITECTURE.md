@@ -109,11 +109,22 @@ keeps the renderer swappable and gameplay testable headlessly.
 The UI is plain DOM over the canvas, not Babylon GUI: lighter, styleable with
 CSS, and reachable from Playwright by `data-testid`.
 
+Input devices also live here: `KeyboardInput` and `TouchInput` (an on-screen
+thumbstick, because the phone is the primary target). Both emit the same
+`InputIntent`, merged by `mergeIntents()`, so every layer below `src/render` is
+completely unaware of how the player moved. `device.ts` holds the optional
+platform niceties — screen wake lock, haptics — each written to degrade to
+nothing where unsupported.
+
+The camera follows the player's direction of travel on its own, and frames the
+arena differently in portrait. Both exist so the game is playable one-handed;
+see `CLAUDE.md` §7.
+
 ## The frame loop
 
 ```
 requestAnimationFrame
-  └─ read keyboard  ──────────────► session.setIntent(x, z, sprint)
+  └─ read keyboard + thumbstick ──► session.setIntent(x, z, sprint)
   └─ session.update(now)
        └─ while (accumulated >= 33.3ms)          // fixed 30 Hz timestep
             ├─ build PlayerInput from intent
@@ -131,7 +142,7 @@ run the same loop; only the branch inside differs.
 ## Data flow
 
 ```
-keyboard ─► PlayerInput ─► [host] World.step() ─► WorldSnapshot
+input ────► PlayerInput ─► [host] World.step() ─► WorldSnapshot
                                                        │
                         ┌──────────────────────────────┘
                         ▼
@@ -150,7 +161,8 @@ Places designed to be extended, with the seam already in place:
 
 | Want to…                           | Do this                                                                                                                    |
 | ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| Add a gameplay mechanic            | New file in `src/sim/systems/`, call it from `World.step()`                                                                |
+| Add a gameplay mechanic            | New file in `src/sim/systems/`, call it from `World.step()` — and give it a touch affordance, not just a key               |
+| Add an input device                | New module in `src/render/`, fold it into `mergeIntents()`                                                                 |
 | Add a networked field              | Add to `PlayerState` **and** `WorldSnapshot`, validate in `protocol.ts`, bump `PROTOCOL_VERSION`                           |
 | Change the wire format             | Replace the codec in `protocol.ts`; JSON in, binary out                                                                    |
 | Use a different signalling network | Swap the import in `transports/trystero.ts` (`@trystero-p2p/mqtt`, …)                                                      |

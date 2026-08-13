@@ -55,6 +55,7 @@ body:
       value: |
         - [ ]
         - [ ] Covered by a headless test in `tests/unit` or `tests/integration`
+        - [ ] Reachable by touch on a phone, not keyboard-only
         - [ ] `npm run verify` passes
     validations:
       required: true

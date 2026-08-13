@@ -8,6 +8,24 @@ export interface InputIntent {
   sprint: boolean;
 }
 
+export const IDLE_INTENT: InputIntent = Object.freeze({ moveX: 0, moveZ: 0, sprint: false });
+
+/**
+ * Combines several input devices into one intent.
+ *
+ * A device that is idle contributes nothing, so a phone with a Bluetooth
+ * keyboard attached can use either — whichever the player touched last simply
+ * wins, with no mode switch to get stuck in.
+ */
+export function mergeIntents(...intents: readonly InputIntent[]): InputIntent {
+  for (const intent of intents) {
+    if (intent.moveX !== 0 || intent.moveZ !== 0) return intent;
+  }
+  // Nobody is steering; preserve a sprint held on its own.
+  const sprint = intents.some((intent) => intent.sprint);
+  return sprint ? { moveX: 0, moveZ: 0, sprint: true } : IDLE_INTENT;
+}
+
 const FORWARD_KEYS = new Set(['KeyW', 'ArrowUp']);
 const BACKWARD_KEYS = new Set(['KeyS', 'ArrowDown']);
 const LEFT_KEYS = new Set(['KeyA', 'ArrowLeft']);

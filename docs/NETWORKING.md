@@ -146,6 +146,32 @@ snapshots straddling that moment. When the network stalls, the newest snapshot
 is held rather than extrapolated: a stalled remote player is better than a
 confidently wrong one.
 
+### 4. Render interpolation — the screen is faster than the simulation
+
+The simulation steps at 30 Hz; a display refreshes at 60 Hz or more. Sampled
+naively, the local player's predicted position is a **step function**: still
+for a frame, then a jump. Static scenery has no such problem, so it glides past
+continuously while the character stutters against it — which looks like the
+character vibrating, and is easy to misread as a rendering or culling fault.
+
+`NetSession.sample()` therefore passes `ClientView` the leftover in its
+fixed-timestep accumulator, and the local player is drawn between the previous
+step and the current one.
+
+The cost is honest: this renders the local player up to one tick (~33 ms)
+behind. That is visual only — input is still consumed on the next tick either
+way — and it is the standard fixed-timestep rendering trade. Two details matter:
+
+- An ordinary reconcile must **not** re-anchor the interpolation, because
+  reconciling re-derives the same tick rather than advancing time. Collapsing
+  the span there would make the player jump on every snapshot, which at a
+  2-tick snapshot interval is most of them.
+- A teleport-sized correction **must** collapse it, so a snap stays a snap
+  instead of becoming a slide.
+
+`tests/integration/session.test.ts` guards this end to end by rendering at
+60 Hz over a 30 Hz simulation and asserting no frame stalls.
+
 ## Timing
 
 | Parameter           | Value  | Where                                |

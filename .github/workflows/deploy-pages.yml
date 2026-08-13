@@ -52,7 +52,7 @@ jobs:
         # Without this, Pages hides files and directories beginning with "_".
         run: touch dist/.nojekyll
 
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: dist
 

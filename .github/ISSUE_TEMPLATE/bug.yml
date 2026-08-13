@@ -1,0 +1,79 @@
+name: Bug
+description: Something behaves incorrectly.
+title: '[bug] '
+labels: ['bug']
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happens, and what should happen instead
+    validations:
+      required: true
+
+  - type: input
+    id: seed
+    attributes:
+      label: Room code or seed
+      description: >
+        The arena is generated from the room code, so this makes the world
+        reproducible. Invaluable for anything geometry-related.
+      placeholder: amber-1234
+
+  - type: dropdown
+    id: layer
+    attributes:
+      label: Where does it look like it lives?
+      options:
+        - Simulation (movement, pickups, scoring)
+        - Networking (desync, host migration, peers not connecting)
+        - Rendering (visuals, camera, performance)
+        - UI (lobby, HUD)
+        - Build / CI / deployment
+        - Not sure
+
+  - type: dropdown
+    id: transport
+    attributes:
+      label: Transport
+      options:
+        - WebRTC (default)
+        - BroadcastChannel (`?net=broadcast`)
+        - Both
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      value: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+
+  - type: textarea
+    id: failing-test
+    attributes:
+      label: Failing test
+      description: >
+        If you can express it as a headless test — `SessionHarness` covers
+        latency, packet loss and host migration — paste it here. That turns a
+        bug report into a fix.
+      render: typescript
+
+  - type: dropdown
+    id: device
+    attributes:
+      label: Device
+      description: Mobile is a supported target, so this matters.
+      options:
+        - Desktop
+        - Phone
+        - Tablet
+        - Both desktop and mobile
+
+  - type: input
+    id: environment
+    attributes:
+      label: Browser and OS
+      placeholder: Chrome 141 / macOS 15, or Safari / iOS 18

@@ -1,0 +1,28 @@
+{
+  "$schema": "./sources.schema.json",
+  "comment": [
+    "Catalogue of third-party assets to download with `npm run assets:fetch`.",
+    "Downloaded files land in public/assets/vendor/, which is gitignored — the",
+    "catalogue is the thing under version control, not the binaries.",
+    "",
+    "Every entry MUST carry accurate licence metadata. `npm run assets:verify`",
+    "fails the build if any is missing, and CI runs it on every push.",
+    "",
+    "Good CC0 / permissive sources are listed in docs/ASSETS.md."
+  ],
+  "assets": [
+    {
+      "id": "fox",
+      "url": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/Fox/glTF-Binary/Fox.glb",
+      "file": "fox.glb",
+      "scale": 0.02,
+      "enabled": false,
+      "description": "Rigged, animated fox. Useful for testing skinned-mesh support.",
+      "license": {
+        "name": "CC0-1.0 (model) / CC-BY-4.0 (rigging, animation, glTF conversion)",
+        "source": "https://github.com/KhronosGroup/glTF-Sample-Assets/tree/main/Models/Fox",
+        "author": "PixelMannen (model); tomkranis (rigging/animation); @AsoboStudio and @scurest (glTF conversion)"
+      }
+    }
+  ]
+}

@@ -1,0 +1,33 @@
+# Code owners.
+#
+# No GitHub teams exist for this project yet, so this file is currently a
+# documentation aid rather than an enforcement mechanism: it records which
+# module each path belongs to (see docs/MODULES.md) so a reviewer can tell at
+# a glance whether a PR crosses a boundary it should not.
+#
+# To turn it into real review routing, replace the comments below with GitHub
+# handles or @org/team names and enable "Require review from Code Owners" in
+# branch protection.
+
+# Default
+# *                        @your-handle
+
+# --- Layer boundaries -------------------------------------------------------
+# Changes here ripple across every other module. Review with extra care.
+# /src/shared/             @your-handle
+# /src/sim/world.ts        @your-handle
+# /src/sim/types.ts        @your-handle
+# /src/net/protocol.ts     @your-handle
+
+# --- Build, CI and deployment ----------------------------------------------
+# /.github/                @your-handle
+# /vite.config.ts          @your-handle
+# /vitest.config.ts        @your-handle
+# /playwright.config.ts    @your-handle
+# /eslint.config.js        @your-handle
+# /tsconfig*.json          @your-handle
+
+# --- Agent-facing documentation --------------------------------------------
+# Stale instructions here cost every future agent, so they are worth a look.
+# /CLAUDE.md               @your-handle
+# /docs/                   @your-handle

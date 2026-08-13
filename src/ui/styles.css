@@ -1,0 +1,484 @@
+/*
+ * Mobile-first.
+ *
+ * The base rules below describe the game on a phone in portrait — the smallest
+ * and most constrained target, and the one most players will actually use.
+ * Larger screens are an *enhancement*, layered on in `min-width` blocks near
+ * the bottom of this file.
+ *
+ * Written this way round on purpose. A desktop-first sheet with `max-width`
+ * overrides makes mobile a pile of exceptions, and the exceptions rot: the
+ * default drifts and the phone quietly stops being designed for. Here the
+ * phone layout is what you get if every media query is deleted.
+ */
+
+:root {
+  --bg: #0a0c12;
+  --panel: rgba(18, 21, 30, 0.82);
+  --panel-border: rgba(255, 255, 255, 0.09);
+  --text: #e8ebf2;
+  --text-dim: #98a0b3;
+  --accent: #4cc9f0;
+  --radius: 12px;
+  /* Minimum comfortable touch target. Every interactive element meets this. */
+  --tap: 44px;
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  /* dvh, not vh: mobile browsers shrink the viewport as the URL bar retracts,
+     and vh leaves a scrolling strip below the fold. */
+  height: 100dvh;
+  overflow: hidden;
+  /* Stops pull-to-refresh and rubber-banding from fighting the thumbstick. */
+  overscroll-behavior: none;
+  background: var(--bg);
+  color: var(--text);
+  -webkit-text-size-adjust: 100%;
+  font-family:
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    sans-serif;
+}
+
+#app {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.viewport {
+  display: block;
+  width: 100%;
+  height: 100%;
+  outline: none;
+  /* The canvas owns its gestures; without this the browser steals drags for
+     scrolling and the camera stutters. */
+  touch-action: none;
+}
+
+/* Long-press on a game control should never raise a text selection or an
+   iOS callout menu. */
+.hud,
+.touch,
+.lobby__join,
+.lobby__swatch,
+.hud__copy {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+}
+
+/* ----------------------------------------------------------------- lobby */
+
+.lobby {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: max(0.75rem, env(safe-area-inset-top)) max(0.75rem, env(safe-area-inset-right))
+    max(0.75rem, env(safe-area-inset-bottom)) max(0.75rem, env(safe-area-inset-left));
+  background:
+    radial-gradient(circle at 30% 20%, rgba(76, 201, 240, 0.16), transparent 45%),
+    radial-gradient(circle at 75% 75%, rgba(247, 37, 133, 0.14), transparent 45%), var(--bg);
+  z-index: 10;
+  overflow-y: auto;
+}
+
+.lobby.is-hidden {
+  display: none;
+}
+
+.lobby__card {
+  width: 100%;
+  max-width: 30rem;
+  padding: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius);
+  backdrop-filter: blur(12px);
+}
+
+.lobby__title {
+  margin: 0;
+  font-size: 1.6rem;
+  letter-spacing: -0.02em;
+}
+
+.lobby__subtitle {
+  margin: 0;
+  color: var(--text-dim);
+  line-height: 1.5;
+  font-size: 0.9rem;
+}
+
+.lobby__field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.lobby__label {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+}
+
+.lobby__input {
+  min-height: var(--tap);
+  padding: 0.7rem 0.85rem;
+  /* Exactly 16px: iOS zooms the page when focusing anything smaller, and the
+     player cannot zoom back out. */
+  font-size: 16px;
+  color: var(--text);
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+}
+
+.lobby__input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.lobby__swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.lobby__swatch {
+  width: var(--tap);
+  height: var(--tap);
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  padding: 0;
+}
+
+.lobby__swatch.is-selected {
+  border-color: var(--text);
+  transform: scale(1.1);
+}
+
+.lobby__join {
+  margin-top: 0.25rem;
+  min-height: 52px;
+  padding: 0.85rem 1rem;
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: #04121a;
+  background: var(--accent);
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.lobby__hint {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+
+/* ------------------------------------------------------------------- hud */
+
+.hud {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  /* Clear of notches, rounded corners and home indicators. */
+  padding: max(0.75rem, env(safe-area-inset-top)) max(0.75rem, env(safe-area-inset-right))
+    max(0.75rem, env(safe-area-inset-bottom)) max(0.75rem, env(safe-area-inset-left));
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.hud__panel {
+  /* Narrow enough to leave most of a phone screen showing the game. */
+  width: min(14rem, 58vw);
+  padding: 0.6rem 0.7rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius);
+  backdrop-filter: blur(10px);
+  pointer-events: auto;
+}
+
+.hud__room {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+}
+
+.hud__room-code {
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 0.85rem;
+  color: var(--accent);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hud__copy {
+  flex: none;
+  /* A tap target, not a desktop text button. */
+  min-height: var(--tap);
+  min-width: var(--tap);
+  padding: 0.3rem 0.55rem;
+  font-size: 0.72rem;
+  color: var(--text-dim);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.hud__scores {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.hud__score-row {
+  display: grid;
+  grid-template-columns: 0.7rem 1fr auto;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.85rem;
+}
+
+.hud__score-row.is-local .hud__name {
+  font-weight: 700;
+  color: var(--text);
+}
+
+.hud__swatch {
+  width: 0.7rem;
+  height: 0.7rem;
+  border-radius: 50%;
+}
+
+.hud__name {
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hud__score {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.hud__status {
+  font-size: 0.66rem;
+  color: var(--text-dim);
+  border-top: 1px solid var(--panel-border);
+  padding-top: 0.4rem;
+}
+
+/* Keyboard hints are meaningless without a keyboard, and they sit exactly
+   where the thumbstick wants to be. Hidden by default; revealed for fine
+   pointers below. */
+.hud__help {
+  display: none;
+  align-self: center;
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 999px;
+  padding: 0.4rem 0.9rem;
+}
+
+.hud__help kbd {
+  font-family: inherit;
+  font-size: 0.72rem;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+  padding: 0.1rem 0.32rem;
+  margin: 0 0.05rem;
+}
+
+/* ------------------------------------------------------- touch controls */
+
+.touch {
+  position: absolute;
+  inset: auto auto max(1.25rem, env(safe-area-inset-bottom)) max(1.25rem, env(safe-area-inset-left));
+  z-index: 5;
+}
+
+.touch[hidden] {
+  display: none;
+}
+
+.touch__base {
+  width: 7rem;
+  height: 7rem;
+  border-radius: 50%;
+  /* The primary control has to stay legible over arbitrary game content —
+     including a pale obstacle sliding underneath it. Hence the opaque-ish
+     fill, the bright rim, and the dark outer shadow that separates it from
+     whatever is behind. */
+  background: rgba(10, 12, 18, 0.62);
+  border: 2px solid rgba(255, 255, 255, 0.22);
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.45),
+    0 6px 18px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(6px);
+  display: grid;
+  place-items: center;
+  /* Essential: without this the browser claims the gesture for scrolling and
+     the stick drops its pointer mid-drag. */
+  touch-action: none;
+  pointer-events: auto;
+}
+
+.touch__base.is-sprinting {
+  border-color: var(--accent);
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.45),
+    0 0 0 4px rgba(76, 201, 240, 0.32),
+    0 6px 18px rgba(0, 0, 0, 0.45);
+}
+
+.touch__knob {
+  width: 3.1rem;
+  height: 3.1rem;
+  border-radius: 50%;
+  background: rgba(240, 243, 250, 0.95);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+  pointer-events: none;
+  will-change: transform;
+}
+
+/* ----------------------------------------------------------------- error */
+
+.fatal {
+  position: absolute;
+  inset: auto 1rem max(1rem, env(safe-area-inset-bottom)) 1rem;
+  padding: 1rem;
+  background: rgba(120, 20, 40, 0.9);
+  border-radius: var(--radius);
+  font-size: 0.9rem;
+}
+
+/* ==========================================================================
+   Enhancements for larger screens and precise pointers.
+   Everything above is the phone experience; nothing below is required for it.
+   ========================================================================== */
+
+@media (min-width: 40rem) {
+  .lobby {
+    padding: 1.5rem;
+  }
+
+  .lobby__card {
+    padding: 2rem;
+    gap: 1rem;
+  }
+
+  .lobby__title {
+    font-size: 1.9rem;
+  }
+
+  .lobby__subtitle {
+    font-size: 0.95rem;
+  }
+
+  .lobby__swatch {
+    width: 2rem;
+    height: 2rem;
+  }
+
+  .hud {
+    padding: 1rem;
+  }
+
+  .hud__panel {
+    width: min(17rem, 60vw);
+    padding: 0.85rem 1rem;
+    gap: 0.6rem;
+  }
+
+  .hud__room-code {
+    font-size: 0.95rem;
+  }
+
+  .hud__score-row {
+    font-size: 0.9rem;
+  }
+
+  .hud__status {
+    font-size: 0.75rem;
+    padding-top: 0.5rem;
+  }
+}
+
+/* A mouse or trackpad: the player has a keyboard, so tell them about it, and
+   the copy button no longer needs to be thumb-sized. */
+@media (pointer: fine) {
+  .hud__help {
+    display: block;
+  }
+
+  .hud__copy {
+    min-height: 0;
+    min-width: 0;
+  }
+
+  .hud__copy:hover {
+    color: var(--text);
+    background: rgba(255, 255, 255, 0.1);
+  }
+
+  .lobby__join:hover {
+    filter: brightness(1.08);
+  }
+}
+
+/* Landscape phones are short rather than narrow: reclaim vertical space. */
+@media (max-height: 26rem) {
+  .touch__base {
+    width: 5.5rem;
+    height: 5.5rem;
+  }
+
+  .touch__knob {
+    width: 2.4rem;
+    height: 2.4rem;
+  }
+
+  .lobby__card {
+    max-height: 92dvh;
+    overflow-y: auto;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lobby__swatch.is-selected {
+    transform: none;
+  }
+}

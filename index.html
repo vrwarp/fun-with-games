@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <!--
+      `viewport-fit=cover` lets the page paint under a notch; the CSS then uses
+      env(safe-area-inset-*) to keep controls clear of it. `interactive-widget`
+      stops the on-screen keyboard from resizing the game viewport when the
+      lobby inputs are focused.
+    -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content"
+    />
+    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#0a0c12" />
+    <meta
+      name="description"
+      content="A peer-to-peer 3D arena built with Babylon.js and decentralized WebRTC — a starter kit for real multiplayer games."
+    />
+
+    <!-- Installable, and launches without browser chrome. -->
+    <link rel="manifest" href="%BASE_URL%manifest.webmanifest" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="FWG Arena" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <link rel="icon" type="image/png" href="%BASE_URL%icons/icon-192.png" />
+    <link rel="apple-touch-icon" href="%BASE_URL%icons/icon-192.png" />
+
+    <title>Fun With Games</title>
+  </head>
+  <body>
+    <div id="app"></div>
+    <noscript>This game needs JavaScript and WebGL.</noscript>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

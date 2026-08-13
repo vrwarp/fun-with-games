@@ -1,0 +1,69 @@
+name: Feature / task
+description: A unit of work an agent can pick up and complete independently.
+title: '[feature] '
+labels: ['enhancement']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Declaring the modules up front is what lets several agents work at
+        once — see `docs/PARALLEL_AGENTS.md`. Two tasks in different modules
+        can run in parallel; two in the same module cannot.
+
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: What should be true when this is done?
+      placeholder: Players can dash with a cooldown, and the dash is visible to other peers.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: modules
+    attributes:
+      label: Modules touched
+      description: From `docs/MODULES.md`.
+      options:
+        - label: shared
+        - label: sim-core (`world.ts`, `types.ts`, `config.ts`, `rng.ts`)
+        - label: sim-systems
+        - label: net-protocol
+        - label: net-session
+        - label: net-transports
+        - label: render
+        - label: ui
+        - label: bootstrap (`main.ts`)
+        - label: assets
+        - label: ci
+        - label: docs
+
+  - type: input
+    id: shared-files
+    attributes:
+      label: Shared files expected to change
+      description: >
+        e.g. `src/sim/types.ts`, `src/net/protocol.ts`. These are coordination
+        points — list them so other agents can sequence around you.
+      placeholder: src/sim/types.ts, src/sim/config.ts
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: How a reviewer (human or agent) confirms it is done.
+      value: |
+        - [ ]
+        - [ ] Covered by a headless test in `tests/unit` or `tests/integration`
+        - [ ] Reachable by touch on a phone, not keyboard-only
+        - [ ] `npm run verify` passes
+    validations:
+      required: true
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Constraints and notes
+      description: >
+        Anything non-obvious: determinism implications, whether the wire format
+        changes, whether `WorldSnapshot` needs a new field.

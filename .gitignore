@@ -1,0 +1,25 @@
+node_modules/
+dist/
+coverage/
+.vite/
+*.tsbuildinfo
+
+# Playwright
+test-results/
+playwright-report/
+blob-report/
+.playwright/
+
+# Downloaded third-party assets (regenerate with `npm run assets:fetch`)
+public/assets/vendor/
+
+# Editors / OS
+.DS_Store
+Thumbs.db
+.idea/
+*.swp
+
+# Local env + agent scratch
+.env
+.env.local
+.agent-scratch/

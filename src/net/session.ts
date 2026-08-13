@@ -185,10 +185,19 @@ export class NetSession {
     this.#view.advanceSmoothing(delta);
   }
 
-  /** The interpolated, predicted state to draw at `nowMs`. */
+  /**
+   * The interpolated, predicted state to draw at `nowMs`.
+   *
+   * The accumulator's leftover is handed to `ClientView` as the sub-tick
+   * fraction. Without it the local player would be drawn at whatever the last
+   * 30 Hz step produced and would visibly stutter against smoothly-scrolling
+   * scenery on any display refreshing faster than the tick rate.
+   */
   sample(nowMs: number): RenderState {
     if (this.#view.bufferedSnapshotCount === 0) return EMPTY_RENDER_STATE;
-    return this.#view.sample(nowMs, this.#hostId);
+    const tickMs = 1000 / this.config.tickRate;
+    const tickAlpha = tickMs > 0 ? this.#accumulatorMs / tickMs : 1;
+    return this.#view.sample(nowMs, this.#hostId, tickAlpha);
   }
 
   async dispose(): Promise<void> {

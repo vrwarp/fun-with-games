@@ -267,6 +267,76 @@ describe('ClientView: interpolation', () => {
   });
 });
 
+describe('ClientView: sub-tick render interpolation', () => {
+  // The simulation steps at 30 Hz but the screen refreshes faster, so the
+  // local player has to be drawn *between* steps. Without this it is a step
+  // function: still for a frame, then a jump — which reads as the character
+  // vibrating against smoothly-scrolling scenery.
+  it('draws the local player between two simulation steps', () => {
+    const view = makeView();
+    view.pushSnapshot(snapshot(0, [player('me')]), 0);
+    view.recordInput(input(1));
+
+    const start = view.sample(0, 'host', 0).players[0]?.x ?? 0;
+    const middle = view.sample(0, 'host', 0.5).players[0]?.x ?? 0;
+    const end = view.sample(0, 'host', 1).players[0]?.x ?? 0;
+
+    expect(end).toBeGreaterThan(start);
+    expect(middle).toBeCloseTo((start + end) / 2, 9);
+  });
+
+  it('defaults to the newest step when no fraction is given', () => {
+    const view = makeView();
+    view.pushSnapshot(snapshot(0, [player('me')]), 0);
+    view.recordInput(input(1));
+
+    expect(view.sample(0, 'host').players[0]?.x).toBeCloseTo(view.predicted?.x ?? 0, 9);
+  });
+
+  it('clamps an out-of-range fraction', () => {
+    const view = makeView();
+    view.pushSnapshot(snapshot(0, [player('me')]), 0);
+    view.recordInput(input(1));
+
+    const end = view.sample(0, 'host', 1).players[0]?.x ?? 0;
+    expect(view.sample(0, 'host', 5).players[0]?.x).toBeCloseTo(end, 9);
+    expect(view.sample(0, 'host', -3).players[0]?.x).toBeCloseTo(
+      view.sample(0, 'host', 0).players[0]?.x ?? 0,
+      9,
+    );
+  });
+
+  it('keeps interpolating across an ordinary reconcile', () => {
+    // Snapshots arrive every couple of ticks. If reconciling collapsed the
+    // interpolation span, the player would jump on most of them — which is
+    // exactly the bug this guards.
+    const view = makeView();
+    view.pushSnapshot(snapshot(0, [player('me')]), 0);
+    view.recordInput(input(1));
+    view.recordInput(input(2));
+
+    const authoritative = player('me');
+    for (const seq of [1, 2]) integratePlayer(authoritative, input(seq), config, [], dt);
+    view.pushSnapshot(snapshot(1, [{ ...authoritative }]), 100);
+
+    const start = view.sample(100, 'host', 0).players[0]?.x ?? 0;
+    const end = view.sample(100, 'host', 1).players[0]?.x ?? 0;
+    expect(end).toBeGreaterThan(start);
+  });
+
+  it('collapses the span on a teleport so the snap stays a snap', () => {
+    const view = makeView();
+    view.pushSnapshot(snapshot(0, [player('me')]), 0);
+    view.recordInput(input(1));
+
+    view.pushSnapshot(snapshot(1, [player('me', { x: 40, lastInputSeq: 1 })]), 100);
+
+    // Every fraction renders the same place: no slide across the arena.
+    expect(view.sample(100, 'host', 0).players[0]?.x).toBeCloseTo(40, 6);
+    expect(view.sample(100, 'host', 1).players[0]?.x).toBeCloseTo(40, 6);
+  });
+});
+
 describe('ClientView: reset', () => {
   it('drops all state', () => {
     const view = makeView();

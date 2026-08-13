@@ -30,6 +30,38 @@ describe('a single peer', () => {
     expect(h.state('solo').players).toHaveLength(1);
   });
 
+  it('moves the local player smoothly when rendering faster than the tick rate', () => {
+    // Regression guard. The simulation steps at 30 Hz; a 60 Hz render loop
+    // samples it twice per step. If the rendered position is not interpolated
+    // across the step it stalls on every other frame and then jumps, which
+    // looks like the character vibrating against the scenery — while static
+    // geometry, having no such problem, glides smoothly past.
+    // A big empty arena: the player must still be running freely when sampled,
+    // not parked against a wall (where stalling is correct behaviour).
+    const h = makeHarness({
+      frameMs: 16,
+      config: { arenaHalfExtentX: 500, arenaHalfExtentZ: 500, obstacleCount: 0, pickupCount: 0 },
+    });
+    h.join('solo');
+    h.advance(500);
+
+    h.setIntent('solo', 1, 0);
+    h.advance(2000); // reach a constant top speed
+
+    const xs: number[] = [];
+    for (let frame = 0; frame < 24; frame++) {
+      h.advance(16);
+      xs.push(h.state('solo').players.find((p) => p.id === 'solo')?.x ?? 0);
+    }
+
+    const deltas = xs.slice(1).map((x, index) => x - (xs[index] ?? 0));
+
+    // At a constant speed every frame must make progress...
+    for (const delta of deltas) expect(delta).toBeGreaterThan(0);
+    // ...and by very nearly the same amount.
+    expect(Math.max(...deltas) - Math.min(...deltas)).toBeLessThan(0.02);
+  });
+
   it('renders the arena pickups', () => {
     const h = makeHarness({ config: { pickupCount: 6 } });
     h.join('solo');

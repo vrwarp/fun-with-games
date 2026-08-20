@@ -86,7 +86,7 @@ describe('World: inputs', () => {
   it('ignores input for unknown players', () => {
     const world = makeWorld();
     expect(() =>
-      world.setInput('ghost', { seq: 1, moveX: 1, moveZ: 0, sprint: false }),
+      world.setInput('ghost', { seq: 1, moveX: 1, moveZ: 0, sprint: false, buttons: 0 }),
     ).not.toThrow();
   });
 
@@ -94,8 +94,8 @@ describe('World: inputs', () => {
     const world = makeWorld();
     world.addPlayer('alice', profile);
 
-    world.setInput('alice', { seq: 5, moveX: 1, moveZ: 0, sprint: false });
-    world.setInput('alice', { seq: 2, moveX: -1, moveZ: 0, sprint: false });
+    world.setInput('alice', { seq: 5, moveX: 1, moveZ: 0, sprint: false, buttons: 0 });
+    world.setInput('alice', { seq: 2, moveX: -1, moveZ: 0, sprint: false, buttons: 0 });
     world.step();
 
     // The stale reversed input must not have been the one applied.
@@ -117,8 +117,8 @@ describe('World: stepping', () => {
     a.addPlayer('p', profile);
     b.addPlayer('p', profile);
 
-    a.setInput('p', { seq: 1, moveX: 1, moveZ: 0.5, sprint: false });
-    b.setInput('p', { seq: 1, moveX: 1, moveZ: 0.5, sprint: false });
+    a.setInput('p', { seq: 1, moveX: 1, moveZ: 0.5, sprint: false, buttons: 0 });
+    b.setInput('p', { seq: 1, moveX: 1, moveZ: 0.5, sprint: false, buttons: 0 });
 
     a.stepMany(20);
     for (let i = 0; i < 20; i++) b.step();
@@ -131,7 +131,7 @@ describe('World: stepping', () => {
     const player = world.addPlayer('alice', profile);
     const startX = player.x;
 
-    world.setInput('alice', { seq: 1, moveX: 1, moveZ: 0, sprint: false });
+    world.setInput('alice', { seq: 1, moveX: 1, moveZ: 0, sprint: false, buttons: 0 });
     world.stepMany(10);
 
     expect(player.x).not.toBe(startX);

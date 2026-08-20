@@ -6,13 +6,13 @@ Most multiplayer bugs are logic bugs, and logic bugs are cheap to catch — _if_
 the logic can run without a browser.
 
 So the simulation and the netcode are headless by construction, and the test
-suite that matters runs in **about one second**:
+suite that matters runs in **a few seconds**:
 
 ```
-tests/unit         200 tests
+tests/unit         ~280 tests — rules, systems, every game mode
 tests/integration   ← full multi-peer sessions, latency, packet loss
-                   ~1.1s total, no browser
-tests/e2e           31 tests, ~3 minutes, real Chromium (desktop + phone)
+                   ~3s total, no browser
+tests/e2e           39 tests, ~3 minutes, real Chromium (desktop + phone)
 ```
 
 That ratio is the point. A test you run on every save catches things a
@@ -66,7 +66,16 @@ expect(harness.state('alpha').players).toHaveLength(2);
 ```
 
 Useful members: `join`, `drop` (abrupt, like a closed tab), `leave` (graceful,
-sends `bye`), `setIntent`, `advance`, `host`, `state`, `score`, `network`.
+sends `bye`), `setIntent` (movement, sprint, and the action-button bitfield),
+`advance`, `host`, `hostWorld` (the authoritative `World` — mutate it to set
+up gameplay situations instead of simulating minutes of movement), `state`,
+`score`, `network`.
+
+`tests/helpers/factories.ts` builds hand-made simulation objects for surgical
+unit tests: `makePlayer`, `makeInput`, `makeSnapshot`, `makeStepContext`
+(drive one system directly), and `eventsOfType` (typed event filtering).
+Prefer a real `World` when the whole pipeline matters; use factories when
+constructing it would bury the point of the test.
 
 ### Rules
 
@@ -79,20 +88,32 @@ sends `bye`), `setIntent`, `advance`, `host`, `state`, `score`, `network`.
 
 ## What is already covered
 
-| Area                                                                   | Where                             |
-| ---------------------------------------------------------------------- | --------------------------------- |
-| Movement, collision, sliding, degenerate cases                         | `unit/sim/movement.test.ts`       |
-| Pickups, respawn, contested collection                                 | `unit/sim/pickups.test.ts`        |
-| Snapshot round-trip fidelity                                           | `unit/sim/world.snapshot.test.ts` |
-| Determinism, replay, split-and-resume                                  | `unit/sim/determinism.test.ts`    |
-| Protocol parsing incl. hostile input                                   | `unit/net/protocol.test.ts`       |
-| Host election, virtual network                                         | `unit/net/transport.test.ts`      |
-| Prediction, reconciliation, interpolation                              | `unit/net/prediction.test.ts`     |
-| Sessions: 1/2/3 peers, late joiners, loss, migration, malicious peers  | `integration/session.test.ts`     |
-| Lobby, rendering, HUD, keyboard                                        | `e2e/smoke.spec.ts`               |
-| Two real tabs: discovery, roster, migration, isolation                 | `e2e/multiplayer.spec.ts`         |
-| Phone: thumbstick, one-handed follow-camera, portrait framing, install | `e2e/mobile.spec.ts`              |
-| Asset manifest parsing and attribution rules                           | `unit/shared/manifest.test.ts`    |
+| Area                                                                                                         | Where                             |
+| ------------------------------------------------------------------------------------------------------------ | --------------------------------- |
+| Movement, collision, sliding, degenerate cases                                                               | `unit/sim/movement.test.ts`       |
+| Pickups, respawn, contested collection                                                                       | `unit/sim/pickups.test.ts`        |
+| Timed effects: grant, expiry, immobilize/protect, movement scaling                                           | `unit/sim/effects.test.ts`        |
+| Match phases: flow, locks, resets, every win condition                                                       | `unit/sim/phase.test.ts`          |
+| Combat: damage, shields, KO, respawn, lives, team credit                                                     | `unit/sim/combat.test.ts`         |
+| Projectiles: fire/cooldown, heading, obstacles, hits, friendly fire                                          | `unit/sim/projectiles.test.ts`    |
+| Tag and infection: assignment, transfer, grace, scoring                                                      | `unit/sim/tag.test.ts`            |
+| Ball: kicks, bounces, goals, own goals                                                                       | `unit/sim/ball.test.ts`           |
+| Zones: hill ownership/contest/scoring, checkpoints and laps                                                  | `unit/sim/zones.test.ts`          |
+| Items: flags (take/return/drop/deliver), crown (steal, carry score)                                          | `unit/sim/items.test.ts`          |
+| Bots: caps, ids, seek/chase/flee/shoot, no hidden randomness                                                 | `unit/sim/bots.test.ts`           |
+| Every game mode: determinism + snapshot restore + resume, 300+ ticks                                         | `unit/sim/presets.test.ts`        |
+| Snapshot round-trip fidelity (every system enabled)                                                          | `unit/sim/world.snapshot.test.ts` |
+| Determinism, replay, split-and-resume                                                                        | `unit/sim/determinism.test.ts`    |
+| Protocol parsing incl. hostile input, kit fields, ceilings                                                   | `unit/net/protocol.test.ts`       |
+| Host election, virtual network                                                                               | `unit/net/transport.test.ts`      |
+| Prediction, reconciliation, interpolation                                                                    | `unit/net/prediction.test.ts`     |
+| Sessions: 1/2/3 peers, late joiners, loss, migration, malicious peers                                        | `integration/session.test.ts`     |
+| Kit over the network: tag, shooting, KO/respawn, goals, phases, bots surviving host migration, carried items | `integration/gamekit.test.ts`     |
+| Lobby, rendering, HUD, keyboard                                                                              | `e2e/smoke.spec.ts`               |
+| Two real tabs: discovery, roster, migration, isolation                                                       | `e2e/multiplayer.spec.ts`         |
+| Modes end-to-end: phases run, bots fill rooms, mode picker, HUD                                              | `e2e/gamekit.spec.ts`             |
+| Phone: thumbstick, action buttons, follow-camera, framing, install                                           | `e2e/mobile.spec.ts`              |
+| Asset manifest parsing and attribution rules                                                                 | `unit/shared/manifest.test.ts`    |
 
 ## Two tests that are load-bearing
 

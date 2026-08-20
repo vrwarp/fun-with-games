@@ -1,8 +1,11 @@
+import { DEFAULT_MODE_ID, GAME_MODES, isGameModeId, type GameModeId } from '../shared/modes.js';
+
 /** Player-chosen settings collected before joining a room. */
 export interface LobbyResult {
   name: string;
   color: string;
   roomId: string;
+  modeId: GameModeId;
 }
 
 const PALETTE = [
@@ -33,8 +36,10 @@ export class Lobby {
   #nameInput: HTMLInputElement;
   #roomInput: HTMLInputElement;
   #colorInput: HTMLInputElement;
+  #modeSelect: HTMLSelectElement;
+  #modeTagline: HTMLElement;
 
-  constructor(parent: HTMLElement, defaults: { roomId: string }) {
+  constructor(parent: HTMLElement, defaults: { roomId: string; modeId?: GameModeId }) {
     this.root = document.createElement('div');
     this.root.className = 'lobby';
     this.root.dataset['testid'] = 'lobby';
@@ -53,7 +58,7 @@ export class Lobby {
     const subtitle = document.createElement('p');
     subtitle.className = 'lobby__subtitle';
     subtitle.textContent =
-      'A peer-to-peer arena. Share the room link and collect more shards than anyone else.';
+      'A peer-to-peer arena. Pick a game, share the room link, play from any phone.';
 
     this.#nameInput = createInput({
       label: 'Display name',
@@ -71,6 +76,28 @@ export class Lobby {
       required: true,
     });
 
+    const modeField = document.createElement('label');
+    modeField.className = 'lobby__field';
+    const modeLabel = document.createElement('span');
+    modeLabel.className = 'lobby__label';
+    modeLabel.textContent = 'Game mode';
+    this.#modeSelect = document.createElement('select');
+    this.#modeSelect.className = 'lobby__input lobby__select';
+    this.#modeSelect.dataset['testid'] = 'mode-select';
+    for (const mode of GAME_MODES) {
+      const option = document.createElement('option');
+      option.value = mode.id;
+      option.textContent = mode.title;
+      this.#modeSelect.append(option);
+    }
+    this.#modeSelect.value = defaults.modeId ?? DEFAULT_MODE_ID;
+    this.#modeTagline = document.createElement('span');
+    this.#modeTagline.className = 'lobby__mode-tagline';
+    this.#modeTagline.dataset['testid'] = 'mode-tagline';
+    this.#modeSelect.addEventListener('change', () => this.#refreshTagline());
+    modeField.append(modeLabel, this.#modeSelect, this.#modeTagline);
+    this.#refreshTagline();
+
     this.#colorInput = document.createElement('input');
     this.#colorInput.type = 'hidden';
     this.#colorInput.value = readStored(COLOR_STORAGE_KEY) ?? pickColor();
@@ -86,13 +113,15 @@ export class Lobby {
     const hint = document.createElement('p');
     hint.className = 'lobby__hint';
     hint.textContent =
-      'No account, no server. Peers find each other over a decentralized relay, then talk directly.';
+      'No account, no server. Peers find each other over a decentralized relay, then talk directly. ' +
+      'Everyone in a room plays the mode its link names.';
 
     card.append(
       title,
       subtitle,
       this.#nameInput.parentElement ?? this.#nameInput,
       this.#roomInput.parentElement ?? this.#roomInput,
+      modeField,
       swatches,
       this.#colorInput,
       join,
@@ -147,15 +176,21 @@ export class Lobby {
     return wrapper;
   }
 
+  #refreshTagline(): void {
+    const mode = GAME_MODES.find((entry) => entry.id === this.#modeSelect.value);
+    this.#modeTagline.textContent = mode?.tagline ?? '';
+  }
+
   #submit(): void {
     const name = this.#nameInput.value.trim() || randomName();
     const roomId = normalizeRoomId(this.#roomInput.value);
     const color = this.#colorInput.value;
+    const modeId = isGameModeId(this.#modeSelect.value) ? this.#modeSelect.value : DEFAULT_MODE_ID;
 
     writeStored(NAME_STORAGE_KEY, name);
     writeStored(COLOR_STORAGE_KEY, color);
 
-    this.#resolve?.({ name, color, roomId });
+    this.#resolve?.({ name, color, roomId, modeId });
     this.#resolve = null;
   }
 }

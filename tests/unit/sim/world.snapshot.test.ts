@@ -4,7 +4,30 @@ import { World } from '@/sim/world.js';
 import type { WorldSnapshot } from '@/sim/types.js';
 
 const profile = { name: 'tester', color: '#4cc9f0' };
-const config = makeSimConfig({ obstacleCount: 3, pickupCount: 4, arenaHalfExtentX: 10 });
+
+/**
+ * Every kit system enabled at once. THIS is what gives the round-trip test
+ * its teeth: a field added to any entity but forgotten in the snapshot (or
+ * in `applySnapshot` / `checksum`) fails here. If you add a system, turn it
+ * on here too.
+ */
+const config = makeSimConfig({
+  obstacleCount: 3,
+  pickupCount: 4,
+  arenaHalfExtentX: 10,
+  phases: { enabled: true, minPlayers: 1, countdownTicks: 10, playTicks: 600 },
+  teams: { count: 2 },
+  combat: { enabled: true, maxHp: 3, lives: 2 },
+  projectiles: { enabled: true, cooldownTicks: 4 },
+  tag: { enabled: true },
+  ball: { enabled: true },
+  zones: [
+    { kind: 'hill', x: 0, z: 0, radius: 3, team: -1, order: 0 },
+    { kind: 'goal', x: -8, z: 0, radius: 2, team: 0, order: 0 },
+  ],
+  items: [{ kind: 'crown', homeX: 3, homeZ: 3, team: -1 }],
+  pickupWeights: { score: 0.5, speed: 0.2, shield: 0.2, heal: 0.1 },
+});
 
 function makeWorld(seed = 31): World {
   return new World({ seed, config });
@@ -14,9 +37,12 @@ function busyWorld(seed = 31): World {
   const world = makeWorld(seed);
   world.addPlayer('alice', profile);
   world.addPlayer('bob', { name: 'bob', color: '#f72585' });
-  world.setInput('alice', { seq: 3, moveX: 1, moveZ: 0.4, sprint: true });
-  world.setInput('bob', { seq: 2, moveX: -0.5, moveZ: 1, sprint: false });
-  world.stepMany(40);
+  world.addBot();
+  world.setInput('alice', { seq: 3, moveX: 1, moveZ: 0.4, sprint: true, buttons: 1 });
+  world.setInput('bob', { seq: 2, moveX: -0.5, moveZ: 1, sprint: false, buttons: 0 });
+  // Long enough to leave the countdown, fire projectiles, tag someone and
+  // touch the ball — the snapshot should be full of in-flight state.
+  world.stepMany(80);
   return world;
 }
 
@@ -41,7 +67,7 @@ describe('World snapshots', () => {
     restored.applySnapshot(source.snapshot());
 
     for (const world of [source, restored]) {
-      world.setInput('alice', { seq: 99, moveX: 0.2, moveZ: -1, sprint: false });
+      world.setInput('alice', { seq: 99, moveX: 0.2, moveZ: -1, sprint: false, buttons: 0 });
       world.stepMany(30);
     }
 
@@ -66,8 +92,8 @@ describe('World snapshots', () => {
 
     target.applySnapshot(source.snapshot());
 
-    expect(target.players().map((p) => p.id)).toEqual(['alice', 'bob']);
-    expect(joined).toHaveBeenCalledTimes(2);
+    expect(target.players().map((p) => p.id)).toEqual(['alice', 'bob', 'zz-bot-1']);
+    expect(joined).toHaveBeenCalledTimes(3);
   });
 
   it('removes players absent from the snapshot', () => {
@@ -117,13 +143,13 @@ describe('World checksum', () => {
     b.addPlayer('bob', profile);
     b.addPlayer('alice', profile);
 
-    // Spawn slots are handed out in join order, so positions differ; align
-    // them before comparing, and the checksum should then agree.
+    // Spawn slots and team assignments are handed out in join order, so they
+    // differ; align them before comparing, and the checksum should agree.
     for (const world of [a, b]) {
       const alice = world.getPlayer('alice');
       const bob = world.getPlayer('bob');
-      if (alice) Object.assign(alice, { x: 1, z: 2, vx: 0, vz: 0 });
-      if (bob) Object.assign(bob, { x: 3, z: 4, vx: 0, vz: 0 });
+      if (alice) Object.assign(alice, { x: 1, z: 2, vx: 0, vz: 0, team: 0 });
+      if (bob) Object.assign(bob, { x: 3, z: 4, vx: 0, vz: 0, team: 1 });
     }
 
     expect(a.checksum()).toBe(b.checksum());

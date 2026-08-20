@@ -29,6 +29,7 @@ function inputScript(seed: number, ticks: number, playerCount: number): PlayerIn
         moveX: rng.range(-1, 1),
         moveZ: rng.range(-1, 1),
         sprint: rng.next() > 0.7,
+        buttons: rng.next() > 0.8 ? 1 : 0,
       });
     }
     script.push(perPlayer);

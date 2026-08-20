@@ -1,8 +1,9 @@
 import './ui/styles.css';
 
 import { createLogger, setLogLevel, type LogLevel } from './shared/logger.js';
+import { DEFAULT_MODE_ID, isGameModeId, modeInfo, type GameModeId } from './shared/modes.js';
 import { hashStringToSeed } from './sim/rng.js';
-import { DEFAULT_SIM_CONFIG } from './sim/config.js';
+import { modeConfig } from './sim/presets.js';
 import { NetSession } from './net/session.js';
 import type { Transport } from './net/transport.js';
 import { createBroadcastTransport } from './net/transports/broadcast.js';
@@ -11,9 +12,12 @@ import { Mesh } from '@babylonjs/core/Meshes/mesh.js';
 import { Renderer } from './render/renderer.js';
 import { KeyboardInput, mergeIntents } from './render/input.js';
 import { TouchInput } from './render/touch.js';
+import { TouchButtons } from './render/buttons.js';
+import { GameAudio } from './render/audio.js';
 import { keepScreenAwake, tapFeedback } from './render/device.js';
 import { loadManifest, loadModel } from './render/assets.js';
 import type { AssetManifest } from './shared/manifest.js';
+import { Announcer } from './ui/announcer.js';
 import { Credits } from './ui/credits.js';
 import { Hud } from './ui/hud.js';
 import { Lobby, normalizeRoomId, randomRoomId } from './ui/lobby.js';
@@ -28,9 +32,11 @@ const APP_ID = 'fun-with-games-starter';
 
 interface LaunchOptions {
   roomId: string;
+  modeId: GameModeId;
   name: string;
   color: string;
   transportKind: 'trystero' | 'broadcast';
+  botCount: number;
 }
 
 void bootstrap();
@@ -43,25 +49,30 @@ async function bootstrap(): Promise<void> {
   if (!app) throw new Error('missing #app element');
 
   const roomId = normalizeRoomId(params.get('room') ?? randomRoomId());
+  const rawMode = params.get('mode');
+  const modeId: GameModeId = isGameModeId(rawMode) ? rawMode : DEFAULT_MODE_ID;
   const transportKind = params.get('net') === 'broadcast' ? 'broadcast' : 'trystero';
+  const botCount = clampBotCount(params.get('bots'));
 
   // `?autojoin=1` skips the lobby. Used by the e2e tests, and handy when you
   // want a shareable link that drops straight into a room.
   if (params.get('autojoin') === '1') {
     await launch(app, {
       roomId,
+      modeId,
       name: params.get('name') ?? 'player',
       color: params.get('color') ?? '#4cc9f0',
       transportKind,
+      botCount,
     });
     return;
   }
 
-  const lobby = new Lobby(app, { roomId });
+  const lobby = new Lobby(app, { roomId, modeId });
   const choice = await lobby.waitForJoin();
   lobby.dispose();
 
-  await launch(app, { ...choice, transportKind });
+  await launch(app, { ...choice, transportKind, botCount });
 }
 
 async function launch(app: HTMLElement, options: LaunchOptions): Promise<void> {
@@ -73,7 +84,8 @@ async function launch(app: HTMLElement, options: LaunchOptions): Promise<void> {
   app.append(canvas);
 
   let renderer: Renderer;
-  const config = DEFAULT_SIM_CONFIG;
+  const mode = modeInfo(options.modeId);
+  const config = modeConfig(options.modeId);
 
   // The world seed comes from the room id, so every peer builds an identical
   // arena without anyone having to send the geometry.
@@ -98,7 +110,57 @@ async function launch(app: HTMLElement, options: LaunchOptions): Promise<void> {
 
   renderer.setLocalPlayer(session.selfId);
 
-  const hud = new Hud(app);
+  const hud = new Hud(app, {
+    mode,
+    onAddBot: () => void session.addBot(),
+    onRemoveBot: () => void session.removeBot(),
+  });
+
+  // Procedural blips — no audio files, and `?mute=1` for quiet demos. The
+  // announcer already knows what just happened, so it drives the sounds.
+  const audio = new GameAudio({
+    muted: new URLSearchParams(window.location.search).get('mute') === '1',
+  });
+  audio.attach();
+  const announcer = new Announcer(app, session.selfId, {
+    onCue: (cue) => {
+      switch (cue) {
+        case 'go':
+          audio.play('go');
+          break;
+        case 'tagged':
+        case 'frozen':
+          audio.play('tagged');
+          tapFeedback(30);
+          break;
+        case 'ko':
+          audio.play('ko');
+          tapFeedback(60);
+          break;
+        case 'respawn':
+          audio.play('respawn');
+          break;
+        case 'goal':
+          audio.play('goal');
+          break;
+        case 'lap':
+          audio.play('lap');
+          break;
+        case 'item':
+          audio.play('crown');
+          break;
+        case 'powerup':
+          audio.play('powerup');
+          break;
+        case 'pickup':
+          audio.play('score');
+          tapFeedback();
+          break;
+        case 'untagged':
+          break;
+      }
+    },
+  });
   // Created once the manifest resolves, so it can list real licences.
   let credits: Credits | null = null;
   const input = new KeyboardInput(window);
@@ -108,6 +170,19 @@ async function launch(app: HTMLElement, options: LaunchOptions): Promise<void> {
   // It reveals itself on touch devices and stays out of the way otherwise.
   const touch = new TouchInput(app);
   touch.attach();
+
+  // Action buttons appear only in modes that use them — a fire button with
+  // nothing to fire is just thumb clutter.
+  const buttons = new TouchButtons(app, {
+    primary: mode.usesPrimaryAction,
+    secondary: mode.usesSecondaryAction ?? false,
+  });
+  buttons.attach();
+
+  // `?bots=N` pre-fills the arena. Only the host actually spawns them
+  // (`addBot` refuses on clients), so a shared link with bots "just works"
+  // for the first person in and is harmless for everyone after.
+  for (let i = 0; i < options.botCount; i++) session.addBot();
 
   // The manifest is read once and shared: the renderer needs it to upgrade the
   // player model, and the credits panel needs it to show licences. Art is
@@ -131,7 +206,8 @@ async function launch(app: HTMLElement, options: LaunchOptions): Promise<void> {
   window.addEventListener('orientationchange', onOrientationChange);
 
   let lastFrameMs = performance.now();
-  let lastLocalScore = 0;
+  let lastCountdownSecond = -1;
+  let lastPhaseId = '';
 
   renderer.engine.runRenderLoop(() => {
     const now = performance.now();
@@ -139,19 +215,28 @@ async function launch(app: HTMLElement, options: LaunchOptions): Promise<void> {
     lastFrameMs = now;
 
     const yaw = renderer.cameraYaw;
-    const intent = mergeIntents(touch.read(yaw), input.read(yaw));
-    session.setIntent(intent.moveX, intent.moveZ, intent.sprint);
+    const intent = mergeIntents(touch.read(yaw), buttons.read(), input.read(yaw));
+    session.setIntent(intent.moveX, intent.moveZ, intent.sprint, intent.buttons);
     session.update(now);
 
     const state = session.sample(now);
     renderer.renderFrame(state, deltaSeconds);
+    // The announcer diffs rendered states, so feedback (toasts, sounds,
+    // haptics via the cue callback above) is identical on host and clients.
+    announcer.update(state);
 
-    // Buzz on scoring. Derived from the rendered score rather than a
-    // simulation event, so it works identically on the host and on clients —
-    // a client never runs the pickup system that raises the event.
-    const localScore = state.players.find((player) => player.id === session.selfId)?.score ?? 0;
-    if (localScore > lastLocalScore) tapFeedback();
-    lastLocalScore = localScore;
+    // Tick during the last three countdown seconds; fanfare on a round end.
+    if (state.phase.id === 'countdown') {
+      const second = Math.ceil(state.phase.remainingSeconds);
+      if (second !== lastCountdownSecond && second <= 3 && second > 0) {
+        audio.play('countdown');
+      }
+      lastCountdownSecond = second;
+    } else {
+      lastCountdownSecond = -1;
+    }
+    if (state.phase.id === 'ended' && lastPhaseId === 'playing') audio.play('win');
+    lastPhaseId = state.phase.id;
 
     hud.update(state, {
       roomId: options.roomId,
@@ -171,6 +256,9 @@ async function launch(app: HTMLElement, options: LaunchOptions): Promise<void> {
     releaseWakeLock();
     input.detach();
     touch.dispose();
+    buttons.dispose();
+    audio.dispose();
+    announcer.dispose();
     credits?.dispose();
     hud.dispose();
     renderer.dispose();
@@ -178,16 +266,20 @@ async function launch(app: HTMLElement, options: LaunchOptions): Promise<void> {
   };
   window.addEventListener('pagehide', teardown, { once: true });
 
-  exposeTestHandle(session, renderer);
+  exposeTestHandle(session, renderer, options.modeId);
 }
 
 function createTransport(options: LaunchOptions): Transport {
+  // The mode is part of the room name, so peers running different rules can
+  // never meet: every peer in a room is guaranteed the same SimConfig, which
+  // is a precondition for prediction and determinism.
+  const transportRoom = `${options.roomId}--${options.modeId}`;
   if (options.transportKind === 'broadcast') {
     log.info('using BroadcastChannel transport (same-browser only)');
-    return createBroadcastTransport({ roomId: options.roomId });
+    return createBroadcastTransport({ roomId: transportRoom });
   }
   log.info('using Trystero WebRTC transport');
-  return createTrysteroTransport({ appId: APP_ID, roomId: options.roomId });
+  return createTrysteroTransport({ appId: APP_ID, roomId: transportRoom });
 }
 
 /**
@@ -226,8 +318,16 @@ async function applyOptionalAssets(renderer: Renderer, manifest: AssetManifest):
 function syncUrl(options: LaunchOptions): void {
   const url = new URL(window.location.href);
   url.searchParams.set('room', options.roomId);
+  if (options.modeId !== DEFAULT_MODE_ID) url.searchParams.set('mode', options.modeId);
+  else url.searchParams.delete('mode');
   if (options.transportKind === 'broadcast') url.searchParams.set('net', 'broadcast');
   window.history.replaceState(null, '', url);
+}
+
+function clampBotCount(raw: string | null): number {
+  const parsed = Number.parseInt(raw ?? '', 10);
+  if (!Number.isFinite(parsed)) return 0;
+  return Math.max(0, Math.min(8, parsed));
 }
 
 function readLogLevel(params: URLSearchParams): LogLevel {
@@ -252,7 +352,7 @@ function showFatalError(app: HTMLElement, message: string): void {
  * happened to update". Read-only on purpose: tests observe, they do not drive
  * the simulation from outside.
  */
-function exposeTestHandle(session: NetSession, renderer: Renderer): void {
+function exposeTestHandle(session: NetSession, renderer: Renderer, modeId: GameModeId): void {
   Object.defineProperty(window, '__FWG__', {
     configurable: true,
     value: {
@@ -270,6 +370,15 @@ function exposeTestHandle(session: NetSession, renderer: Renderer): void {
       },
       get tick() {
         return session.world.tick;
+      },
+      get mode() {
+        return modeId;
+      },
+      get phase() {
+        return session.world.phase.id;
+      },
+      get botCount() {
+        return session.botCount;
       },
       get playerCount() {
         return session.sample(performance.now()).players.length;

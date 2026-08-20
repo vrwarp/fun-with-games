@@ -69,6 +69,8 @@ body {
    iOS callout menu. */
 .hud,
 .touch,
+.touch-buttons,
+.toasts,
 .lobby__join,
 .lobby__swatch,
 .hud__copy {
@@ -152,6 +154,17 @@ body {
 .lobby__input:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
+}
+
+.lobby__select {
+  appearance: none;
+  cursor: pointer;
+}
+
+.lobby__mode-tagline {
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  line-height: 1.4;
 }
 
 .lobby__swatches {
@@ -322,6 +335,167 @@ body {
   margin: 0 0.05rem;
 }
 
+.hud__goal {
+  font-size: 0.7rem;
+  color: var(--text-dim);
+  line-height: 1.35;
+}
+
+.hud__vitals {
+  font-size: 0.95rem;
+  color: #ff7b90;
+  letter-spacing: 0.08em;
+}
+
+.hud__bots {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.hud__bot-button {
+  min-height: var(--tap);
+  min-width: var(--tap);
+  padding: 0.3rem 0.6rem;
+  font-size: 0.78rem;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.hud__score-row.is-out {
+  opacity: 0.45;
+}
+
+/* The round timer and team scores. On a phone they sit top-RIGHT: the panel
+   already owns the top-left, and a centred strip would collide with it on a
+   narrow screen. Wide screens centre it (see the min-width block below). */
+.hud__center-top {
+  position: absolute;
+  top: max(0.75rem, env(safe-area-inset-top));
+  right: max(0.75rem, env(safe-area-inset-right));
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.35rem;
+  pointer-events: none;
+}
+
+.hud__teams {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.hud__teams[hidden],
+.hud__timer[hidden],
+.hud__banner[hidden] {
+  display: none;
+}
+
+.hud__team-chip {
+  padding: 0.25rem 0.6rem;
+  font-size: 0.82rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  background: var(--panel);
+  border: 2px solid transparent;
+  border-radius: 999px;
+  backdrop-filter: blur(8px);
+}
+
+.hud__timer {
+  padding: 0.15rem 0.65rem;
+  font-size: 1.05rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 999px;
+  backdrop-filter: blur(8px);
+}
+
+.hud__timer.is-urgent {
+  color: #ff5d6c;
+}
+
+/* The phase banner sits above the centre of the arena, not over the player's
+   character (which is centre-screen), so gameplay stays visible through
+   countdowns. */
+.hud__banner {
+  position: absolute;
+  top: 22%;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.2rem;
+  text-align: center;
+  pointer-events: none;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.8);
+}
+
+.hud__banner-title {
+  font-size: 2.6rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.hud__banner-subtitle {
+  font-size: 0.95rem;
+  color: var(--text);
+  opacity: 0.85;
+}
+
+/* ---------------------------------------------------------------- toasts */
+
+.toasts {
+  position: absolute;
+  left: 50%;
+  bottom: 28%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.4rem;
+  pointer-events: none;
+  z-index: 6;
+}
+
+.toasts__item {
+  padding: 0.45rem 0.95rem;
+  font-size: 0.95rem;
+  font-weight: 700;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 999px;
+  backdrop-filter: blur(8px);
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.6);
+  animation:
+    toast-in 0.18s ease-out,
+    toast-out 0.3s ease-in 2.2s forwards;
+}
+
+.toasts__item.is-big {
+  font-size: 1.6rem;
+  padding: 0.5rem 1.4rem;
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(0.5rem) scale(0.92);
+  }
+}
+
+@keyframes toast-out {
+  to {
+    opacity: 0;
+    transform: translateY(-0.4rem);
+  }
+}
+
 /* ------------------------------------------------------- touch controls */
 
 .touch {
@@ -372,6 +546,47 @@ body {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
   pointer-events: none;
   will-change: transform;
+}
+
+/* Action buttons sit bottom-right, opposite the thumbstick — right thumb
+   fires while the left steers. Same contrast treatment as the stick: they
+   must read over any arena content. */
+.touch-buttons {
+  position: absolute;
+  right: max(1.25rem, env(safe-area-inset-right));
+  bottom: max(5rem, calc(env(safe-area-inset-bottom) + 4.5rem));
+  display: flex;
+  align-items: flex-end;
+  gap: 0.75rem;
+  z-index: 5;
+}
+
+.touch-buttons[hidden] {
+  display: none;
+}
+
+.touch-buttons__button {
+  width: 4rem;
+  height: 4rem;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 1.3rem;
+  font-weight: 800;
+  color: var(--text);
+  background: rgba(10, 12, 18, 0.62);
+  border: 2px solid rgba(255, 255, 255, 0.22);
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.45),
+    0 6px 18px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(6px);
+  touch-action: none;
+  pointer-events: auto;
+}
+
+.touch-buttons__button.is-held {
+  border-color: var(--accent);
+  background: rgba(76, 201, 240, 0.28);
 }
 
 /* --------------------------------------------------------------- credits */
@@ -562,6 +777,14 @@ body {
   .hud__status {
     font-size: 0.75rem;
     padding-top: 0.5rem;
+  }
+
+  /* Wide screens have room to centre the timer and team scores. */
+  .hud__center-top {
+    right: auto;
+    left: 50%;
+    transform: translateX(-50%);
+    align-items: center;
   }
 }
 

@@ -47,7 +47,12 @@ describe('pickups', () => {
     player.z = pickup.z;
     world.step();
 
-    expect(collected).toHaveBeenCalledWith({ playerId: 'alice', pickupId: pickup.id, score: 3 });
+    expect(collected).toHaveBeenCalledWith({
+      playerId: 'alice',
+      pickupId: pickup.id,
+      kind: 'score',
+      score: 3,
+    });
   });
 
   it('respawns after the configured delay, somewhere legal', () => {

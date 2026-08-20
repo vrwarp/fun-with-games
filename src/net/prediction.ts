@@ -1,8 +1,20 @@
 import { clamp, lerp, lerpAngle } from '../shared/math.js';
 import { tickDeltaSeconds, type SimConfig } from '../sim/config.js';
+import { activeEffects } from '../sim/systems/effects.js';
 import { integratePlayer } from '../sim/systems/movement.js';
+import { isMovementLocked } from '../sim/systems/phase.js';
 import type { Obstacle, PlayerInput, PlayerState, WorldSnapshot } from '../sim/types.js';
-import type { RenderPickup, RenderPlayer, RenderState } from './view.js';
+import {
+  EMPTY_RENDER_STATE,
+  type RenderBall,
+  type RenderItem,
+  type RenderPhase,
+  type RenderPlayer,
+  type RenderPickup,
+  type RenderProjectile,
+  type RenderState,
+  type RenderZone,
+} from './view.js';
 
 export interface ClientViewOptions {
   selfId: string;
@@ -47,11 +59,16 @@ const BUFFER_RETENTION_MS = 1500;
  *    drift instead of a teleport.
  *  - **Remote players arrive at 15 Hz but render at 60.** They are drawn a
  *    fixed delay in the past and interpolated between the two snapshots
- *    straddling that moment (*entity interpolation*).
+ *    straddling that moment (*entity interpolation*). The ball and
+ *    projectiles get the same treatment.
  *  - **The local player advances at 30 Hz but renders at 60.** It is drawn
  *    between the previous simulation step and the current one, using the
  *    caller's sub-tick fraction (*render interpolation*). Without this the
  *    character stutters against smoothly-scrolling scenery.
+ *
+ * Prediction replays `integratePlayer` with the tick and movement-lock state
+ * derived from the latest snapshot, so timed effects (frozen, KO) and phase
+ * freezes are respected mid-replay exactly as the host applies them.
  *
  * Runs headlessly: no DOM, no Babylon, no timers. `now` is always passed in,
  * which is what lets the whole thing be tested against a virtual clock.
@@ -78,6 +95,10 @@ export class ClientView {
    */
   #predictedPrevious: { x: number; z: number; heading: number } | null = null;
   #pendingInputs: PlayerInput[] = [];
+  /** The tick the next predicted input will simulate. */
+  #predictedTick = 0;
+  /** Movement lock derived from the latest snapshot's phase. */
+  #movementLocked = false;
 
   /** Residual correction being blended out, in world units. */
   #errorX = 0;
@@ -127,7 +148,10 @@ export class ClientView {
       this.#config,
       this.#obstacles,
       tickDeltaSeconds(this.#config),
+      this.#predictedTick,
+      this.#movementLocked,
     );
+    this.#predictedTick += 1;
   }
 
   /** Feeds in an authoritative snapshot and reconciles the local player. */
@@ -139,6 +163,7 @@ export class ClientView {
 
     this.#buffer.push({ snapshot, receivedAt });
     this.#pruneBuffer(receivedAt);
+    this.#movementLocked = this.#config.phases.enabled && isMovementLocked(snapshot.phase);
     this.#reconcile(snapshot);
   }
 
@@ -162,15 +187,16 @@ export class ClientView {
    */
   sample(now: number, hostId: string, tickAlpha = 1): RenderState {
     const latest = this.#buffer[this.#buffer.length - 1];
-    if (!latest) return { tick: 0, players: [], pickups: [] };
+    if (!latest) return EMPTY_RENDER_STATE;
 
     const renderTime = now - this.#interpolationDelayMs;
     const [from, to, alpha] = this.#findInterpolationPair(renderTime);
+    const latestTick = latest.snapshot.tick;
 
     const players: RenderPlayer[] = [];
     for (const target of to.snapshot.players) {
       if (target.id === this.#selfId && this.#predicted) {
-        players.push(this.#localPlayer(this.#predicted, hostId, tickAlpha));
+        players.push(this.#localPlayer(this.#predicted, latest.snapshot, hostId, tickAlpha));
         continue;
       }
 
@@ -183,6 +209,15 @@ export class ClientView {
         z: previous ? lerp(previous.z, target.z, alpha) : target.z,
         heading: previous ? lerpAngle(previous.heading, target.heading, alpha) : target.heading,
         score: target.score,
+        team: target.team,
+        role: target.role,
+        hp: target.hp,
+        lives: target.lives,
+        effects: activeEffects(target, latestTick),
+        carrying: this.#carrying(latest.snapshot, target.id),
+        checkpoint: target.checkpoint,
+        lap: target.lap,
+        isBot: target.isBot,
         isLocal: target.id === this.#selfId,
         isHost: target.id === hostId,
       });
@@ -193,10 +228,22 @@ export class ClientView {
       id: p.id,
       x: p.x,
       z: p.z,
+      kind: p.kind,
       active: p.active,
     }));
 
-    return { tick: latest.snapshot.tick, players, pickups };
+    return {
+      tick: latestTick,
+      phase: this.#phaseView(latest.snapshot),
+      players,
+      pickups,
+      teamScores: [...latest.snapshot.teamScores],
+      ball: this.#ballView(from.snapshot, to.snapshot, alpha),
+      projectiles: this.#projectileViews(from.snapshot, to.snapshot, alpha),
+      zones: this.#zoneViews(latest.snapshot),
+      items: this.#itemViews(latest.snapshot),
+      maxHp: this.#config.combat.enabled ? this.#config.combat.maxHp : 0,
+    };
   }
 
   reset(): void {
@@ -204,6 +251,8 @@ export class ClientView {
     this.#predicted = null;
     this.#predictedPrevious = null;
     this.#pendingInputs = [];
+    this.#predictedTick = 0;
+    this.#movementLocked = false;
     this.#errorX = 0;
     this.#errorZ = 0;
     this.#errorRemainingMs = 0;
@@ -211,7 +260,87 @@ export class ClientView {
 
   // -------------------------------------------------------------- internals
 
-  #localPlayer(predicted: PlayerState, hostId: string, tickAlpha: number): RenderPlayer {
+  #phaseView(snapshot: WorldSnapshot): RenderPhase {
+    const phase = snapshot.phase;
+    const remainingTicks = phase.endTick > 0 ? Math.max(0, phase.endTick - snapshot.tick) : 0;
+    const winner = phase.winnerId
+      ? snapshot.players.find((p) => p.id === phase.winnerId)
+      : undefined;
+    return {
+      id: phase.id,
+      round: phase.round,
+      remainingSeconds: remainingTicks / this.#config.tickRate,
+      winnerId: phase.winnerId,
+      winnerName: winner?.name ?? '',
+      winnerTeam: phase.winnerTeam,
+    };
+  }
+
+  #ballView(from: WorldSnapshot, to: WorldSnapshot, alpha: number): RenderBall | null {
+    if (!to.ball) return null;
+    if (!from.ball) return { x: to.ball.x, z: to.ball.z };
+    return {
+      x: lerp(from.ball.x, to.ball.x, alpha),
+      z: lerp(from.ball.z, to.ball.z, alpha),
+    };
+  }
+
+  #projectileViews(from: WorldSnapshot, to: WorldSnapshot, alpha: number): RenderProjectile[] {
+    return to.projectiles.map((projectile) => {
+      const previous = from.projectiles.find((p) => p.id === projectile.id);
+      return {
+        id: projectile.id,
+        ownerId: projectile.ownerId,
+        x: previous ? lerp(previous.x, projectile.x, alpha) : projectile.x,
+        z: previous ? lerp(previous.z, projectile.z, alpha) : projectile.z,
+      };
+    });
+  }
+
+  #zoneViews(snapshot: WorldSnapshot): RenderZone[] {
+    return this.#config.zones.map((spec, id) => {
+      const runtime = snapshot.zones.find((zone) => zone.id === id);
+      return {
+        id,
+        kind: spec.kind,
+        x: spec.x,
+        z: spec.z,
+        radius: spec.radius,
+        team: spec.team,
+        order: spec.order,
+        ownerTeam: runtime?.ownerTeam ?? -1,
+        ownerId: runtime?.ownerId ?? '',
+      };
+    });
+  }
+
+  #itemViews(snapshot: WorldSnapshot): RenderItem[] {
+    return snapshot.items.map((item) => {
+      const spec = this.#config.items[item.id];
+      return {
+        id: item.id,
+        kind: spec?.kind ?? 'crown',
+        x: item.x,
+        z: item.z,
+        carrierId: item.carrierId,
+        team: spec?.team ?? -1,
+        atHome: item.atHome,
+      };
+    });
+  }
+
+  #carrying(snapshot: WorldSnapshot, playerId: string): '' | 'flag' | 'crown' {
+    const item = snapshot.items.find((entry) => entry.carrierId === playerId);
+    if (!item) return '';
+    return this.#config.items[item.id]?.kind ?? '';
+  }
+
+  #localPlayer(
+    predicted: PlayerState,
+    latest: WorldSnapshot,
+    hostId: string,
+    tickAlpha: number,
+  ): RenderPlayer {
     const blend = this.#errorRemainingMs > 0 ? this.#errorRemainingMs / this.#errorSmoothingMs : 0;
 
     // Draw between the previous simulation step and the current one. This
@@ -234,6 +363,15 @@ export class ClientView {
       z: z + this.#errorZ * blend,
       heading,
       score: predicted.score,
+      team: predicted.team,
+      role: predicted.role,
+      hp: predicted.hp,
+      lives: predicted.lives,
+      effects: activeEffects(predicted, latest.tick),
+      carrying: this.#carrying(latest, predicted.id),
+      checkpoint: predicted.checkpoint,
+      lap: predicted.lap,
+      isBot: false,
       isLocal: true,
       isHost: predicted.id === hostId,
     };
@@ -253,16 +391,31 @@ export class ClientView {
     const previousX = this.#predicted?.x ?? authoritative.x;
     const previousZ = this.#predicted?.z ?? authoritative.z;
 
-    const rebuilt: PlayerState = { ...authoritative };
+    const rebuilt: PlayerState = {
+      ...authoritative,
+      input: { ...authoritative.input },
+      effects: { ...authoritative.effects },
+    };
     this.#pendingInputs = this.#pendingInputs.filter(
       (input) => input.seq > authoritative.lastInputSeq,
     );
 
     const dt = tickDeltaSeconds(this.#config);
+    let replayTick = snapshot.tick;
     for (const input of this.#pendingInputs) {
-      integratePlayer(rebuilt, input, this.#config, this.#obstacles, dt);
+      integratePlayer(
+        rebuilt,
+        input,
+        this.#config,
+        this.#obstacles,
+        dt,
+        replayTick,
+        this.#movementLocked,
+      );
+      replayTick += 1;
     }
     this.#predicted = rebuilt;
+    this.#predictedTick = replayTick;
 
     // `#predictedPrevious` is deliberately left alone here. Reconciling does
     // not advance time — it re-derives the *same* tick from authoritative

@@ -11,6 +11,9 @@ interface FwgTestHandle {
   readonly isHost: boolean;
   readonly peerCount: number;
   readonly tick: number;
+  readonly mode: string;
+  readonly phase: 'lobby' | 'countdown' | 'playing' | 'ended';
+  readonly botCount: number;
   readonly playerCount: number;
   readonly players: ReadonlyArray<{
     id: string;

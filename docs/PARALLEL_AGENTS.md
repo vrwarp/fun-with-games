@@ -85,7 +85,11 @@ you edited.
 
 Roughly one module each, minimal shared-file contact:
 
-- A new gameplay system (`src/sim/systems/`) — hazards, power-ups, team scoring
+- A new game mode preset (`src/sim/presets.ts` + `src/shared/modes.ts`) —
+  two appended entries; see `docs/RECIPES.md` Tier 1
+- A new gameplay system (`src/sim/systems/`) — hazards, abilities, new rules
+  (the kit's phase/combat/tag/ball/zones/items systems live there already —
+  extend, don't duplicate)
 - A new transport (`src/net/transports/`) — WebSocket, self-hosted relay
 - Visual work (`src/render/`) — particles, post-processing, better lighting
 - HUD and menus (`src/ui/`) — scoreboard, settings, credits panel

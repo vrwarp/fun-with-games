@@ -20,6 +20,8 @@ interface PlayerView {
   material: StandardMaterial;
   name: string;
   color: string;
+  baseColor: Color3;
+  baseEmissive: Color3;
 }
 
 interface PickupView {
@@ -44,8 +46,8 @@ export class EntityViews {
 
   /** Prototype meshes; per-entity meshes are clones/instances of these. */
   #playerProto: Mesh;
-  #pickupProto: Mesh;
-  #pickupMaterial: StandardMaterial;
+  /** One prototype per pickup kind, so a speed boost reads differently. */
+  #pickupProtos = new Map<string, { mesh: Mesh; material: StandardMaterial }>();
 
   #spinRadians = 0;
 
@@ -62,18 +64,27 @@ export class EntityViews {
     this.#playerProto.isVisible = false;
     this.#playerProto.setEnabled(false);
 
-    this.#pickupProto = CreatePolyhedron(
-      'pickup:proto',
-      { type: 1, size: config.pickupRadius * 0.7 },
-      scene,
-    );
-    this.#pickupMaterial = new StandardMaterial('pickup:mat', scene);
-    this.#pickupMaterial.diffuseColor = Color3.FromHexString('#f5c518');
-    this.#pickupMaterial.emissiveColor = Color3.FromHexString('#5a4708');
-    this.#pickupMaterial.specularColor = new Color3(0.6, 0.6, 0.4);
-    this.#pickupProto.material = this.#pickupMaterial;
-    this.#pickupProto.isVisible = false;
-    this.#pickupProto.setEnabled(false);
+    const pickupColors: Record<string, { diffuse: string; emissive: string }> = {
+      score: { diffuse: '#f5c518', emissive: '#5a4708' },
+      speed: { diffuse: '#4cc9f0', emissive: '#0f4d5e' },
+      shield: { diffuse: '#9d4edd', emissive: '#3c1b5a' },
+      heal: { diffuse: '#06d6a0', emissive: '#02543e' },
+    };
+    for (const [kind, colors] of Object.entries(pickupColors)) {
+      const mesh = CreatePolyhedron(
+        `pickup:proto:${kind}`,
+        { type: 1, size: config.pickupRadius * 0.7 },
+        scene,
+      );
+      const material = new StandardMaterial(`pickup:mat:${kind}`, scene);
+      material.diffuseColor = Color3.FromHexString(colors.diffuse);
+      material.emissiveColor = Color3.FromHexString(colors.emissive);
+      material.specularColor = new Color3(0.6, 0.6, 0.4);
+      mesh.material = material;
+      mesh.isVisible = false;
+      mesh.setEnabled(false);
+      this.#pickupProtos.set(kind, { mesh, material });
+    }
   }
 
   /** Replaces the procedural player mesh with a loaded model, if one exists. */
@@ -96,6 +107,52 @@ export class EntityViews {
     this.#syncPickups(state.pickups);
   }
 
+  /**
+   * Status effects, drawn on the body itself rather than as extra meshes:
+   * "it" burns, frozen is icy, KO fades out, protected blinks. Cheap enough
+   * for a phone (a couple of colour writes per player per frame) and readable
+   * over any arena content because it changes the character, not the ground.
+   */
+  #applyStatus(view: PlayerView, player: RenderPlayer): void {
+    const material = view.material;
+    const body = view.body;
+
+    const isIt = player.role === 1;
+    const frozen = player.effects.includes('frozen') || player.effects.includes('stun');
+    const knockedOut = player.effects.includes('ko');
+    const protectedNow = player.effects.includes('safe') || player.effects.includes('shield');
+
+    if (knockedOut) {
+      material.alpha = 0.25;
+      body.scaling.setAll(0.8);
+      material.diffuseColor = view.baseColor.scale(0.6);
+      material.emissiveColor = view.baseEmissive.scale(0.2);
+      view.label.visibility = 0.25;
+      return;
+    }
+
+    body.scaling.setAll(1);
+    view.label.visibility = 1;
+
+    // Blinking beats a steady tint for protection: it reads as "temporary".
+    material.alpha = protectedNow ? 0.55 + 0.35 * Math.sin(this.#spinRadians * 6) : 1;
+
+    if (frozen) {
+      material.diffuseColor = Color3.FromHexString('#a8dadc');
+      material.emissiveColor = Color3.FromHexString('#457b9d').scale(0.5);
+      return;
+    }
+
+    material.diffuseColor = view.baseColor;
+    if (isIt) {
+      // A pulsing hot glow marks the player to run from (or cheer for).
+      const pulse = 0.5 + 0.35 * Math.sin(this.#spinRadians * 4);
+      material.emissiveColor = Color3.FromHexString('#e63946').scale(pulse);
+    } else {
+      material.emissiveColor = view.baseEmissive;
+    }
+  }
+
   /** World position of a player, for the camera to follow. */
   playerPosition(id: string): Vector3 | null {
     return this.#players.get(id)?.root.position ?? null;
@@ -107,8 +164,11 @@ export class EntityViews {
     for (const view of this.#pickups.values()) view.mesh.dispose();
     this.#pickups.clear();
     this.#playerProto.dispose();
-    this.#pickupProto.dispose();
-    this.#pickupMaterial.dispose();
+    for (const proto of this.#pickupProtos.values()) {
+      proto.material.dispose();
+      proto.mesh.dispose();
+    }
+    this.#pickupProtos.clear();
   }
 
   // -------------------------------------------------------------- internals
@@ -130,6 +190,7 @@ export class EntityViews {
 
       view.root.position.set(player.x, this.#config.playerRadius * 1.7, player.z);
       view.root.rotation.y = player.heading;
+      this.#applyStatus(view, player);
     }
 
     for (const [id, view] of this.#players) {
@@ -148,19 +209,28 @@ export class EntityViews {
     body.setEnabled(true);
 
     const material = new StandardMaterial(`player:${player.id}:mat`, this.#scene);
-    material.diffuseColor = Color3.FromHexString(player.color);
+    const baseColor = Color3.FromHexString(player.color);
+    material.diffuseColor = baseColor;
     material.specularColor = new Color3(0.25, 0.25, 0.25);
-    if (player.isLocal) {
-      // The local player gets a faint glow so you can always find yourself.
-      material.emissiveColor = Color3.FromHexString(player.color).scale(0.35);
-    }
+    // The local player gets a faint glow so you can always find yourself.
+    const baseEmissive = player.isLocal ? baseColor.scale(0.35) : new Color3(0, 0, 0);
+    material.emissiveColor = baseEmissive;
     body.material = material;
 
     this.#shadows?.addShadowCaster(body);
 
     const label = this.#createLabel(player, root);
 
-    return { root, body, label, material, name: player.name, color: player.color };
+    return {
+      root,
+      body,
+      label,
+      material,
+      name: player.name,
+      color: player.color,
+      baseColor,
+      baseEmissive,
+    };
   }
 
   #createLabel(player: RenderPlayer, parent: TransformNode): Mesh {
@@ -184,7 +254,9 @@ export class EntityViews {
   #refreshPlayerAppearance(view: PlayerView, player: RenderPlayer): void {
     view.name = player.name;
     view.color = player.color;
-    view.material.diffuseColor = Color3.FromHexString(player.color);
+    view.baseColor = Color3.FromHexString(player.color);
+    view.baseEmissive = player.isLocal ? view.baseColor.scale(0.35) : new Color3(0, 0, 0);
+    view.material.diffuseColor = view.baseColor;
 
     const parent = view.root;
     view.label.material?.dispose(true, true);
@@ -200,7 +272,9 @@ export class EntityViews {
       let view = this.#pickups.get(pickup.id);
 
       if (!view) {
-        const mesh = this.#pickupProto.createInstance(`pickup:${pickup.id}`);
+        const proto = this.#pickupProtos.get(pickup.kind) ?? this.#pickupProtos.get('score');
+        if (!proto) continue;
+        const mesh = proto.mesh.createInstance(`pickup:${pickup.id}`);
         this.#shadows?.addShadowCaster(mesh);
         view = { mesh };
         this.#pickups.set(pickup.id, view);

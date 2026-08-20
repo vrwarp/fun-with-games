@@ -3,25 +3,35 @@
 A peer-to-peer 3D arena built with **Babylon.js** and **decentralized WebRTC** —
 no game server, no signalling server, no accounts.
 
-It is a **starter kit**. The game itself is small on purpose: roam a seeded
-arena, collect shards, outscore the other players. What it is really for is
-everything around that — the netcode, the seams, and a test suite that runs a
-three-peer multiplayer session with packet loss in about a second.
+It is a **starter kit with a game kit inside**: eleven playable modes (tag,
+infection, blaster arena, knockout, soccer, capture the flag, king of the
+hill, checkpoint racing, crown keep-away, a timed shard rush and an endless
+sandbox) built from a library of composable, config-driven systems — match
+phases, teams, hp/combat, projectiles, roles, a ball with goals, zones,
+carryable items, timed status effects, power-ups and deterministic bots.
+Most new games are a preset, not new code; see
+[`docs/RECIPES.md`](./docs/RECIPES.md).
 
 ```bash
 npm install
 npm run dev
 ```
 
-Then open <http://localhost:5173>. For multiplayer without leaving your
-machine, open two tabs at
-<http://localhost:5173/?net=broadcast&room=test>.
+Then open <http://localhost:5173> — the lobby has a mode picker. For
+multiplayer without leaving your machine, open two tabs at
+<http://localhost:5173/?net=broadcast&room=test&mode=tag>. No second player
+handy? Add `&bots=3`.
 
 ## What you get
 
+- **A game kit.** Eleven modes out of the box and the systems to build many
+  more: rounds and win conditions, teams, combat, projectiles, tag roles,
+  ball + goals, hills/checkpoints/bases, flags and crowns, timed effects,
+  power-ups, and bots that understand every mode. All simulation-side, all
+  deterministic, all covered by headless tests.
 - **Real netcode.** Host-authoritative simulation with client-side prediction,
   server reconciliation, entity interpolation, and automatic host migration
-  when the host disconnects.
+  when the host disconnects (bots survive the handover too).
 - **Genuinely serverless.** [Trystero](https://github.com/dmotz/trystero)
   handles matchmaking over decentralized relays (Nostr by default); game
   traffic then flows directly browser-to-browser over encrypted WebRTC data
@@ -33,8 +43,9 @@ machine, open two tabs at
   framing, mobile-first CSS, safe-area insets, a capped pixel ratio, a screen
   wake lock, and a web app manifest so it installs. Verified by an e2e suite
   that runs on a real touch device profile, not a narrow desktop window.
-- **A test suite you will actually run.** 200 headless tests in ~1 second,
-  plus 31 Playwright tests that drive two real browser tabs and a phone.
+- **A test suite you will actually run.** 300+ headless tests in a few
+  seconds — including a sweep that plays every game mode with bots — plus 39
+  Playwright tests that drive two real browser tabs and a phone.
 - **Enforced architecture.** The layering is checked by ESLint, so `src/sim`
   physically cannot import Babylon or reach for `Math.random()`.
 - **An asset pipeline with no binaries.** Procedural glTF generation, a
@@ -83,22 +94,25 @@ npm run assets:verify    # manifest + licence check
 
 Desktop:
 
-| Input                    | Action                        |
-| ------------------------ | ----------------------------- |
-| `W` `A` `S` `D` / arrows | Move (relative to the camera) |
-| `Shift`                  | Sprint                        |
-| Drag                     | Orbit the camera              |
-| Scroll                   | Zoom                          |
+| Input                    | Action                              |
+| ------------------------ | ----------------------------------- |
+| `W` `A` `S` `D` / arrows | Move (relative to the camera)       |
+| `Shift`                  | Sprint                              |
+| `Space` / `J`            | Primary action (fire, in gun modes) |
+| `E` / `K`                | Secondary action (yours to bind)    |
+| Drag                     | Orbit the camera                    |
+| Scroll                   | Zoom                                |
 
 Mobile — the primary target:
 
-| Input                     | Action                 |
-| ------------------------- | ---------------------- |
-| Thumbstick (bottom left)  | Move                   |
-| Push the stick to the rim | Sprint                 |
-| _nothing_                 | The camera follows you |
-| Drag anywhere else        | Take over the camera   |
-| Pinch                     | Zoom                   |
+| Input                       | Action                               |
+| --------------------------- | ------------------------------------ |
+| Thumbstick (bottom left)    | Move — analog: half-push, half speed |
+| Push the stick to the rim   | Sprint                               |
+| **A** button (bottom right) | Primary action, in modes that use it |
+| _nothing_                   | The camera follows you               |
+| Drag anywhere else          | Take over the camera                 |
+| Pinch                       | Zoom                                 |
 
 Playable one-handed: the camera swings behind your direction of travel by
 itself, so you never need a second thumb to see where you are going. Dragging
@@ -111,14 +125,16 @@ gesture arbitration.
 On Android and iOS you can install it from the browser menu — it runs
 fullscreen, with its own icon, and keeps the screen awake while you play.
 
-URL parameters: `room`, `name`, `color`, `net=broadcast`, `autojoin=1`,
-`log=debug`.
+URL parameters: `room`, `mode`, `bots`, `name`, `color`, `net=broadcast`,
+`autojoin=1`, `log=debug`.
 
 ## Documentation
 
 | Document                                               | Read it when                                |
 | ------------------------------------------------------ | ------------------------------------------- |
 | [`CLAUDE.md`](./CLAUDE.md)                             | You are an agent about to change something  |
+| [`docs/RECIPES.md`](./docs/RECIPES.md)                 | You want to make a game — start here        |
+| [`docs/GAME_KIT.md`](./docs/GAME_KIT.md)               | Reference for modes, systems and effects    |
 | [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)       | Before your first non-trivial change        |
 | [`docs/NETWORKING.md`](./docs/NETWORKING.md)           | Anything touching multiplayer               |
 | [`docs/TESTING.md`](./docs/TESTING.md)                 | Writing tests, or wondering why one is slow |

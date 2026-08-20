@@ -6,11 +6,21 @@ This is a **starter kit**, not a finished game. Its job is to make the next
 thousand commits cheap: keep the seams clean, keep the tests fast, and keep the
 rules below intact even when a shortcut would be quicker.
 
+> **Asked to "make a game"? Read [`docs/RECIPES.md`](./docs/RECIPES.md) first.**
+> Eleven playable modes already exist behind `?mode=` (tag, infection, arena,
+> knockout, soccer, ctf, hill, race, crown, rush, gather), and a library of
+> config-driven systems — phases/rounds, teams, hp/combat, projectiles, tag
+> roles, a ball with goals, zones, carryable flags/crowns, timed status
+> effects, power-ups and bots — means most new games are **a preset, not new
+> code**. The reference is [`docs/GAME_KIT.md`](./docs/GAME_KIT.md). Do not
+> rebuild any of this.
+
 ---
 
 ## 1. Orientation
 
-A peer-to-peer 3D arena. Players roam a seeded arena and collect shards.
+A peer-to-peer 3D arena engine with a library of composable game systems.
+The default mode is a shard-collecting sandbox; ten more modes ship with it.
 
 | Concern    | Choice                                                                                      |
 | ---------- | ------------------------------------------------------------------------------------------- |
@@ -63,13 +73,16 @@ You do not need two machines or an internet connection. Append
 `BroadcastChannel`:
 
 ```
-http://localhost:5173/?net=broadcast&room=test
+http://localhost:5173/?net=broadcast&room=test&mode=tag
 ```
 
 Drop `?net=broadcast` to use real WebRTC over the public relay network.
+`?bots=3` (or the host's **+ Bot** HUD button) fills the room with in-sim
+bots, so every mode is demoable with one human.
 
-Useful query parameters: `room`, `name`, `color`, `net=broadcast`,
-`autojoin=1`, `log=debug`.
+Useful query parameters: `room`, `mode`, `bots`, `name`, `color`,
+`net=broadcast`, `autojoin=1`, `log=debug`. The mode is part of the transport
+room name, so peers running different rules never meet.
 
 ---
 
@@ -114,51 +127,70 @@ Concretely, inside `src/sim` the linter rejects `Math.random()`, `Date.now()`,
 
 When touching simulation code:
 
-- Iterate players via `world.players()` — sorted by id. Never `Map` order:
-  insertion order differs per peer, float addition is not associative, and the
-  result is a desync nobody can reproduce.
-- All randomness through the seeded `Rng`, whose state is captured in snapshots.
-- **Any new mutable state must be added to `WorldSnapshot`.** If it is not
-  snapshotted, it silently diverges between host and clients.
-  `tests/unit/sim/world.snapshot.test.ts` is the guard rail — it caught exactly
-  this bug during initial development. Do not weaken it.
+- Iterate players via `world.players()` (or `ctx.players` inside a system) —
+  sorted by id. Never `Map` order: insertion order differs per peer, float
+  addition is not associative, and the result is a desync nobody can
+  reproduce.
+- All randomness through the seeded `Rng`, whose state is captured in
+  snapshots. (Bots deliberately use none — their wander targets are hashed
+  from the bot id and a tick epoch — so bot decisions can never perturb the
+  shared stream.)
+- **Any new mutable state must be added to `WorldSnapshot`** (and
+  `applySnapshot`, `checksum`, and the protocol validators — the full ritual
+  is a checklist in `docs/RECIPES.md`). If it is not snapshotted, it silently
+  diverges between host and clients.
+  `tests/unit/sim/world.snapshot.test.ts` is the guard rail — its config
+  turns EVERY system on; keep it that way when adding one. Do not weaken it.
+- **Prefer not creating state at all.** Timed per-player state is an effect
+  (`addEffect` — the effects map is already snapshotted, transmitted and
+  checksummed); anything derivable from the tick number should be computed,
+  not stored.
 
 ---
 
 ## 4. How to develop a feature
 
+0. **Check the kit first.** `docs/GAME_KIT.md` lists what already exists;
+   `docs/RECIPES.md` has worked, compile-ready recipes (new mode preset, dash
+   ability, freeze tag, storm circle, melee, new effects). Most game requests
+   are a Tier-0 URL or a Tier-1 preset — minutes, not hours.
 1. **Find the layer.** Gameplay rule → `src/sim`. Wire format → `src/net`.
    Anything visual → `src/render` / `src/ui`. If it spans layers, it is
    probably two changes.
 2. **Write the headless test first.** Simulation changes are testable in
    milliseconds; use that. `SessionHarness` (`tests/helpers/harness.ts`) gives
-   you a full multi-peer session with configurable latency and packet loss.
+   you a full multi-peer session with configurable latency and packet loss;
+   `tests/helpers/factories.ts` builds players, inputs, snapshots and step
+   contexts.
 3. **Implement behind the existing seams.** Add a new file rather than
    widening an existing one where you reasonably can.
-4. **Snapshot it** if it is mutable simulation state (see above).
+4. **Snapshot it** if it is mutable simulation state (see above) — or avoid
+   new state entirely: timed per-player state is one `addEffect()` call, and
+   anything derivable from the tick needs no state at all.
 5. **Run `npm run verify`.**
 6. **Update the docs you invalidated.** A stale `docs/NETWORKING.md` costs the
    next agent more than your feature saved.
 
 ### Worked example: adding a gameplay mechanic
 
-Say you are adding a dash ability.
+Say you are adding a dash ability. Because the kit already carries a generic
+action-button bitfield in `PlayerInput` and timed state as effects, this is
+**simulation-only** — full walkthrough with code in `docs/RECIPES.md`:
 
-- `src/sim/types.ts` — add `dashCooldown: number` to `PlayerState`, and a
-  `dash: boolean` to `PlayerInput`.
-- `src/sim/config.ts` — add `dashImpulse`, `dashCooldownTicks`.
-- `src/sim/systems/movement.ts` — apply it inside `integratePlayer`, so
-  prediction and authority stay in agreement automatically.
-- `src/net/protocol.ts` — carry and **validate** the new input field; bump
-  `PROTOCOL_VERSION` because the shape changed.
-- `src/render/input.ts` — bind a key, **and** give it a touch affordance in
-  `src/render/touch.ts`. A keyboard-only ability is unreachable on a phone,
-  which is a supported target (§7).
-- Tests: a unit test for the mechanic, and a `SessionHarness` test that a
-  dashing client converges with the host.
+- `src/sim/config.ts` — add `dashImpulse`, `dashCooldownTicks` (flat keys).
+- `src/sim/systems/dash.ts` — new file: read
+  `player.input.buttons & BUTTON_SECONDARY`, `applyImpulse()` along the
+  heading, `addEffect(player, 'dashcd', …)` for the cooldown.
+- `src/sim/world.ts` — one call in the `step()` pipeline.
+- Touch affordance: enable the secondary on-screen button (`TouchButtons` in
+  `main.ts`). The keyboard (`E`/`K`) already works. A keyboard-only ability
+  is unreachable on a phone, which is the primary target (§7).
+- Tests: a unit test for the mechanic; the snapshot/protocol suites need no
+  changes because no new state shape was introduced.
 
-Note what you did _not_ have to touch: the renderer, the transports, the HUD.
-That is the layering doing its job.
+Note what you did _not_ have to touch: `types.ts`, `protocol.ts` (no version
+bump — buttons already travel), prediction, the renderer, the transports, the
+HUD. That is the layering plus the kit doing their jobs.
 
 ---
 
@@ -179,6 +211,7 @@ other. Full protocol in `docs/PARALLEL_AGENTS.md`; the essentials:
   - `src/sim/types.ts`, `src/sim/config.ts`
   - `src/sim/world.ts` (the `step()` pipeline is explicitly ordered on purpose
     — determinism requires a fixed order, so do not convert it to a registry)
+  - `src/sim/presets.ts`, `src/shared/modes.ts` (one entry per mode — append)
   - `src/net/protocol.ts`
   - `public/assets/manifest.json` (regenerate; never hand-edit)
 - **Never renumber or reuse `PROTOCOL_VERSION`.** If two agents both need a
@@ -206,6 +239,13 @@ Rules of thumb:
 - Use `SessionHarness` for anything multi-peer. It has a virtual clock:
   `harness.advance(2000)` is 2000 simulated milliseconds and takes
   microseconds. **Never `setTimeout`/`sleep` in a test.**
+  `harness.hostWorld()` returns the authoritative world — teleport players
+  onto each other there instead of simulating minutes of travel.
+- `tests/helpers/factories.ts` builds players, inputs, snapshots and step
+  contexts for surgical single-system tests.
+- `tests/unit/sim/presets.test.ts` sweeps EVERY game mode through
+  determinism + snapshot-restore checks, so a new preset is covered the
+  moment it is registered.
 - Seed everything. `MemoryNetwork` takes a seed for its jitter and drop
   decisions so a failure reproduces exactly.
 - Coverage thresholds are enforced on `src/sim`, `src/net`, `src/shared`
@@ -252,12 +292,17 @@ What this means in practice:
 
 - **Every action needs a touch affordance.** Keyboard bindings are an
   addition, never the only way in. `src/render/touch.ts` owns the on-screen
-  thumbstick; `mergeIntents()` in `src/render/input.ts` combines devices, so a
-  new control means adding a source, not branching on device type.
+  thumbstick and `src/render/buttons.ts` the on-screen action buttons (shown
+  only in modes that use them — `usesPrimaryAction` in the mode metadata);
+  `mergeIntents()` in `src/render/input.ts` combines devices, so a new
+  control means adding a source, not branching on device type.
 - **Both input paths must produce the same `InputIntent`.** Nothing below
   `src/render` knows or cares how the player moved — the simulation, the wire
   protocol and prediction are all device-agnostic. Keep it that way; do not
-  add a `isMobile` flag to `PlayerInput`.
+  add a `isMobile` flag to `PlayerInput`. New abilities ride the existing
+  `buttons` bitfield (`BUTTON_PRIMARY`/`BUTTON_SECONDARY`) — no wire change.
+- **Abilities fire along the facing direction.** Projectiles aim where you
+  run. A phone has no aiming thumb; keep new abilities aim-free too.
 - **Touch targets ≥ 44px.** Anything smaller is genuinely hard to hit with a
   thumb, and the mobile e2e suite asserts it for the join button.
 - **Watch the frame budget.** Phones report device pixel ratios of 3, which is
@@ -283,10 +328,10 @@ Verify with `npm run test:e2e` — the `mobile-chrome` project runs against a
 desktop window. A narrow window would pass while the game stayed unplayable,
 because what actually breaks on a phone is input, not layout.
 
-Still open, if you want it: richer haptics, a service worker for offline play,
-and analog stick magnitude — `integratePlayer` normalizes the input direction, so a
-half-pushed stick currently moves at full speed. Fixing that last one means
-carrying magnitude through `PlayerInput`, which is a wire-format change.
+Analog stick magnitude is carried through: a half-pushed stick moves at half
+speed (`integratePlayer` scales acceleration and the speed cap by the input
+vector's length; keyboard input is always magnitude 1). Still open, if you
+want it: richer haptics and a service worker for offline play.
 
 ---
 

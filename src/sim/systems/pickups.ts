@@ -1,8 +1,26 @@
 import { distanceSq2 } from '../../shared/math.js';
 import type { Rng } from '../rng.js';
 import type { SimConfig } from '../config.js';
-import type { Obstacle, PickupState, PlayerState } from '../types.js';
+import type { StepContext } from '../step.js';
+import type { Obstacle, PickupKind, PickupState } from '../types.js';
 import { findFreePosition } from './arena.js';
+import { addEffect, isKnockedOut } from './effects.js';
+
+const PICKUP_KINDS: readonly PickupKind[] = ['score', 'speed', 'shield', 'heal'];
+
+/** Weighted, deterministic kind roll. All-zero weights fall back to `score`. */
+export function rollPickupKind(config: SimConfig, rng: Rng): PickupKind {
+  const weights = config.pickupWeights;
+  const total = PICKUP_KINDS.reduce((sum, kind) => sum + Math.max(0, weights[kind]), 0);
+  if (total <= 0) return 'score';
+
+  let roll = rng.range(0, total);
+  for (const kind of PICKUP_KINDS) {
+    roll -= Math.max(0, weights[kind]);
+    if (roll < 0) return kind;
+  }
+  return 'score';
+}
 
 export function createPickups(
   config: SimConfig,
@@ -12,58 +30,72 @@ export function createPickups(
   const pickups: PickupState[] = [];
   for (let id = 0; id < config.pickupCount; id++) {
     const { x, z } = findFreePosition(config, rng, config.pickupRadius, obstacles);
-    pickups.push({ id, x, z, active: true, respawnTick: 0 });
+    const kind = rollPickupKind(config, rng);
+    pickups.push({ id, x, z, kind, active: true, respawnTick: 0 });
   }
   return pickups;
 }
 
-export interface PickupCollection {
-  playerId: string;
-  pickupId: number;
-}
-
 /**
- * Collects pickups and respawns expired ones.
+ * Collects pickups, applies their payload, and respawns expired ones.
  *
- * `players` must be sorted by id. When two players touch the same pickup on
+ * Payloads by kind: `score` adds `pickupScore` points (and counts for the
+ * player's team), `speed` and `shield` grant the matching timed effect, and
+ * `heal` restores hp up to `combat.maxHp`.
+ *
+ * `ctx.players` is sorted by id. When two players touch the same pickup on
  * the same tick, the sort order decides the winner — arbitrary, but identical
  * everywhere, which is the property that actually matters.
  */
-export function updatePickups(
-  pickups: PickupState[],
-  players: readonly PlayerState[],
-  config: SimConfig,
-  rng: Rng,
-  obstacles: readonly Obstacle[],
-  tick: number,
-): { collected: PickupCollection[]; respawned: number[] } {
-  const collected: PickupCollection[] = [];
-  const respawned: number[] = [];
+export function updatePickups(ctx: StepContext): void {
+  const { config } = ctx;
   const pickupRange = config.playerRadius + config.pickupRadius;
   const pickupRangeSq = pickupRange * pickupRange;
 
-  for (const pickup of pickups) {
+  for (const pickup of ctx.pickups) {
     if (!pickup.active) {
-      if (tick >= pickup.respawnTick) {
-        const spot = findFreePosition(config, rng, config.pickupRadius, obstacles);
+      if (ctx.tick >= pickup.respawnTick) {
+        const spot = findFreePosition(config, ctx.rng, config.pickupRadius, ctx.obstacles);
         pickup.x = spot.x;
         pickup.z = spot.z;
         pickup.active = true;
-        respawned.push(pickup.id);
+        ctx.out.push({ type: 'pickupRespawned', pickupId: pickup.id });
       }
       continue;
     }
 
-    for (const player of players) {
+    for (const player of ctx.players) {
+      if (isKnockedOut(player, ctx.tick)) continue;
       if (distanceSq2(player.x, player.z, pickup.x, pickup.z) > pickupRangeSq) continue;
 
-      player.score += config.pickupScore;
+      switch (pickup.kind) {
+        case 'score':
+          player.score += config.pickupScore;
+          if (player.team >= 0 && player.team < ctx.teamScores.length) {
+            ctx.teamScores[player.team] = (ctx.teamScores[player.team] ?? 0) + config.pickupScore;
+          }
+          break;
+        case 'speed':
+          addEffect(player, 'speed', ctx.tick + config.powerups.speedTicks);
+          break;
+        case 'shield':
+          addEffect(player, 'shield', ctx.tick + config.powerups.shieldTicks);
+          break;
+        case 'heal':
+          player.hp = Math.min(config.combat.maxHp, player.hp + config.powerups.healAmount);
+          break;
+      }
+
       pickup.active = false;
-      pickup.respawnTick = tick + config.pickupRespawnTicks;
-      collected.push({ playerId: player.id, pickupId: pickup.id });
+      pickup.respawnTick = ctx.tick + config.pickupRespawnTicks;
+      ctx.out.push({
+        type: 'pickupCollected',
+        playerId: player.id,
+        pickupId: pickup.id,
+        kind: pickup.kind,
+        score: player.score,
+      });
       break;
     }
   }
-
-  return { collected, respawned };
 }

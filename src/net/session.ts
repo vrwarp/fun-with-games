@@ -77,6 +77,7 @@ export class NetSession {
   #intentX = 0;
   #intentZ = 0;
   #intentSprint = false;
+  #intentButtons = 0;
 
   #accumulatorMs = 0;
   #lastUpdateMs: number | null = null;
@@ -142,11 +143,35 @@ export class NetSession {
   /**
    * Records the player's current intent. Sampled once per simulation tick, so
    * calling it more often than that is harmless.
+   *
+   * `buttons` is the `BUTTON_*` bitfield from `@/sim/types` — new abilities
+   * ride through here with no wire-format change.
    */
-  setIntent(moveX: number, moveZ: number, sprint = false): void {
+  setIntent(moveX: number, moveZ: number, sprint = false, buttons = 0): void {
     this.#intentX = moveX;
     this.#intentZ = moveZ;
     this.#intentSprint = sprint;
+    this.#intentButtons = buttons;
+  }
+
+  /**
+   * Adds a host-simulated bot to the world. Only the host can do this —
+   * clients get `false` back (wire a request message if you ever need
+   * client-initiated bots; see `docs/RECIPES.md`).
+   */
+  addBot(): boolean {
+    if (!this.isHost) return false;
+    return this.world.addBot() !== null;
+  }
+
+  /** Removes the last-added bot. Host only. */
+  removeBot(): boolean {
+    if (!this.isHost) return false;
+    return this.world.removeBot();
+  }
+
+  get botCount(): number {
+    return this.world.bots().length;
   }
 
   updateProfile(profile: PlayerProfile): void {
@@ -218,6 +243,7 @@ export class NetSession {
       moveX: quantize(this.#intentX, 2),
       moveZ: quantize(this.#intentZ, 2),
       sprint: this.#intentSprint,
+      buttons: this.#intentButtons,
     };
 
     this.#view.recordInput(input);
@@ -236,6 +262,7 @@ export class NetSession {
       mx: input.moveX,
       mz: input.moveZ,
       sprint: input.sprint,
+      buttons: input.buttons,
     };
     this.#send(message, this.#hostId);
   }
@@ -307,6 +334,7 @@ export class NetSession {
       moveX: message.mx,
       moveZ: message.mz,
       sprint: message.sprint,
+      buttons: message.buttons,
     });
   }
 
@@ -390,7 +418,9 @@ export class NetSession {
       }
     }
     for (const player of this.world.players()) {
-      if (!expected.has(player.id)) this.world.removePlayer(player.id);
+      // Bots are world entities, not peers — a migrated host keeps simulating
+      // the ones it inherited through the snapshot.
+      if (!expected.has(player.id) && !player.isBot) this.world.removePlayer(player.id);
     }
   }
 

@@ -1,12 +1,13 @@
 import { MemoryNetwork } from '@/net/transports/memory.js';
 import { NetSession } from '@/net/session.js';
 import type { RenderState } from '@/net/view.js';
-import { makeSimConfig, type SimConfig } from '@/sim/config.js';
+import { makeSimConfig, type SimConfig, type SimConfigOverrides } from '@/sim/config.js';
 import type { PlayerProfile } from '@/sim/types.js';
+import type { World } from '@/sim/world.js';
 
 export interface HarnessOptions {
   seed?: number;
-  config?: Partial<SimConfig>;
+  config?: SimConfigOverrides;
   latencyMs?: number;
   jitterMs?: number;
   dropRate?: number;
@@ -115,8 +116,19 @@ export class SessionHarness {
     return peer;
   }
 
-  setIntent(id: string, moveX: number, moveZ: number, sprint = false): void {
-    this.peer(id).session.setIntent(moveX, moveZ, sprint);
+  setIntent(id: string, moveX: number, moveZ: number, sprint = false, buttons = 0): void {
+    this.peer(id).session.setIntent(moveX, moveZ, sprint, buttons);
+  }
+
+  /**
+   * The authoritative world, when every peer agrees who the host is.
+   * Mutating it (teleporting players, forcing scores) is the intended way to
+   * set up gameplay situations without simulating minutes of movement.
+   */
+  hostWorld(): World {
+    const host = this.host();
+    if (!host) throw new Error('SessionHarness: peers disagree about the host');
+    return host.session.world;
   }
 
   /** Advances the virtual clock, delivering messages and ticking every peer. */

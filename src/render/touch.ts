@@ -104,7 +104,7 @@ export class TouchInput {
    */
   read(cameraYaw: number): InputIntent {
     if (!this.#enabled || this.#magnitude === 0) {
-      return { moveX: 0, moveZ: 0, sprint: false };
+      return { moveX: 0, moveZ: 0, sprint: false, buttons: 0 };
     }
 
     const sin = Math.sin(cameraYaw);
@@ -114,6 +114,7 @@ export class TouchInput {
       moveX: this.#forward * sin + this.#right * cos,
       moveZ: this.#forward * cos - this.#right * sin,
       sprint: this.#magnitude > SPRINT_THRESHOLD,
+      buttons: 0,
     };
   }
 

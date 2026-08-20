@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { makeSimConfig, tickDeltaSeconds } from '@/sim/config.js';
 import { integratePlayer, resolvePlayerCollisions } from '@/sim/systems/movement.js';
-import type { Obstacle, PlayerInput, PlayerState } from '@/sim/types.js';
+import type { Obstacle } from '@/sim/types.js';
+import { makeInput as input, makePlayer } from '../../helpers/factories.js';
 
 const config = makeSimConfig({ arenaHalfExtentX: 10, arenaHalfExtentZ: 10 });
 const dt = tickDeltaSeconds(config);
@@ -12,27 +13,6 @@ const dt = tickDeltaSeconds(config);
  * velocity, which would make those assertions vacuously pass.
  */
 const openConfig = makeSimConfig({ arenaHalfExtentX: 5000, arenaHalfExtentZ: 5000 });
-
-function makePlayer(overrides: Partial<PlayerState> = {}): PlayerState {
-  return {
-    id: 'p1',
-    name: 'p1',
-    color: '#ffffff',
-    x: 0,
-    z: 0,
-    vx: 0,
-    vz: 0,
-    heading: 0,
-    score: 0,
-    lastInputSeq: 0,
-    input: { seq: 0, moveX: 0, moveZ: 0, sprint: false },
-    ...overrides,
-  };
-}
-
-function input(overrides: Partial<PlayerInput> = {}): PlayerInput {
-  return { seq: 1, moveX: 0, moveZ: 0, sprint: false, ...overrides };
-}
 
 describe('integratePlayer', () => {
   it('accelerates in the input direction', () => {

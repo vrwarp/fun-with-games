@@ -47,19 +47,33 @@ nothing.
 
 ### `src/sim` — the game
 
-| File                  | Responsibility                                       |
-| --------------------- | ---------------------------------------------------- |
-| `world.ts`            | State container and the fixed-step `step()` pipeline |
-| `config.ts`           | Every tunable number                                 |
-| `types.ts`            | `PlayerState`, `PickupState`, `WorldSnapshot`, …     |
-| `rng.ts`              | Seeded, serializable PRNG                            |
-| `systems/arena.ts`    | Seed-derived obstacles and spawn points              |
-| `systems/movement.ts` | Integration and collision resolution                 |
-| `systems/pickups.ts`  | Collection and respawn                               |
+| File                     | Responsibility                                            |
+| ------------------------ | --------------------------------------------------------- |
+| `world.ts`               | State container and the fixed-step `step()` pipeline      |
+| `config.ts`              | Every tunable number, incl. one section per kit system    |
+| `presets.ts`             | Named game modes: one `SimConfig` per `GameModeId`        |
+| `types.ts`               | `PlayerState`, `WorldSnapshot`, phases, effects, …        |
+| `step.ts`                | `StepContext` — what a system may read/mutate per tick    |
+| `rng.ts`                 | Seeded, serializable PRNG                                 |
+| `systems/arena.ts`       | Seed-derived obstacles and spawn points                   |
+| `systems/movement.ts`    | Integration (analog magnitude, effects) and collisions    |
+| `systems/phase.ts`       | Match flow: lobby/countdown/playing/ended, win conditions |
+| `systems/effects.ts`     | Timed statuses: speed, shield, frozen, ko, safe, …        |
+| `systems/combat.ts`      | Damage, KO, respawn, lives/elimination                    |
+| `systems/projectiles.ts` | Fire-button projectiles, knockback                        |
+| `systems/tag.ts`         | Tag / infection role transfer                             |
+| `systems/ball.ts`        | Pushable ball, bounces, team goals                        |
+| `systems/zones.ts`       | Hills (king-of-the-hill) and race checkpoints             |
+| `systems/items.ts`       | Carryable flags (CTF) and crowns (keep-away)              |
+| `systems/bots.ts`        | Deterministic in-sim bots, mode-aware                     |
+| `systems/pickups.ts`     | Collection, respawn, power-up payloads                    |
 
-`World.step()` advances exactly one tick (30 Hz). The order of operations
-inside it is deliberate and load-bearing: change it and every peer's arena
-changes with it.
+Every kit system is driven by its section of `SimConfig` and is inert at the
+defaults; `presets.ts` composes them into modes (see `docs/GAME_KIT.md`).
+`World.step()` advances exactly one tick (30 Hz) through a fixed pipeline —
+phase → bots → movement → collisions → combat → tag → projectiles → ball →
+items → zones → pickups → effect pruning. The order is deliberate and
+load-bearing: change it and every peer's simulation changes with it.
 
 Two properties are non-negotiable:
 
@@ -161,7 +175,10 @@ Places designed to be extended, with the seam already in place:
 
 | Want to…                           | Do this                                                                                                                    |
 | ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| Make a new game mode               | One entry in `src/shared/modes.ts` + one in `src/sim/presets.ts` — see `docs/RECIPES.md` Tier 1                            |
 | Add a gameplay mechanic            | New file in `src/sim/systems/`, call it from `World.step()` — and give it a touch affordance, not just a key               |
+| Add a player ability               | Read `player.input.buttons` (`BUTTON_PRIMARY`/`BUTTON_SECONDARY`) — already on the wire, keyboard and touch                |
+| Add timed per-player state         | `addEffect(player, 'yourid', untilTick)` — snapshotted/transmitted/predicted for free                                      |
 | Add an input device                | New module in `src/render/`, fold it into `mergeIntents()`                                                                 |
 | Add a networked field              | Add to `PlayerState` **and** `WorldSnapshot`, validate in `protocol.ts`, bump `PROTOCOL_VERSION`                           |
 | Change the wire format             | Replace the codec in `protocol.ts`; JSON in, binary out                                                                    |

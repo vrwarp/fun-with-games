@@ -255,9 +255,12 @@ test.describe('on a phone', () => {
     expect(box?.width ?? 0).toBeGreaterThanOrEqual(44);
     expect(box?.height ?? 0).toBeGreaterThanOrEqual(44);
 
+    // Wait for GO, not for a tick count. Players are frozen for the whole
+    // countdown (90 ticks here), and a frozen player cannot jump — pressing
+    // early tests the freeze, not the jump.
     await expect
-      .poll(() => page.evaluate(() => window.__FWG__.tick), { timeout: 30_000 })
-      .toBeGreaterThan(40);
+      .poll(() => page.evaluate(() => window.__FWG__.phase), { timeout: 30_000 })
+      .toBe('playing');
 
     const heightOf = () =>
       page.evaluate(() => {
@@ -268,18 +271,22 @@ test.describe('on a phone', () => {
     const resting = await heightOf();
     expect(resting).toBeGreaterThanOrEqual(0);
 
-    // Hold the button and sample mid-arc: the player must actually leave the
-    // surface they were standing on.
-    let peak = resting;
+    // Hold the button and sample the arc over real time: at this preset's
+    // gravity a jump apexes ~400ms after the press, which is many simulation
+    // ticks away. Sampling in a tight loop would read the pre-jump height
+    // eight times and conclude, wrongly, that nothing happened.
     const jumpBox = await jump.boundingBox();
-    if (jumpBox) {
-      await page.mouse.move(jumpBox.x + jumpBox.width / 2, jumpBox.y + jumpBox.height / 2);
-      await page.mouse.down();
-      for (let i = 0; i < 8; i++) {
-        peak = Math.max(peak, await heightOf());
-      }
-      await page.mouse.up();
+    if (!jumpBox) throw new Error('jump button has no bounding box');
+
+    let peak = resting;
+    await page.mouse.move(jumpBox.x + jumpBox.width / 2, jumpBox.y + jumpBox.height / 2);
+    await page.mouse.down();
+    for (let i = 0; i < 12; i++) {
+      await page.waitForTimeout(60);
+      peak = Math.max(peak, await heightOf());
     }
+    await page.mouse.up();
+
     expect(peak).toBeGreaterThan(resting + 0.3);
 
     // Nothing overflows a phone viewport in the side view.

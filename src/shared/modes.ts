@@ -163,7 +163,7 @@ export const GAME_MODES: readonly GameModeInfo[] = [
     id: 'skirmish',
     title: 'Top-Down Skirmish',
     tagline: 'Flat 2D arena shooter, seen from straight above.',
-    goal: 'Blast rivals from a bird\u2019s-eye view. First to 10 KOs wins.',
+    goal: 'Blast rivals from a bird’s-eye view. First to 10 KOs wins.',
     usesPrimaryAction: true,
     view: 'topdown',
     sprites: true,

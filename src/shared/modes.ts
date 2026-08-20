@@ -29,6 +29,12 @@ export interface GameModeInfo {
   readonly goal: string;
   /** Whether the mode uses the primary action button (shows it on touch). */
   readonly usesPrimaryAction: boolean;
+  /**
+   * Whether the mode uses the secondary action button. No built-in mode does
+   * — it is reserved for abilities you add (see the dash recipe). Setting
+   * this true is the only UI change such an ability needs.
+   */
+  readonly usesSecondaryAction?: boolean;
   /** Suggested minimum players — the lobby hints to add bots below this. */
   readonly suggestedPlayers: number;
 }

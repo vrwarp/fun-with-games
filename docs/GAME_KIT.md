@@ -194,12 +194,21 @@ on-screen **A** button) and `BUTTON_SECONDARY` (`E` / `K` / **B**, currently
 unused — reserved for your ability). Wiring order for a new ability:
 
 1. Read the bit in your system: `player.input.buttons & BUTTON_SECONDARY`.
-2. Nothing else. The wire, prediction, touch and keyboard already carry it.
-   Show the button on phones by flipping `usesPrimaryAction` (or wiring
-   `secondary: true` into the `TouchButtons` construction in `main.ts`).
+2. Show the button on phones: set `usesPrimaryAction` /
+   `usesSecondaryAction` in the mode's metadata. Nothing else — the wire,
+   prediction, touch and keyboard already carry both bits.
 
 Movement axes carry analog magnitude: half-stick is half speed. The
 `sprint` flag comes from Shift or pushing the stick to its rim.
+
+## Sound and haptics
+
+`src/render/audio.ts` synthesises every sound with WebAudio (no files):
+score blips, power-ups, tags, KOs, goals, laps, countdown ticks, "GO!", the
+round-end fanfare. The announcer classifies each announcement with an
+`AnnouncerCue`, and `main.ts` maps cues to sounds and vibration — to give a
+new mechanic audio, emit a cue from the announcer (or reuse one). `?mute=1`
+silences everything for quiet demos.
 
 ## Events vs. state diffing
 

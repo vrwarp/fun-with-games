@@ -6,13 +6,13 @@ Most multiplayer bugs are logic bugs, and logic bugs are cheap to catch — _if_
 the logic can run without a browser.
 
 So the simulation and the netcode are headless by construction, and the test
-suite that matters runs in **about one second**:
+suite that matters runs in **a few seconds**:
 
 ```
-tests/unit         200 tests
+tests/unit         ~280 tests — rules, systems, every game mode
 tests/integration   ← full multi-peer sessions, latency, packet loss
-                   ~1.1s total, no browser
-tests/e2e           31 tests, ~3 minutes, real Chromium (desktop + phone)
+                   ~3s total, no browser
+tests/e2e           39 tests, ~3 minutes, real Chromium (desktop + phone)
 ```
 
 That ratio is the point. A test you run on every save catches things a

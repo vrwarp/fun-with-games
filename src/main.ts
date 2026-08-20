@@ -13,6 +13,7 @@ import { Renderer } from './render/renderer.js';
 import { KeyboardInput, mergeIntents } from './render/input.js';
 import { TouchInput } from './render/touch.js';
 import { TouchButtons } from './render/buttons.js';
+import { GameAudio } from './render/audio.js';
 import { keepScreenAwake, tapFeedback } from './render/device.js';
 import { loadManifest, loadModel } from './render/assets.js';
 import type { AssetManifest } from './shared/manifest.js';
@@ -114,7 +115,52 @@ async function launch(app: HTMLElement, options: LaunchOptions): Promise<void> {
     onAddBot: () => void session.addBot(),
     onRemoveBot: () => void session.removeBot(),
   });
-  const announcer = new Announcer(app, session.selfId);
+
+  // Procedural blips — no audio files, and `?mute=1` for quiet demos. The
+  // announcer already knows what just happened, so it drives the sounds.
+  const audio = new GameAudio({
+    muted: new URLSearchParams(window.location.search).get('mute') === '1',
+  });
+  audio.attach();
+  const announcer = new Announcer(app, session.selfId, {
+    onCue: (cue) => {
+      switch (cue) {
+        case 'go':
+          audio.play('go');
+          break;
+        case 'tagged':
+        case 'frozen':
+          audio.play('tagged');
+          tapFeedback(30);
+          break;
+        case 'ko':
+          audio.play('ko');
+          tapFeedback(60);
+          break;
+        case 'respawn':
+          audio.play('respawn');
+          break;
+        case 'goal':
+          audio.play('goal');
+          break;
+        case 'lap':
+          audio.play('lap');
+          break;
+        case 'item':
+          audio.play('crown');
+          break;
+        case 'powerup':
+          audio.play('powerup');
+          break;
+        case 'pickup':
+          audio.play('score');
+          tapFeedback();
+          break;
+        case 'untagged':
+          break;
+      }
+    },
+  });
   // Created once the manifest resolves, so it can list real licences.
   let credits: Credits | null = null;
   const input = new KeyboardInput(window);
@@ -127,7 +173,10 @@ async function launch(app: HTMLElement, options: LaunchOptions): Promise<void> {
 
   // Action buttons appear only in modes that use them — a fire button with
   // nothing to fire is just thumb clutter.
-  const buttons = new TouchButtons(app, { primary: mode.usesPrimaryAction });
+  const buttons = new TouchButtons(app, {
+    primary: mode.usesPrimaryAction,
+    secondary: mode.usesSecondaryAction ?? false,
+  });
   buttons.attach();
 
   // `?bots=N` pre-fills the arena. Only the host actually spawns them
@@ -157,7 +206,8 @@ async function launch(app: HTMLElement, options: LaunchOptions): Promise<void> {
   window.addEventListener('orientationchange', onOrientationChange);
 
   let lastFrameMs = performance.now();
-  let lastLocalScore = 0;
+  let lastCountdownSecond = -1;
+  let lastPhaseId = '';
 
   renderer.engine.runRenderLoop(() => {
     const now = performance.now();
@@ -171,14 +221,22 @@ async function launch(app: HTMLElement, options: LaunchOptions): Promise<void> {
 
     const state = session.sample(now);
     renderer.renderFrame(state, deltaSeconds);
+    // The announcer diffs rendered states, so feedback (toasts, sounds,
+    // haptics via the cue callback above) is identical on host and clients.
     announcer.update(state);
 
-    // Buzz on scoring. Derived from the rendered score rather than a
-    // simulation event, so it works identically on the host and on clients —
-    // a client never runs the pickup system that raises the event.
-    const localScore = state.players.find((player) => player.id === session.selfId)?.score ?? 0;
-    if (localScore > lastLocalScore) tapFeedback();
-    lastLocalScore = localScore;
+    // Tick during the last three countdown seconds; fanfare on a round end.
+    if (state.phase.id === 'countdown') {
+      const second = Math.ceil(state.phase.remainingSeconds);
+      if (second !== lastCountdownSecond && second <= 3 && second > 0) {
+        audio.play('countdown');
+      }
+      lastCountdownSecond = second;
+    } else {
+      lastCountdownSecond = -1;
+    }
+    if (state.phase.id === 'ended' && lastPhaseId === 'playing') audio.play('win');
+    lastPhaseId = state.phase.id;
 
     hud.update(state, {
       roomId: options.roomId,
@@ -199,6 +257,7 @@ async function launch(app: HTMLElement, options: LaunchOptions): Promise<void> {
     input.detach();
     touch.dispose();
     buttons.dispose();
+    audio.dispose();
     announcer.dispose();
     credits?.dispose();
     hud.dispose();

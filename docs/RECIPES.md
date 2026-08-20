@@ -166,11 +166,9 @@ and predicted with zero extra work. The impulse survives the speed cap because
 updateDash(ctx); //       burst movement before combat interactions
 ```
 
-**4. Show the button on phones** — in `main.ts`, the `TouchButtons`
-construction: `new TouchButtons(app, { primary: mode.usesPrimaryAction, secondary: true })`
-(or add a `usesSecondaryAction` field to `GameModeInfo` next to
-`usesPrimaryAction` and thread it through — 3 lines). Keyboard `E`/`K`
-already works.
+**4. Show the button on phones** — set `usesSecondaryAction: true` in the
+mode's `GAME_MODES` entry (`src/shared/modes.ts`); `main.ts` already threads
+it into `TouchButtons`. Keyboard `E`/`K` already works.
 
 **5. Test** (`tests/unit/sim/dash.test.ts`):
 

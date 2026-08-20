@@ -43,8 +43,9 @@ handy? Add `&bots=3`.
   framing, mobile-first CSS, safe-area insets, a capped pixel ratio, a screen
   wake lock, and a web app manifest so it installs. Verified by an e2e suite
   that runs on a real touch device profile, not a narrow desktop window.
-- **A test suite you will actually run.** 200 headless tests in ~1 second,
-  plus 31 Playwright tests that drive two real browser tabs and a phone.
+- **A test suite you will actually run.** 300+ headless tests in a few
+  seconds — including a sweep that plays every game mode with bots — plus 39
+  Playwright tests that drive two real browser tabs and a phone.
 - **Enforced architecture.** The layering is checked by ESLint, so `src/sim`
   physically cannot import Babylon or reach for `Math.random()`.
 - **An asset pipeline with no binaries.** Procedural glTF generation, a

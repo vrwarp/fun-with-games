@@ -189,7 +189,7 @@ export class KitViews {
         mesh = this.#projectileProto.createInstance(`projectile:${projectile.id}`);
         this.#projectiles.set(projectile.id, mesh);
       }
-      mesh.position.set(projectile.x, 0.9, projectile.z);
+      mesh.position.set(projectile.x, projectile.y, projectile.z);
     }
 
     for (const [id, mesh] of this.#projectiles) {
@@ -210,10 +210,10 @@ export class KitViews {
 
       if (carrier) {
         // Ride above the carrier's head so possession reads at a glance.
-        view.root.position.set(carrier.x, 2.3, carrier.z);
+        view.root.position.set(carrier.x, carrier.y + 2.3, carrier.z);
       } else {
         const bob = view.spin ? Math.sin(this.#time * 2) * 0.1 : 0;
-        view.root.position.set(item.x, (view.spin ? 0.9 : 0) + bob, item.z);
+        view.root.position.set(item.x, item.y + (view.spin ? 0.9 : 0) + bob, item.z);
       }
       if (view.spin) view.root.rotation.y = this.#time;
     }

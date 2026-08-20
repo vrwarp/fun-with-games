@@ -89,3 +89,73 @@ test('gather stays the untimed sandbox: no banner, no timer, no buttons', async 
   await expect(page.getByTestId('round-timer')).toBeHidden();
   await expect(page.getByTestId('touch-buttons')).toBeHidden();
 });
+
+test.describe('2D and 2.5D views', () => {
+  test('the platformer runs side-on with an orthographic camera', async ({ page }) => {
+    await page.goto('/?net=broadcast&autojoin=1&room=e2e-platformer&mode=platformer&name=Jumper');
+    await waitForHud(page);
+
+    expect(await page.evaluate(() => window.__FWG__.view)).toBe('side');
+    // Orthographic is what makes a side-scroller read as 2D rather than as a
+    // 3D game photographed from the side.
+    expect(await page.evaluate(() => window.__FWG__.orthographic)).toBe(true);
+    // Jumping is an action, so the mode shows the on-screen button.
+    await expect(page.getByTestId('touch-buttons')).toBeAttached();
+  });
+
+  test('gravity actually applies: the player is pulled back to a surface', async ({ page }) => {
+    await page.goto('/?net=broadcast&autojoin=1&room=e2e-gravity&mode=platformer&name=Jumper');
+    await waitForHud(page);
+    await expect
+      .poll(() => page.evaluate(() => window.__FWG__.tick), { timeout: 30_000 })
+      .toBeGreaterThan(60);
+
+    const height = await page.evaluate(() => {
+      const id = window.__FWG__.selfId;
+      return window.__FWG__.players.find((p) => p.id === id)?.y ?? -1;
+    });
+    // Standing on the floor or on the opening ledge — never falling forever.
+    expect(height).toBeGreaterThanOrEqual(0);
+    expect(height).toBeLessThan(20);
+  });
+
+  test('any mode can be forced into any view from the URL', async ({ page }) => {
+    // View is presentation-only, so it is a per-player URL knob rather than
+    // part of the room's rules.
+    await page.goto('/?net=broadcast&autojoin=1&room=e2e-view&mode=tag&view=topdown&name=Bird');
+    await waitForHud(page);
+
+    expect(await page.evaluate(() => window.__FWG__.mode)).toBe('tag');
+    expect(await page.evaluate(() => window.__FWG__.view)).toBe('topdown');
+    expect(await page.evaluate(() => window.__FWG__.orthographic)).toBe(true);
+  });
+
+  test('the isometric mode picks up its 2.5D framing', async ({ page }) => {
+    await page.goto('/?net=broadcast&autojoin=1&room=e2e-iso&mode=dungeon&bots=2&name=Delver');
+    await waitForHud(page);
+
+    expect(await page.evaluate(() => window.__FWG__.view)).toBe('iso');
+    expect(await page.evaluate(() => window.__FWG__.orthographic)).toBe(true);
+  });
+
+  test('the 3D follow camera stays perspective', async ({ page }) => {
+    await page.goto('/?net=broadcast&autojoin=1&room=e2e-3d&name=Classic');
+    await waitForHud(page);
+
+    expect(await page.evaluate(() => window.__FWG__.view)).toBe('follow');
+    expect(await page.evaluate(() => window.__FWG__.orthographic)).toBe(false);
+  });
+
+  test('sprite mode renders without errors', async ({ page }) => {
+    const errors: string[] = [];
+    page.on('pageerror', (error) => errors.push(error.message));
+
+    await page.goto('/?net=broadcast&autojoin=1&room=e2e-sprites&mode=skirmish&bots=2&name=Pix');
+    await waitForHud(page);
+    await expect
+      .poll(() => page.evaluate(() => window.__FWG__.tick), { timeout: 30_000 })
+      .toBeGreaterThan(30);
+
+    expect(errors).toEqual([]);
+  });
+});

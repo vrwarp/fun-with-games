@@ -11,7 +11,18 @@ import type { Scene } from '@babylonjs/core/scene.js';
 import type { ShadowGenerator } from '@babylonjs/core/Lights/Shadows/shadowGenerator.js';
 import type { SimConfig } from '../sim/config.js';
 import type { RenderPickup, RenderPlayer, RenderState } from '../net/view.js';
-import { createLabelTexture } from './textures.js';
+import { createLabelTexture, createSpriteTexture } from './textures.js';
+
+export interface EntityViewOptions {
+  /**
+   * Draw players as camera-facing sprites instead of 3D bodies.
+   *
+   * This is the visual half of "2D game": paired with the top-down or side
+   * view it reads as a pixel-art game, while the simulation underneath is
+   * completely unchanged.
+   */
+  sprites?: boolean;
+}
 
 interface PlayerView {
   root: TransformNode;
@@ -43,6 +54,7 @@ export class EntityViews {
 
   #players = new Map<string, PlayerView>();
   #pickups = new Map<number, PickupView>();
+  readonly #sprites: boolean;
 
   /** Prototype meshes; per-entity meshes are clones/instances of these. */
   #playerProto: Mesh;
@@ -51,10 +63,16 @@ export class EntityViews {
 
   #spinRadians = 0;
 
-  constructor(scene: Scene, config: SimConfig, shadows: ShadowGenerator | null) {
+  constructor(
+    scene: Scene,
+    config: SimConfig,
+    shadows: ShadowGenerator | null,
+    options: EntityViewOptions = {},
+  ) {
     this.#scene = scene;
     this.#config = config;
     this.#shadows = shadows;
+    this.#sprites = options.sprites ?? false;
 
     this.#playerProto = CreateCapsule(
       'player:proto',
@@ -125,9 +143,13 @@ export class EntityViews {
     if (knockedOut) {
       material.alpha = 0.25;
       body.scaling.setAll(0.8);
-      material.diffuseColor = view.baseColor.scale(0.6);
-      material.emissiveColor = view.baseEmissive.scale(0.2);
       view.label.visibility = 0.25;
+      if (this.#sprites) {
+        material.emissiveColor = new Color3(0.4, 0.4, 0.45);
+      } else {
+        material.diffuseColor = view.baseColor.scale(0.6);
+        material.emissiveColor = view.baseEmissive.scale(0.2);
+      }
       return;
     }
 
@@ -136,6 +158,21 @@ export class EntityViews {
 
     // Blinking beats a steady tint for protection: it reads as "temporary".
     material.alpha = protectedNow ? 0.55 + 0.35 * Math.sin(this.#spinRadians * 6) : 1;
+
+    // A sprite carries its colour in its texture, so status has to be a
+    // multiply on top (emissive) rather than a diffuse swap, which would
+    // simply be ignored.
+    if (this.#sprites) {
+      if (frozen) {
+        material.emissiveColor = Color3.FromHexString('#8fd3e8');
+      } else if (isIt) {
+        const pulse = 0.6 + 0.4 * Math.sin(this.#spinRadians * 4);
+        material.emissiveColor = new Color3(1, pulse * 0.55, pulse * 0.45);
+      } else {
+        material.emissiveColor = new Color3(1, 1, 1);
+      }
+      return;
+    }
 
     if (frozen) {
       material.diffuseColor = Color3.FromHexString('#a8dadc');
@@ -188,8 +225,10 @@ export class EntityViews {
         this.#refreshPlayerAppearance(view, player);
       }
 
-      view.root.position.set(player.x, this.#config.playerRadius * 1.7, player.z);
-      view.root.rotation.y = player.heading;
+      view.root.position.set(player.x, player.y + this.#config.playerRadius * 1.7, player.z);
+      // A sprite is a billboard: it must not yaw with the player, or it would
+      // turn edge-on and vanish. The 3D body still faces where it is going.
+      if (!this.#sprites) view.root.rotation.y = player.heading;
       this.#applyStatus(view, player);
     }
 
@@ -202,19 +241,41 @@ export class EntityViews {
 
   #createPlayer(player: RenderPlayer): PlayerView {
     const root = new TransformNode(`player:${player.id}`, this.#scene);
-    root.position = new Vector3(player.x, this.#config.playerRadius * 1.7, player.z);
-
-    const body = this.#playerProto.clone(`player:${player.id}:body`, root);
-    body.isVisible = true;
-    body.setEnabled(true);
+    root.position = new Vector3(player.x, player.y + this.#config.playerRadius * 1.7, player.z);
 
     const material = new StandardMaterial(`player:${player.id}:mat`, this.#scene);
     const baseColor = Color3.FromHexString(player.color);
-    material.diffuseColor = baseColor;
-    material.specularColor = new Color3(0.25, 0.25, 0.25);
-    // The local player gets a faint glow so you can always find yourself.
     const baseEmissive = player.isLocal ? baseColor.scale(0.35) : new Color3(0, 0, 0);
-    material.emissiveColor = baseEmissive;
+
+    let body: Mesh;
+    if (this.#sprites) {
+      const height = this.#config.playerHeight * 1.2;
+      body = CreatePlane(`player:${player.id}:body`, { width: height, height }, this.#scene);
+      body.parent = root;
+      // BILLBOARDMODE_ALL, not _Y. A Y-only billboard is seen edge-on by a
+      // top-down camera and disappears into a one-pixel sliver; facing the
+      // camera on every axis is what makes one sprite work in all four views
+      // (upright side-on, lying flat from above).
+      body.billboardMode = 7;
+      // Sprite art carries its own shading, so lighting it twice muddies it.
+      material.diffuseTexture = createSpriteTexture(this.#scene, player.color);
+      material.useAlphaFromDiffuseTexture = true;
+      material.diffuseTexture.hasAlpha = true;
+      material.emissiveColor = new Color3(1, 1, 1);
+      material.disableLighting = true;
+      material.backFaceCulling = false;
+      // Cut out rather than blend: a blended sprite sorts badly against other
+      // sprites and leaves halos where they overlap.
+      material.alphaCutOff = 0.4;
+    } else {
+      body = this.#playerProto.clone(`player:${player.id}:body`, root);
+      body.isVisible = true;
+      body.setEnabled(true);
+      material.diffuseColor = baseColor;
+      material.specularColor = new Color3(0.25, 0.25, 0.25);
+      // The local player gets a faint glow so you can always find yourself.
+      material.emissiveColor = baseEmissive;
+    }
     body.material = material;
 
     this.#shadows?.addShadowCaster(body);
@@ -256,7 +317,14 @@ export class EntityViews {
     view.color = player.color;
     view.baseColor = Color3.FromHexString(player.color);
     view.baseEmissive = player.isLocal ? view.baseColor.scale(0.35) : new Color3(0, 0, 0);
-    view.material.diffuseColor = view.baseColor;
+    if (this.#sprites) {
+      view.material.diffuseTexture?.dispose();
+      const texture = createSpriteTexture(this.#scene, player.color);
+      texture.hasAlpha = true;
+      view.material.diffuseTexture = texture;
+    } else {
+      view.material.diffuseColor = view.baseColor;
+    }
 
     const parent = view.root;
     view.label.material?.dispose(true, true);
@@ -286,7 +354,7 @@ export class EntityViews {
       // A slow spin and bob; purely cosmetic, driven by frame time, never by
       // the simulation clock.
       const bob = Math.sin(this.#spinRadians * 1.5 + pickup.id) * 0.15;
-      view.mesh.position.set(pickup.x, this.#config.pickupRadius + 0.35 + bob, pickup.z);
+      view.mesh.position.set(pickup.x, pickup.y + this.#config.pickupRadius + 0.35 + bob, pickup.z);
       view.mesh.rotation.y = this.#spinRadians + pickup.id;
     }
 

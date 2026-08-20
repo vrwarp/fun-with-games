@@ -1,4 +1,5 @@
 import { clamp } from '../shared/math.js';
+import { BUTTON_PRIMARY, BUTTON_SECONDARY } from '../sim/types.js';
 
 export interface InputIntent {
   /** World-space movement on X, in [-1, 1]. */
@@ -6,24 +7,41 @@ export interface InputIntent {
   /** World-space movement on Z, in [-1, 1]. */
   moveZ: number;
   sprint: boolean;
+  /** Action buttons held, as a `BUTTON_*` bitfield (see `@/sim/types`). */
+  buttons: number;
 }
 
-export const IDLE_INTENT: InputIntent = Object.freeze({ moveX: 0, moveZ: 0, sprint: false });
+export const IDLE_INTENT: InputIntent = Object.freeze({
+  moveX: 0,
+  moveZ: 0,
+  sprint: false,
+  buttons: 0,
+});
 
 /**
  * Combines several input devices into one intent.
  *
- * A device that is idle contributes nothing, so a phone with a Bluetooth
- * keyboard attached can use either — whichever the player touched last simply
- * wins, with no mode switch to get stuck in.
+ * Movement comes from the first device that is actually steering, so a phone
+ * with a Bluetooth keyboard attached can use either — whichever the player
+ * touched last simply wins, with no mode switch to get stuck in. Buttons and
+ * sprint are OR-combined across devices: holding fire anywhere fires.
  */
 export function mergeIntents(...intents: readonly InputIntent[]): InputIntent {
+  let buttons = 0;
+  let sprint = false;
   for (const intent of intents) {
-    if (intent.moveX !== 0 || intent.moveZ !== 0) return intent;
+    buttons |= intent.buttons;
+    sprint ||= intent.sprint;
   }
-  // Nobody is steering; preserve a sprint held on its own.
-  const sprint = intents.some((intent) => intent.sprint);
-  return sprint ? { moveX: 0, moveZ: 0, sprint: true } : IDLE_INTENT;
+
+  for (const intent of intents) {
+    if (intent.moveX !== 0 || intent.moveZ !== 0) {
+      return { moveX: intent.moveX, moveZ: intent.moveZ, sprint, buttons };
+    }
+  }
+
+  if (!sprint && buttons === 0) return IDLE_INTENT;
+  return { moveX: 0, moveZ: 0, sprint, buttons };
 }
 
 const FORWARD_KEYS = new Set(['KeyW', 'ArrowUp']);
@@ -31,6 +49,10 @@ const BACKWARD_KEYS = new Set(['KeyS', 'ArrowDown']);
 const LEFT_KEYS = new Set(['KeyA', 'ArrowLeft']);
 const RIGHT_KEYS = new Set(['KeyD', 'ArrowRight']);
 const SPRINT_KEYS = new Set(['ShiftLeft', 'ShiftRight']);
+/** Primary action (fire / kick / use). Space plus a WASD-adjacent key. */
+const PRIMARY_KEYS = new Set(['Space', 'KeyJ']);
+/** Secondary action, reserved for game-specific abilities (dash, drop, …). */
+const SECONDARY_KEYS = new Set(['KeyE', 'KeyK']);
 
 /**
  * Translates keyboard state into a movement intent.
@@ -48,7 +70,7 @@ export class KeyboardInput {
   #onKeyDown = (event: KeyboardEvent): void => {
     if (event.repeat) return;
     if (this.#isGameKey(event.code)) {
-      // Arrow keys scroll the page otherwise, which fights the camera.
+      // Arrow keys scroll the page and space pages down; both fight the game.
       event.preventDefault();
     }
     this.#held.add(event.code);
@@ -108,10 +130,15 @@ export class KeyboardInput {
     const sin = Math.sin(cameraYaw);
     const cos = Math.cos(cameraYaw);
 
+    let buttons = 0;
+    if ([...PRIMARY_KEYS].some((code) => this.#held.has(code))) buttons |= BUTTON_PRIMARY;
+    if ([...SECONDARY_KEYS].some((code) => this.#held.has(code))) buttons |= BUTTON_SECONDARY;
+
     return {
       moveX: forward * sin + right * cos,
       moveZ: forward * cos - right * sin,
       sprint: [...SPRINT_KEYS].some((code) => this.#held.has(code)),
+      buttons,
     };
   }
 
@@ -120,7 +147,9 @@ export class KeyboardInput {
       FORWARD_KEYS.has(code) ||
       BACKWARD_KEYS.has(code) ||
       LEFT_KEYS.has(code) ||
-      RIGHT_KEYS.has(code)
+      RIGHT_KEYS.has(code) ||
+      PRIMARY_KEYS.has(code) ||
+      SECONDARY_KEYS.has(code)
     );
   }
 }

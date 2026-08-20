@@ -22,6 +22,7 @@ import type { SimConfig } from '../sim/config.js';
 import type { Obstacle } from '../sim/types.js';
 import type { RenderState } from '../net/view.js';
 import { EntityViews } from './entities.js';
+import { KitViews } from './kitviews.js';
 import { createCheckerTexture } from './textures.js';
 
 export interface RendererOptions {
@@ -51,6 +52,7 @@ export class Renderer {
   readonly camera: ArcRotateCamera;
 
   #entities: EntityViews;
+  #kit: KitViews;
   #shadows: ShadowGenerator | null = null;
   #localId: string | null = null;
   #cameraTarget = new Vector3(0, 0, 0);
@@ -92,6 +94,7 @@ export class Renderer {
     this.#createArena(options.config, options.obstacles);
 
     this.#entities = new EntityViews(this.scene, options.config, this.#shadows);
+    this.#kit = new KitViews(this.scene, options.config, this.#shadows);
 
     // Manual camera input suspends auto-follow. Registered as non-passive
     // capture listeners so they see the gesture even though Babylon's own
@@ -129,6 +132,7 @@ export class Renderer {
     if (this.#disposed) return;
 
     this.#entities.sync(state, deltaSeconds);
+    this.#kit.sync(state, deltaSeconds);
     this.#sinceManualCamera += deltaSeconds;
 
     if (this.#localId) {
@@ -160,6 +164,7 @@ export class Renderer {
     this.#disposed = true;
     this.#canvas.removeEventListener('pointerdown', this.#onManualCamera);
     this.#canvas.removeEventListener('wheel', this.#onManualCamera);
+    this.#kit.dispose();
     this.#entities.dispose();
     this.scene.dispose();
     this.engine.dispose();

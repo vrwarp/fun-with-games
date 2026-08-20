@@ -223,4 +223,38 @@ test.describe('on a phone', () => {
 
     expect(errors).toEqual([]);
   });
+
+  test('modes with an action show a thumb-sized fire button', async ({ page }) => {
+    // Every action needs a touch affordance (CLAUDE.md §7): in arena mode the
+    // primary button must exist, be reachable, and be big enough for a thumb.
+    await page.goto(`/?net=broadcast&autojoin=1&room=${ROOM}-arena&mode=arena&name=Gunner`);
+    await expect(page.getByTestId('hud')).toBeVisible({ timeout: 30_000 });
+
+    const fire = page.getByTestId('touch-button-primary');
+    await expect(fire).toBeVisible();
+    const box = await fire.boundingBox();
+    expect(box?.width ?? 0).toBeGreaterThanOrEqual(44);
+    expect(box?.height ?? 0).toBeGreaterThanOrEqual(44);
+  });
+
+  test('modes without an action keep the screen clear of buttons', async ({ page }) => {
+    await launch(page); // default gather mode
+    await expect(page.getByTestId('touch-buttons')).toBeHidden();
+  });
+
+  test('the phase banner is readable on a phone', async ({ page }) => {
+    await page.goto(`/?net=broadcast&autojoin=1&room=${ROOM}-rush&mode=rush&name=Racer`);
+    await expect(page.getByTestId('hud')).toBeVisible({ timeout: 30_000 });
+
+    await expect
+      .poll(() => page.evaluate(() => window.__FWG__.phase), { timeout: 20_000 })
+      .toBe('countdown');
+    await expect(page.getByTestId('phase-banner')).toBeVisible();
+
+    // Nothing overflows the phone viewport with the banner and timer up.
+    const overflow = await page.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    );
+    expect(overflow).toBeLessThanOrEqual(1);
+  });
 });

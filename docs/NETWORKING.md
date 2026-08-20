@@ -101,12 +101,26 @@ One data channel, four message types, discriminated by `type`. Version-gated:
 mismatched `PROTOCOL_VERSION` traffic is ignored outright, because in a
 decentralized game two client versions **will** meet in the wild.
 
-| Message    | Direction     | Rate    | Purpose                        |
-| ---------- | ------------- | ------- | ------------------------------ |
-| `hello`    | any → all     | on join | Name and colour                |
-| `input`    | client → host | 30 Hz   | One tick of intent             |
-| `snapshot` | host → all    | 15 Hz   | Full authoritative world state |
-| `bye`      | any → all     | on exit | Best-effort departure notice   |
+| Message    | Direction     | Rate    | Purpose                                    |
+| ---------- | ------------- | ------- | ------------------------------------------ |
+| `hello`    | any → all     | on join | Name and colour                            |
+| `input`    | client → host | 30 Hz   | One tick of intent (axes, sprint, buttons) |
+| `snapshot` | host → all    | 15 Hz   | Full authoritative world state             |
+| `bye`      | any → all     | on exit | Best-effort departure notice               |
+
+Protocol **v2** carries the game kit: an action-button bitfield in inputs
+(masked against `BUTTON_MASK` on decode), and in snapshots the phase state,
+per-player kit fields (team, role, hp, lives, checkpoint/lap, bot flag, the
+effects map), team scores, the ball, projectiles, items and zone ownership.
+Everything is validated against a hostile sender, including **size ceilings**
+on every collection (players, projectiles, effects, …) so a malicious host
+cannot make clients validate a million entries. Effect ids must match
+`/^[a-z][a-z0-9_-]{0,23}$/` — but note that a NEW effect id is not a protocol
+change; the map is carried generically.
+
+New abilities that only need a button do **not** bump the version: both
+button bits already travel. Bump `PROTOCOL_VERSION` only when a message
+_shape_ changes; never renumber or reuse a version.
 
 **Snapshots are full state, not deltas.** Deltas would be smaller, but every
 dropped packet would need recovery machinery. Full snapshots mean a lost packet
@@ -116,6 +130,11 @@ integration test passes without any special handling.
 Positions are quantized to millimetres on the wire. Clients are not
 authoritative, so the lost precision cannot accumulate; the next snapshot
 overwrites it. The simulation always keeps full precision.
+
+**Same config or no contact:** every peer in a room must run the same
+`SimConfig`. `main.ts` guarantees it by appending the game-mode id to the
+transport room name, so differently-configured clients land in different
+rooms rather than desyncing in the same one.
 
 ## Client-side netcode
 

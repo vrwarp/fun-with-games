@@ -34,6 +34,91 @@ http://localhost:5173/?net=broadcast&room=demo&mode=tag
 `?bots=N` fills the room with bots on launch; the host's HUD also has a
 "+ Bot" button. Bots understand every system and are deliberately beatable.
 
+## 2D, 2.5D and 3D
+
+**The simulation has always been a plane.** Positions are `(x, z)`; there is
+no perspective, no camera and no third dimension anywhere in `src/sim`. That
+means a 2D game is not a port or a special case here — it is the _default_
+model, and "3D" is a choice the renderer makes about how to photograph it.
+
+Three independent knobs decide what a game looks like:
+
+| Knob                      | Where                                   | Synced?               |
+| ------------------------- | --------------------------------------- | --------------------- |
+| **View** (camera framing) | mode metadata `view`, or `?view=`       | No — per player       |
+| **Sprites** (art style)   | mode metadata `sprites`, or `?sprites=` | No — per player       |
+| **Gravity** (`platform`)  | `SimConfig.platform`                    | **Yes** — it is rules |
+
+### Views — `src/render/views.ts`
+
+| `view`    | Reads as         | Camera                                    |
+| --------- | ---------------- | ----------------------------------------- |
+| `follow`  | 3D third-person  | perspective, swings behind you, drag-able |
+| `iso`     | 2.5D isometric   | orthographic, fixed 45° diagonal          |
+| `topdown` | flat 2D          | orthographic, almost straight down        |
+| `side`    | 2D side-scroller | orthographic, level with the z = 0 lane   |
+
+View is **presentation only**: it never reaches the simulation and is not part
+of the room name, so `?view=topdown` on any mode is always safe — two players
+in the same match may legitimately use different projections. That makes it
+the fastest demo trick in the kit:
+
+```
+?mode=soccer&view=topdown     # soccer as a flat 2D game
+?mode=arena&view=iso          # the shooter as 2.5D isometric
+?mode=tag&view=side           # tag on a single lane
+?mode=platformer&view=follow  # the platformer in 3D, for contrast
+```
+
+Input stays correct in every view automatically: movement is rotated by
+`cameraYaw`, so "up" is always "away from the camera", and the fixed views
+simply have a fixed yaw. Orthographic framing is recomputed on every resize
+because Babylon's ortho box is absolute, not aspect-derived.
+
+Manual camera control belongs to `follow` alone — an isometric camera you can
+drag off its axis is no longer isometric.
+
+### Sprites — `src/render/textures.ts`
+
+`sprites: true` swaps the 3D capsule for a camera-facing billboard drawn with
+a procedurally generated pixel-art texture (tinted per player, nearest-neighbour
+sampled, alpha-cut so overlaps do not halo). Status effects still show: they
+tint the sprite through `emissiveColor` instead of swapping a diffuse colour.
+No binaries are involved, so this works on a fresh clone like everything else.
+
+### Gravity and platforms — `systems/movement.ts`, config `platform`
+
+This one **is** simulation, so it is part of the mode's rules and must match
+across peers. With `platform.enabled` false — the default, and the case for
+thirteen of the fourteen shipped modes — every player's `y` stays 0 and the
+code path is exactly the flat game that existed before the axis did.
+
+Switched on, you get:
+
+- **Gravity and terminal velocity**, integrated after horizontal movement.
+- **Jumping** on the button named by `jumpButton`, firing on the press _edge_
+  (a held button cannot bunny-hop), with `maxJumps` for double jumps and
+  `airControl` weakening mid-air steering.
+- **Standable geometry.** Every `Obstacle` spans `[baseY, top]`. Ground-level
+  boxes are walls you can also stand on; a `baseY` above 0 is a floating
+  platform you can jump onto _and walk under_. `SimConfig.platforms` lists
+  hand-placed ones (a platformer level is exactly that list).
+- **Heights on everything that needs one**: shards rest on whatever surface is
+  beneath them and cannot be grabbed through a floor, shots fly level so
+  storeys do not shoot each other, carried items ride their carrier.
+- **`lockZ`** pins players to the z = 0 lane and discards depth input, which
+  is what makes a side-scroller genuinely two-dimensional.
+
+Not vertical, on purpose: the **ball** and **zones** stay on the ground plane.
+Soccer and king-of-the-hill are ground games, and giving them a Y axis would
+buy complexity nobody asked for. If you need a bouncing ball, that is a real
+feature — write it, do not fake it.
+
+⚠️ **One conflict to know about:** `platform.jumpButton` defaults to
+`'primary'`, which is also the fire button. A mode that wants both jumping and
+shooting must set `jumpButton: 'secondary'` (and `usesSecondaryAction: true`
+in its metadata), or one press will do both.
+
 ## Systems
 
 Pipeline order inside `World.step()` (fixed on purpose — determinism):
@@ -143,6 +228,11 @@ Carryable objects that follow their carrier and drop on KO:
 Carriers get the `carry` effect (slower) and render with the item overhead.
 
 ### Bots — `systems/bots.ts`, config `bots`
+
+Bots jump when gravity is on: they hop obstacles in their path, reach for
+shards resting above them, and hop when they stall against their target. The
+logic is deliberately crude — a bot that reliably makes progress beats a
+clever one that occasionally strands itself on a ledge.
 
 `world.addBot()` / `removeBot()` (host-only via `session.addBot()`). Bots are
 ordinary players with `isBot: true`, simulated inside `step()`, so they

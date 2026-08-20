@@ -118,9 +118,17 @@ cannot make clients validate a million entries. Effect ids must match
 `/^[a-z][a-z0-9_-]{0,23}$/` — but note that a NEW effect id is not a protocol
 change; the map is carried generically.
 
+Protocol **v3** adds the vertical axis: heights and vertical velocity for
+players, pickups, projectiles and carried items, plus jump bookkeeping
+(`grounded`, `jumps`, `jumpLatch`). Every mode carries these fields whether or
+not gravity is enabled — a couple of floats per entity, in exchange for one
+code path instead of two.
+
 New abilities that only need a button do **not** bump the version: both
-button bits already travel. Bump `PROTOCOL_VERSION` only when a message
-_shape_ changes; never renumber or reuse a version.
+button bits already travel. Camera view and sprite style never touch the wire
+at all, which is precisely why two players can watch the same match in
+different projections. Bump `PROTOCOL_VERSION` only when a message _shape_
+changes; never renumber or reuse a version.
 
 **Snapshots are full state, not deltas.** Deltas would be smaller, but every
 dropped packet would need recovery machinery. Full snapshots mean a lost packet

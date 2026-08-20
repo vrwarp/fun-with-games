@@ -3,14 +3,19 @@
 A peer-to-peer 3D arena built with **Babylon.js** and **decentralized WebRTC** —
 no game server, no signalling server, no accounts.
 
-It is a **starter kit with a game kit inside**: eleven playable modes (tag,
+It is a **starter kit with a game kit inside**: fourteen playable modes (tag,
 infection, blaster arena, knockout, soccer, capture the flag, king of the
-hill, checkpoint racing, crown keep-away, a timed shard rush and an endless
-sandbox) built from a library of composable, config-driven systems — match
-phases, teams, hp/combat, projectiles, roles, a ball with goals, zones,
-carryable items, timed status effects, power-ups and deterministic bots.
-Most new games are a preset, not new code; see
+hill, checkpoint racing, crown keep-away, a timed shard rush, an endless
+sandbox, a 2D side-scrolling platformer, a 2D top-down shooter and a 2.5D
+isometric chase) built from a library of composable, config-driven systems —
+match phases, teams, hp/combat, projectiles, roles, a ball with goals, zones,
+carryable items, timed status effects, power-ups, gravity/jumping and
+deterministic bots. Most new games are a preset, not new code; see
 [`docs/RECIPES.md`](./docs/RECIPES.md).
+
+**2D, 2.5D or 3D — same engine.** The simulation is a plane with no camera in
+it, so the projection is a rendering choice you can flip per player:
+`&view=topdown`, `&view=iso`, `&view=side`, `&sprites=1` work on every mode.
 
 ```bash
 npm install
@@ -24,11 +29,16 @@ handy? Add `&bots=3`.
 
 ## What you get
 
-- **A game kit.** Eleven modes out of the box and the systems to build many
+- **A game kit.** Fourteen modes out of the box and the systems to build many
   more: rounds and win conditions, teams, combat, projectiles, tag roles,
   ball + goals, hills/checkpoints/bases, flags and crowns, timed effects,
-  power-ups, and bots that understand every mode. All simulation-side, all
-  deterministic, all covered by headless tests.
+  power-ups, gravity with jumping and standable platforms, and bots that
+  understand every mode. All simulation-side, all deterministic, all covered
+  by headless tests.
+- **Four camera projections.** Third-person 3D, isometric 2.5D, flat top-down
+  2D and 2D side-scrolling — plus an optional procedural pixel-art sprite
+  style. Switchable per player from the URL, because none of it touches the
+  rules.
 - **Real netcode.** Host-authoritative simulation with client-side prediction,
   server reconciliation, entity interpolation, and automatic host migration
   when the host disconnects (bots survive the handover too).
@@ -125,8 +135,9 @@ gesture arbitration.
 On Android and iOS you can install it from the browser menu — it runs
 fullscreen, with its own icon, and keeps the screen awake while you play.
 
-URL parameters: `room`, `mode`, `bots`, `name`, `color`, `net=broadcast`,
-`autojoin=1`, `log=debug`.
+URL parameters: `room`, `mode`, `bots`, `view` (`follow`/`iso`/`topdown`/`side`),
+`sprites`, `name`, `color`, `net=broadcast`, `autojoin=1`, `mute=1`,
+`log=debug`.
 
 ## Documentation
 

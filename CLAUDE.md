@@ -7,24 +7,31 @@ thousand commits cheap: keep the seams clean, keep the tests fast, and keep the
 rules below intact even when a shortcut would be quicker.
 
 > **Asked to "make a game"? Read [`docs/RECIPES.md`](./docs/RECIPES.md) first.**
-> Eleven playable modes already exist behind `?mode=` (tag, infection, arena,
-> knockout, soccer, ctf, hill, race, crown, rush, gather), and a library of
-> config-driven systems — phases/rounds, teams, hp/combat, projectiles, tag
-> roles, a ball with goals, zones, carryable flags/crowns, timed status
-> effects, power-ups and bots — means most new games are **a preset, not new
-> code**. The reference is [`docs/GAME_KIT.md`](./docs/GAME_KIT.md). Do not
-> rebuild any of this.
+> Fourteen playable modes already exist behind `?mode=` (tag, infection,
+> arena, knockout, soccer, ctf, hill, race, crown, rush, gather, platformer,
+> skirmish, dungeon), and a library of config-driven systems — phases/rounds,
+> teams, hp/combat, projectiles, tag roles, a ball with goals, zones,
+> carryable flags/crowns, timed status effects, power-ups, gravity/jumping
+> and bots — means most new games are **a preset, not new code**. The
+> reference is [`docs/GAME_KIT.md`](./docs/GAME_KIT.md). Do not rebuild any
+> of this.
+>
+> **2D and 2.5D are already covered.** `src/sim` is a _plane_ — it has no
+> camera and no perspective — so 2D is the native model, not a port. Add
+> `&view=topdown`, `&view=iso` or `&view=side` (optionally `&sprites=1`) to
+> ANY mode's URL. Do not write a second engine for 2D; change the view.
 
 ---
 
 ## 1. Orientation
 
-A peer-to-peer 3D arena engine with a library of composable game systems.
-The default mode is a shard-collecting sandbox; ten more modes ship with it.
+A peer-to-peer arena engine with a library of composable game systems, playable
+in 3D, 2.5D or 2D. The default mode is a shard-collecting sandbox; thirteen
+more modes ship with it.
 
 | Concern    | Choice                                                                                      |
 | ---------- | ------------------------------------------------------------------------------------------- |
-| Rendering  | Babylon.js 9 (`@babylonjs/core`, deep imports)                                              |
+| Rendering  | Babylon.js 9 (`@babylonjs/core`, deep imports); 3D, isometric, top-down and side views      |
 | Networking | [Trystero](https://github.com/dmotz/trystero) — WebRTC, decentralized signalling over Nostr |
 | Authority  | Host-authoritative, host _elected_ (lowest peer id), auto-migrating                         |
 | Build      | Vite 7 + TypeScript 5.9 (strict, `noUncheckedIndexedAccess`)                                |
@@ -80,9 +87,11 @@ Drop `?net=broadcast` to use real WebRTC over the public relay network.
 `?bots=3` (or the host's **+ Bot** HUD button) fills the room with in-sim
 bots, so every mode is demoable with one human.
 
-Useful query parameters: `room`, `mode`, `bots`, `name`, `color`,
-`net=broadcast`, `autojoin=1`, `log=debug`. The mode is part of the transport
-room name, so peers running different rules never meet.
+Useful query parameters: `room`, `mode`, `bots`, `view`, `sprites`, `name`,
+`color`, `net=broadcast`, `autojoin=1`, `mute=1`, `log=debug`. The mode is part
+of the transport room name, so peers running different rules never meet;
+`view` and `sprites` are presentation-only and deliberately are NOT, so one
+player can watch a match top-down while another plays it in 3D.
 
 ---
 
@@ -141,6 +150,10 @@ When touching simulation code:
   diverges between host and clients.
   `tests/unit/sim/world.snapshot.test.ts` is the guard rail — its config
   turns EVERY system on; keep it that way when adding one. Do not weaken it.
+- **Presentation is not simulation.** Camera view and sprite style live in
+  `src/render` and never enter `SimConfig`. If a "visual" choice changes what
+  the rules do — a side-scroller's one-lane constraint, gravity — then it IS
+  simulation and belongs in the config, synced like everything else.
 - **Prefer not creating state at all.** Timed per-player state is an effect
   (`addEffect` — the effects map is already snapshotted, transmitted and
   checksummed); anything derivable from the tick number should be computed,

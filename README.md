@@ -1,7 +1,8 @@
 # Fun With Games
 
-A peer-to-peer 3D arena built with **Babylon.js** and **decentralized WebRTC** —
-no game server, no signalling server, no accounts.
+A peer-to-peer multiplayer arena built with **Babylon.js** and **decentralized
+WebRTC** — no game server, no signalling server, no accounts. Playable in 3D,
+2.5D or 2D from the same engine.
 
 It is a **starter kit with a game kit inside**: fourteen playable modes (tag,
 infection, blaster arena, knockout, soccer, capture the flag, king of the

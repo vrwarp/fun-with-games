@@ -47,7 +47,11 @@ const PRESETS: Record<GameModeId, SimConfigOverrides> = {
 
   hill: {
     zones: [{ kind: 'hill', x: 0, z: 0, radius: 4, team: -1, order: 0 }],
-    phases: { enabled: true, minPlayers: 2, targetScore: 45 },
+    // Blasters with no combat: hits shove but never hurt — the mechanic is
+    // knocking rivals OFF the hill. The timer matters: a permanently
+    // contested hill pays nobody, so rounds must be able to end on time.
+    projectiles: { enabled: true, knockback: 14, cooldownTicks: 24 },
+    phases: { enabled: true, minPlayers: 2, targetScore: 45, playTicks: seconds(120) },
     pickupCount: 4,
     pickupWeights: { score: 0, speed: 1, shield: 0, heal: 0 },
   },

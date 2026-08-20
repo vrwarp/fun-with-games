@@ -71,9 +71,9 @@ export const GAME_MODES: readonly GameModeInfo[] = [
   {
     id: 'hill',
     title: 'King of the Hill',
-    tagline: 'Hold the centre circle to rack up points.',
-    goal: 'Stand alone on the hill to score. First to 45 wins.',
-    usesPrimaryAction: false,
+    tagline: 'Hold the centre circle — and blast rivals off it.',
+    goal: 'Stand alone on the hill to score; shots shove but never hurt. First to 45 wins.',
+    usesPrimaryAction: true,
     suggestedPlayers: 2,
   },
   {

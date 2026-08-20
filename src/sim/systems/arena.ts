@@ -8,12 +8,22 @@ import type { Obstacle } from '../types.js';
  * Called once per world, before any player exists, so every peer that opens
  * the same room derives byte-identical obstacles without exchanging them.
  * Obstacles are therefore NOT part of the snapshot.
+ *
+ * Zones (goals, hills, checkpoints, bases) and item homes (flags, crowns)
+ * are kept clear: a random block squatting on a goal mouth or a flag stand
+ * would make the mode unwinnable for that seed. The keepouts come from the
+ * config, which every peer shares, so determinism is unaffected.
  */
 export function generateObstacles(config: SimConfig, rng: Rng): Obstacle[] {
   const obstacles: Obstacle[] = [];
   // Keep a clear ring around the origin so spawning players are never stuck.
   const spawnKeepout = 6;
   const maxAttemptsPerObstacle = 24;
+
+  const keepouts: Array<{ x: number; z: number; radius: number }> = [
+    ...config.zones.map((zone) => ({ x: zone.x, z: zone.z, radius: zone.radius + 1 })),
+    ...config.items.map((item) => ({ x: item.homeX, z: item.homeZ, radius: 2.5 })),
+  ];
 
   for (let id = 0; id < config.obstacleCount; id++) {
     for (let attempt = 0; attempt < maxAttemptsPerObstacle; attempt++) {
@@ -24,6 +34,9 @@ export function generateObstacles(config: SimConfig, rng: Rng): Obstacle[] {
 
       const candidate: Obstacle = { id, x, z, halfX, halfZ };
       if (overlapsOrigin(candidate, spawnKeepout)) continue;
+      if (keepouts.some((zone) => overlapsCircle(candidate, zone.x, zone.z, zone.radius))) {
+        continue;
+      }
       if (obstacles.some((existing) => overlaps(existing, candidate, 1.5))) continue;
 
       obstacles.push(candidate);
@@ -36,6 +49,12 @@ export function generateObstacles(config: SimConfig, rng: Rng): Obstacle[] {
 
 function overlapsOrigin(o: Obstacle, keepout: number): boolean {
   return Math.abs(o.x) - o.halfX < keepout && Math.abs(o.z) - o.halfZ < keepout;
+}
+
+function overlapsCircle(o: Obstacle, x: number, z: number, radius: number): boolean {
+  const dx = Math.max(Math.abs(x - o.x) - o.halfX, 0);
+  const dz = Math.max(Math.abs(z - o.z) - o.halfZ, 0);
+  return dx * dx + dz * dz < radius * radius;
 }
 
 function overlaps(a: Obstacle, b: Obstacle, margin: number): boolean {

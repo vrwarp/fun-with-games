@@ -117,6 +117,25 @@ function decide(ctx: StepContext, bot: PlayerState): Decision {
     return { target: { x: ball.x, z: ball.z }, sprint: true, fire: false };
   }
 
+  // --- Race: head for the next checkpoint -----------------------------------
+  const nextCheckpoint = ctx.config.zones.find(
+    (z) => z.kind === 'checkpoint' && z.order === bot.checkpoint,
+  );
+  if (nextCheckpoint) {
+    return { target: nextCheckpoint, sprint: true, fire: false };
+  }
+
+  // --- King of the hill: stand on it, and shove whoever else does -----------
+  const hill = ctx.config.zones.find((z) => z.kind === 'hill');
+  if (hill) {
+    const far = distance2(bot.x, bot.z, hill.x, hill.z) > hill.radius;
+    return {
+      target: { x: hill.x, z: hill.z },
+      sprint: far,
+      fire: ctx.config.projectiles.enabled && hasShotLinedUp(ctx, bot, 6),
+    };
+  }
+
   // --- Projectiles: hunt the nearest enemy, fire when lined up --------------
   if (ctx.config.projectiles.enabled) {
     const enemy = nearestPlayer(
@@ -134,14 +153,6 @@ function decide(ctx: StepContext, bot: PlayerState): Decision {
       const fire = dist < 10 && facing > 0.92 && !hasEffect(bot, 'reload', ctx.tick);
       return { target: { x: enemy.x, z: enemy.z }, sprint: dist > 6, fire };
     }
-  }
-
-  // --- Race: head for the next checkpoint -----------------------------------
-  const nextCheckpoint = ctx.config.zones.find(
-    (z) => z.kind === 'checkpoint' && z.order === bot.checkpoint,
-  );
-  if (nextCheckpoint) {
-    return { target: nextCheckpoint, sprint: true, fire: false };
   }
 
   // --- Otherwise: collect pickups, or wander --------------------------------
@@ -203,6 +214,23 @@ function fleeFrom(
 function clampToArena(value: number, halfExtent: number): number {
   const limit = halfExtent - 1.5;
   return value < -limit ? -limit : value > limit ? limit : value;
+}
+
+/** A rival is in range and roughly ahead — worth spending the cooldown. */
+function hasShotLinedUp(ctx: StepContext, bot: PlayerState, range: number): boolean {
+  if (hasEffect(bot, 'reload', ctx.tick)) return false;
+  const enemy = nearestPlayer(
+    ctx,
+    bot,
+    (p) =>
+      !isKnockedOut(p, ctx.tick) &&
+      (bot.team === TEAM_NONE || p.team !== bot.team) &&
+      !isProtected(p, ctx.tick),
+  );
+  if (!enemy) return false;
+  if (distance2(bot.x, bot.z, enemy.x, enemy.z) > range) return false;
+  const toEnemy = normalize2(enemy.x - bot.x, enemy.z - bot.z);
+  return Math.sin(bot.heading) * toEnemy.x + Math.cos(bot.heading) * toEnemy.y > 0.7;
 }
 
 function nearestPlayer(

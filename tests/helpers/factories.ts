@@ -1,10 +1,12 @@
 import { makeSimConfig, type SimConfigOverrides } from '@/sim/config.js';
+import { obstacleTop } from '@/sim/systems/arena.js';
 import { Rng } from '@/sim/rng.js';
 import type { SimEventRecord, StepContext } from '@/sim/step.js';
 import {
   EMPTY_INPUT,
   INITIAL_PHASE,
   TEAM_NONE,
+  type Obstacle,
   type PlayerInput,
   type PlayerState,
   type WorldSnapshot,
@@ -29,8 +31,10 @@ export function makePlayer(overrides: Partial<PlayerState> = {}): PlayerState {
     color: '#ffffff',
     x: 0,
     z: 0,
+    y: 0,
     vx: 0,
     vz: 0,
+    vy: 0,
     heading: 0,
     score: 0,
     team: TEAM_NONE,
@@ -39,6 +43,9 @@ export function makePlayer(overrides: Partial<PlayerState> = {}): PlayerState {
     lives: 0,
     checkpoint: 0,
     lap: 0,
+    grounded: true,
+    jumps: 0,
+    jumpLatch: false,
     isBot: false,
     effects: {},
     lastInputSeq: 0,
@@ -65,6 +72,24 @@ export function makeSnapshot(
     items: [],
     zones: [],
     ...extra,
+  };
+}
+
+/**
+ * A box for collision tests. Defaults to a ground-level wall, which is what
+ * every flat mode generates; pass `baseY` to float it into a platform.
+ */
+export function makeObstacle(overrides: Partial<Obstacle> = {}): Obstacle {
+  const halfX = overrides.halfX ?? 1;
+  return {
+    id: 0,
+    x: 0,
+    z: 0,
+    halfX,
+    halfZ: 1,
+    baseY: 0,
+    top: obstacleTop(halfX),
+    ...overrides,
   };
 }
 

@@ -158,6 +158,52 @@ export interface BotsConfig {
   readonly speedMultiplier: number;
 }
 
+/**
+ * Gravity, jumping and standable geometry — everything that turns the plane
+ * into a platformer.
+ *
+ * Off by default: with `enabled: false` every player's `y` stays 0 and the
+ * simulation behaves exactly as a flat, top-down world (which is the right
+ * model for tag, soccer, hill, racing and every other mode that ships).
+ */
+export interface PlatformConfig {
+  readonly enabled: boolean;
+  /** Downward acceleration, world units/second². */
+  readonly gravity: number;
+  /** Launch speed of a jump, world units/second. */
+  readonly jumpVelocity: number;
+  /** Jumps allowed before touching a surface again. 2 = double jump. */
+  readonly maxJumps: number;
+  /** Steering authority while airborne, as a fraction of ground control. */
+  readonly airControl: number;
+  /** Fall-speed cap, world units/second. */
+  readonly terminalVelocity: number;
+  /** Which action button jumps. */
+  readonly jumpButton: 'primary' | 'secondary';
+  /**
+   * Side-scroller mode: pin players to the z = 0 plane and ignore all depth
+   * input, so the game is genuinely two-dimensional. Pair it with
+   * `view: 'side'` in the mode metadata.
+   */
+  readonly lockZ: boolean;
+}
+
+/**
+ * A hand-placed box: a wall when it sits on the floor, a jumpable platform
+ * when `baseY` lifts it. Appended to the seed-generated obstacles, so it
+ * blocks, supports and renders exactly like them.
+ */
+export interface PlatformSpec {
+  readonly x: number;
+  readonly z: number;
+  readonly halfX: number;
+  readonly halfZ: number;
+  /** Bottom of the box; 0 rests it on the floor. */
+  readonly baseY: number;
+  /** Top surface — the height players stand on. */
+  readonly top: number;
+}
+
 /** Spawn weights per pickup kind; 0 disables a kind. */
 export type PickupWeights = Readonly<Record<PickupKind, number>>;
 
@@ -183,6 +229,8 @@ export interface SimConfig {
   readonly arenaHalfExtentZ: number;
 
   readonly playerRadius: number;
+  /** Standing height, used for head clearance and platform occupancy. */
+  readonly playerHeight: number;
   readonly playerAcceleration: number;
   readonly playerMaxSpeed: number;
   readonly playerSprintMultiplier: number;
@@ -200,6 +248,9 @@ export interface SimConfig {
   readonly obstacleMaxHalfExtent: number;
 
   // ---- game kit sections (each system reads exactly one) -------------------
+  readonly platform: PlatformConfig;
+  /** Hand-placed boxes appended to the generated obstacles. */
+  readonly platforms: readonly PlatformSpec[];
   readonly phases: PhasesConfig;
   readonly teams: TeamsConfig;
   readonly combat: CombatConfig;
@@ -227,6 +278,7 @@ export const DEFAULT_SIM_CONFIG: SimConfig = {
   arenaHalfExtentZ: 24,
 
   playerRadius: 0.5,
+  playerHeight: 1.7,
   playerAcceleration: 55,
   playerMaxSpeed: 9,
   playerSprintMultiplier: 1.6,
@@ -242,6 +294,17 @@ export const DEFAULT_SIM_CONFIG: SimConfig = {
   obstacleMinHalfExtent: 1,
   obstacleMaxHalfExtent: 3,
 
+  platform: {
+    enabled: false,
+    gravity: 26,
+    jumpVelocity: 9.5,
+    maxJumps: 2,
+    airControl: 0.65,
+    terminalVelocity: 28,
+    jumpButton: 'primary',
+    lockZ: false,
+  },
+  platforms: [],
   phases: {
     enabled: false,
     minPlayers: 1,
@@ -327,6 +390,7 @@ export interface SimConfigOverrides extends Partial<
   Omit<
     SimConfig,
     | 'pickupWeights'
+    | 'platform'
     | 'phases'
     | 'teams'
     | 'combat'
@@ -340,6 +404,7 @@ export interface SimConfigOverrides extends Partial<
   >
 > {
   readonly pickupWeights?: Partial<PickupWeights>;
+  readonly platform?: Partial<PlatformConfig>;
   readonly phases?: Partial<PhasesConfig>;
   readonly teams?: Partial<TeamsConfig>;
   readonly combat?: Partial<CombatConfig>;
@@ -363,6 +428,8 @@ export function makeSimConfig(overrides: SimConfigOverrides = {}): SimConfig {
     ...base,
     ...overrides,
     pickupWeights: { ...base.pickupWeights, ...overrides.pickupWeights },
+    platform: { ...base.platform, ...overrides.platform },
+    platforms: overrides.platforms ?? base.platforms,
     phases: { ...base.phases, ...overrides.phases },
     teams: { ...base.teams, ...overrides.teams },
     combat: { ...base.combat, ...overrides.combat },

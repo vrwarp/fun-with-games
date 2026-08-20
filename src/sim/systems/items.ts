@@ -2,6 +2,7 @@ import { distanceSq2 } from '../../shared/math.js';
 import type { ItemSpec } from '../config.js';
 import type { StepContext } from '../step.js';
 import { TEAM_NONE, type ItemState, type PlayerState } from '../types.js';
+import { supportHeight } from './arena.js';
 import { addEffect, isKnockedOut, isProtected } from './effects.js';
 import { isRoundActive } from './phase.js';
 
@@ -49,6 +50,7 @@ function updateCarried(ctx: StepContext, item: ItemState, spec: ItemSpec, active
 
   item.x = carrier.x;
   item.z = carrier.z;
+  item.y = carrier.y;
   item.atHome = false;
   // Refreshed each tick rather than open-ended, so a stale entry can never
   // outlive the carry (snapshots stay truthful).
@@ -68,14 +70,14 @@ function updateCarried(ctx: StepContext, item: ItemState, spec: ItemSpec, active
       ctx.teamScores[carrier.team] = (ctx.teamScores[carrier.team] ?? 0) + score;
     }
     ctx.out.push({ type: 'itemDelivered', itemId: item.id, playerId: carrier.id, score });
-    sendHome(item, spec);
+    sendHome(ctx, item, spec);
   }
 }
 
 function updateLoose(ctx: StepContext, item: ItemState, spec: ItemSpec): void {
   // Timed auto-return for dropped items.
   if (!item.atHome && item.returnTick > 0 && ctx.tick >= item.returnTick) {
-    sendHome(item, spec);
+    sendHome(ctx, item, spec);
   }
 
   const reach = ctx.config.playerRadius + 0.6;
@@ -84,11 +86,14 @@ function updateLoose(ctx: StepContext, item: ItemState, spec: ItemSpec): void {
   for (const player of ctx.players) {
     if (isKnockedOut(player, ctx.tick)) continue;
     if (distanceSq2(player.x, player.z, item.x, item.z) > reachSq) continue;
+    if (ctx.config.platform.enabled && Math.abs(player.y - item.y) >= ctx.config.playerHeight) {
+      continue;
+    }
 
     if (spec.kind === 'flag' && spec.team !== TEAM_NONE) {
       if (player.team === spec.team) {
         // Your own flag: touching it returns it (no effect while at home).
-        if (!item.atHome) sendHome(item, spec);
+        if (!item.atHome) sendHome(ctx, item, spec);
         continue;
       }
     }
@@ -138,6 +143,7 @@ function take(ctx: StepContext, item: ItemState, player: PlayerState): void {
   item.atHome = false;
   item.x = player.x;
   item.z = player.z;
+  item.y = player.y;
   addEffect(player, 'safe', ctx.tick + ctx.config.itemRules.stealGraceTicks);
   ctx.out.push({ type: 'itemTaken', itemId: item.id, playerId: player.id });
 }
@@ -150,13 +156,17 @@ function drop(ctx: StepContext, item: ItemState, carrier: PlayerState | null): v
   if (carrier) {
     item.x = carrier.x;
     item.z = carrier.z;
+    item.y = carrier.y;
   }
   ctx.out.push({ type: 'itemDropped', itemId: item.id, playerId: carrierId });
 }
 
-function sendHome(item: ItemState, spec: ItemSpec): void {
+function sendHome(ctx: StepContext, item: ItemState, spec: ItemSpec): void {
   item.x = spec.homeX;
   item.z = spec.homeZ;
+  item.y = ctx.config.platform.enabled
+    ? supportHeight(spec.homeX, spec.homeZ, 0.5, ctx.obstacles, Number.POSITIVE_INFINITY)
+    : 0;
   item.carrierId = '';
   item.returnTick = 0;
   item.atHome = true;

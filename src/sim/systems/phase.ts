@@ -105,8 +105,13 @@ function resetRound(ctx: StepContext): void {
     const spawn = spawnPosition(config, index);
     player.x = spawn.x;
     player.z = spawn.z;
+    player.y = 0;
     player.vx = 0;
     player.vz = 0;
+    player.vy = 0;
+    player.grounded = true;
+    player.jumps = 0;
+    player.jumpLatch = false;
   });
 
   ctx.teamScores.fill(0);

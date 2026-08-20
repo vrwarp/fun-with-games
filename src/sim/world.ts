@@ -101,6 +101,7 @@ export class World {
       id,
       x: spec.homeX,
       z: spec.homeZ,
+      y: 0,
       carrierId: '',
       returnTick: 0,
       atHome: true,
@@ -129,8 +130,10 @@ export class World {
       color: profile.color,
       x: spawn.x,
       z: spawn.z,
+      y: 0,
       vx: 0,
       vz: 0,
+      vy: 0,
       heading: 0,
       score: 0,
       team: this.#assignTeam(),
@@ -139,6 +142,9 @@ export class World {
       lives: this.config.combat.lives,
       checkpoint: 0,
       lap: 0,
+      grounded: true,
+      jumps: 0,
+      jumpLatch: false,
       isBot: options.isBot ?? false,
       effects: {},
       lastInputSeq: 0,
@@ -423,8 +429,13 @@ export class World {
       mixString(player.id);
       mixFloat(player.x);
       mixFloat(player.z);
+      mixFloat(player.y);
       mixFloat(player.vx);
       mixFloat(player.vz);
+      mixFloat(player.vy);
+      mix(player.grounded ? 1 : 0);
+      mix(player.jumps);
+      mix(player.jumpLatch ? 1 : 0);
       mix(player.score);
       mix(player.team);
       mix(player.role);
@@ -448,6 +459,7 @@ export class World {
       mix(pickup.id);
       mixFloat(pickup.x);
       mixFloat(pickup.z);
+      mixFloat(pickup.y);
       mixString(pickup.kind);
       mix(pickup.active ? 1 : 0);
       mix(pickup.respawnTick);
@@ -469,6 +481,7 @@ export class World {
       mix(projectile.team);
       mixFloat(projectile.x);
       mixFloat(projectile.z);
+      mixFloat(projectile.y);
       mixFloat(projectile.vx);
       mixFloat(projectile.vz);
       mix(projectile.bornTick);
@@ -478,6 +491,7 @@ export class World {
       mix(item.id);
       mixFloat(item.x);
       mixFloat(item.z);
+      mixFloat(item.y);
       mixString(item.carrierId);
       mix(item.returnTick);
       mix(item.atHome ? 1 : 0);

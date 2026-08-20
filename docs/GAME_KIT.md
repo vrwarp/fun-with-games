@@ -7,7 +7,7 @@ walkthroughs, read [`RECIPES.md`](./RECIPES.md); this file is the reference.
 
 **The one-sentence summary: most new games are a config, not new code.**
 
-## The eleven built-in modes
+## The fourteen built-in modes
 
 Every mode is a named `SimConfig` preset in `src/sim/presets.ts` with display
 metadata in `src/shared/modes.ts`. Launch any of them with `?mode=<id>` (the
@@ -30,6 +30,15 @@ http://localhost:5173/?net=broadcast&room=demo&mode=tag
 | `soccer`    | 2 teams push a ball into goals, first to 5 | teams, ball, zones(goal)                |
 | `ctf`       | Capture the flag with blasters, first to 3 | teams, items(flag), zones(base), combat |
 | `crown`     | Hold the crown to score, steal by touch    | items(crown), phases                    |
+
+The last three ship a non-3D projection. They are ordinary presets — the only
+new ingredients are gravity and a camera angle:
+
+| id           | Game                                        | Look                 |
+| ------------ | ------------------------------------------- | -------------------- |
+| `platformer` | Shard Climb: run, jump, collect off ledges  | 2D side-on, sprites  |
+| `skirmish`   | Top-Down Skirmish: blaster duel on a plane  | 2D overhead, sprites |
+| `dungeon`    | Isometric Dungeon: infection through a maze | 2.5D isometric       |
 
 `?bots=N` fills the room with bots on launch; the host's HUD also has a
 "+ Bot" button. Bots understand every system and are deliberately beatable.

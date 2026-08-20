@@ -9,10 +9,10 @@ So the simulation and the netcode are headless by construction, and the test
 suite that matters runs in **a few seconds**:
 
 ```
-tests/unit         ~280 tests — rules, systems, every game mode
+tests/unit         ~300 tests — rules, systems, every game mode
 tests/integration   ← full multi-peer sessions, latency, packet loss
                    ~3s total, no browser
-tests/e2e           39 tests, ~3 minutes, real Chromium (desktop + phone)
+tests/e2e           46 tests, ~3 minutes, real Chromium (desktop + phone)
 ```
 
 That ratio is the point. A test you run on every save catches things a

@@ -3,29 +3,17 @@ import { ClientView } from '@/net/prediction.js';
 import { makeSimConfig, tickDeltaSeconds } from '@/sim/config.js';
 import { integratePlayer } from '@/sim/systems/movement.js';
 import type { PlayerInput, PlayerState, WorldSnapshot } from '@/sim/types.js';
+import { makePlayer, makeSnapshot } from '../../helpers/factories.js';
 
 const config = makeSimConfig({ obstacleCount: 0, arenaHalfExtentX: 50, arenaHalfExtentZ: 50 });
 const dt = tickDeltaSeconds(config);
 
 function player(id: string, overrides: Partial<PlayerState> = {}): PlayerState {
-  return {
-    id,
-    name: id,
-    color: '#4cc9f0',
-    x: 0,
-    z: 0,
-    vx: 0,
-    vz: 0,
-    heading: 0,
-    score: 0,
-    lastInputSeq: 0,
-    input: { seq: 0, moveX: 0, moveZ: 0, sprint: false },
-    ...overrides,
-  };
+  return makePlayer({ id, name: id, color: '#4cc9f0', ...overrides });
 }
 
 function snapshot(tick: number, players: PlayerState[]): WorldSnapshot {
-  return { tick, rngState: 1, players, pickups: [] };
+  return makeSnapshot(tick, players);
 }
 
 function makeView(selfId = 'me'): ClientView {
@@ -43,6 +31,7 @@ const input = (seq: number, moveX = 1, moveZ = 0): PlayerInput => ({
   moveX,
   moveZ,
   sprint: false,
+  buttons: 0,
 });
 
 describe('ClientView: prediction', () => {
@@ -211,7 +200,11 @@ describe('ClientView: interpolation', () => {
   });
 
   it('returns an empty state with nothing buffered', () => {
-    expect(makeView().sample(0, 'host')).toEqual({ tick: 0, players: [], pickups: [] });
+    const state = makeView().sample(0, 'host');
+    expect(state.tick).toBe(0);
+    expect(state.players).toEqual([]);
+    expect(state.pickups).toEqual([]);
+    expect(state.ball).toBeNull();
   });
 
   it('ignores an out-of-order snapshot', () => {
@@ -226,21 +219,15 @@ describe('ClientView: interpolation', () => {
   it('takes pickups from the newest snapshot without interpolating', () => {
     const view = makeView();
     view.pushSnapshot(
-      {
-        tick: 0,
-        rngState: 1,
-        players: [],
-        pickups: [{ id: 0, x: 0, z: 0, active: true, respawnTick: 0 }],
-      },
+      makeSnapshot(0, [], {
+        pickups: [{ id: 0, x: 0, z: 0, kind: 'score', active: true, respawnTick: 0 }],
+      }),
       0,
     );
     view.pushSnapshot(
-      {
-        tick: 1,
-        rngState: 1,
-        players: [],
-        pickups: [{ id: 0, x: 9, z: 0, active: false, respawnTick: 5 }],
-      },
+      makeSnapshot(1, [], {
+        pickups: [{ id: 0, x: 9, z: 0, kind: 'score', active: false, respawnTick: 5 }],
+      }),
       100,
     );
 

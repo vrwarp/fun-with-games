@@ -1,11 +1,14 @@
-import { clamp, clampMagnitude2, normalize2 } from '../../shared/math.js';
+import { clamp, clampMagnitude2, length2, normalize2 } from '../../shared/math.js';
 import type { SimConfig } from '../config.js';
 import type { Obstacle, PlayerInput, PlayerState } from '../types.js';
+import { isImmobilized, movementScale } from './effects.js';
 
 /** Below this speed a player is treated as stationary and stops turning. */
 const HEADING_SPEED_EPSILON = 0.05;
 /** Velocity components smaller than this are snapped to zero to avoid drift. */
 const VELOCITY_EPSILON = 1e-4;
+/** How fast speed above the current cap bleeds off, in world units/second². */
+const OVERSPEED_DECEL = 24;
 
 /**
  * Advances one player by one fixed step, in place.
@@ -15,11 +18,15 @@ const VELOCITY_EPSILON = 1e-4;
  *
  *  1. the host, stepping the authoritative world; and
  *  2. every client, replaying its own unacknowledged inputs during
- *     reconciliation.
+ *     reconciliation (`ClientView` passes the tick and lock state it derived
+ *     from the last authoritative snapshot).
  *
  * Those two must agree exactly or the local player will visibly snap on every
  * snapshot. Keep this function pure with respect to everything except
  * `player` — no clocks, no randomness, no reads of other players.
+ *
+ * `tick` is the tick being simulated (used to evaluate timed effects);
+ * `movementLocked` is true during countdown / round-end freezes.
  */
 export function integratePlayer(
   player: PlayerState,
@@ -27,13 +34,24 @@ export function integratePlayer(
   config: SimConfig,
   obstacles: readonly Obstacle[],
   dt: number,
+  tick = 0,
+  movementLocked = false,
 ): void {
-  const desired = normalize2(clamp(input.moveX, -1, 1), clamp(input.moveZ, -1, 1));
-  const hasInput = desired.x !== 0 || desired.y !== 0;
+  const rawX = clamp(input.moveX, -1, 1);
+  const rawZ = clamp(input.moveZ, -1, 1);
+  // Analog magnitude: a half-pushed thumbstick moves at half speed. Keyboard
+  // input always has magnitude 1 (diagonals clamp back down to 1).
+  const magnitude = Math.min(1, length2(rawX, rawZ));
+  const desired = normalize2(rawX, rawZ);
+  const immobile = movementLocked || isImmobilized(player, tick);
+  const hasInput = !immobile && magnitude > 0;
+  const scale = movementScale(player, tick, config);
+  const speedBefore = length2(player.vx, player.vz);
 
   if (hasInput) {
-    player.vx += desired.x * config.playerAcceleration * dt;
-    player.vz += desired.y * config.playerAcceleration * dt;
+    const accel = config.playerAcceleration * scale * magnitude;
+    player.vx += desired.x * accel * dt;
+    player.vz += desired.y * accel * dt;
   } else {
     const decay = Math.max(0, 1 - config.playerFriction * dt);
     player.vx *= decay;
@@ -42,8 +60,15 @@ export function integratePlayer(
     if (Math.abs(player.vz) < VELOCITY_EPSILON) player.vz = 0;
   }
 
-  const maxSpeed = config.playerMaxSpeed * (input.sprint ? config.playerSprintMultiplier : 1);
-  const capped = clampMagnitude2(player.vx, player.vz, maxSpeed);
+  const sprintMultiplier = input.sprint && !immobile ? config.playerSprintMultiplier : 1;
+  // The cap scales with stick deflection so half-stick really is half speed.
+  const inputCap = hasInput ? magnitude : 1;
+  const maxSpeed = config.playerMaxSpeed * sprintMultiplier * scale * inputCap;
+  // Speed already above the cap (knockback, a released sprint) bleeds off at a
+  // fixed rate instead of being clamped away in one tick — a hard clamp here
+  // would silently delete every impulse a gameplay system applies.
+  const allowedSpeed = Math.max(maxSpeed, speedBefore - OVERSPEED_DECEL * dt);
+  const capped = clampMagnitude2(player.vx, player.vz, allowedSpeed);
   player.vx = capped.x;
   player.vz = capped.y;
 
@@ -164,6 +189,17 @@ function resolveObstacle(player: PlayerState, radius: number, o: Obstacle): bool
   }
 
   return true;
+}
+
+/**
+ * Adds an instantaneous velocity impulse (knockback, dash, bounce pads).
+ *
+ * Speed above the movement cap decays at `OVERSPEED_DECEL` instead of being
+ * clamped next tick, so impulses are actually felt.
+ */
+export function applyImpulse(player: PlayerState, ix: number, iz: number): void {
+  player.vx += ix;
+  player.vz += iz;
 }
 
 /**

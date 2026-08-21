@@ -33,6 +33,19 @@ npm run dev
 | Keep-away            | `?mode=crown`                     |
 | Timed shard race     | `?mode=rush`                      |
 
+Not in 3D — same engine, different projection:
+
+| Want                     | Open                                  |
+| ------------------------ | ------------------------------------- |
+| 2D side-scrolling jumper | `?mode=platformer`                    |
+| 2D top-down shooter      | `?mode=skirmish`                      |
+| 2.5D isometric chase     | `?mode=dungeon`                       |
+| _Any_ mode, but flat 2D  | `?mode=soccer&view=topdown&sprites=1` |
+| _Any_ mode, but 2.5D     | `?mode=ctf&view=iso`                  |
+
+`view` and `sprites` are per-player presentation, never part of the room, so
+they work on every mode and need no agreement between peers.
+
 Multiplayer without a second machine: add `&net=broadcast&room=demo` and open
 two tabs. Opponents without a second player: add `&bots=3`, or tap **+ Bot**
 in the HUD (host only). Skip the lobby with `&autojoin=1`.

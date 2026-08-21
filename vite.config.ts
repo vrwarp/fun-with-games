@@ -22,9 +22,13 @@ export default defineConfig({
     chunkSizeWarningLimit: 2500,
     rollupOptions: {
       output: {
-        manualChunks: {
-          babylon: ['@babylonjs/core', '@babylonjs/loaders'],
-          net: ['trystero'],
+        // Rollup 5 (via Vite 8) dropped the object form of manualChunks, so
+        // this is the function equivalent: same two chunks, matched by module
+        // id instead of by entry package.
+        manualChunks(id: string): string | undefined {
+          if (id.includes('node_modules/@babylonjs/')) return 'babylon';
+          if (id.includes('node_modules/trystero')) return 'net';
+          return undefined;
         },
       },
     },

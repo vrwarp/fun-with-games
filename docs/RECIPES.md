@@ -315,13 +315,15 @@ Gravity, jumping, standable geometry and the side camera all exist (see
 ```ts
 // src/sim/presets.ts
 const MY_LEVEL: readonly PlatformSpec[] = [
-  { x: -20, z: 0, halfX: 4, halfZ: 3, baseY: 0, top: 2 },   // ground ledge
-  { x: -8,  z: 0, halfX: 3, halfZ: 3, baseY: 5, top: 6 },   // floating platform
-  //                                    ^^^^^^ baseY > 0 → walk under it too
+  { x: -20, z: 0, halfX: 4, halfZ: 3, baseY: 0,   top: 1.8 }, // ground ledge: +1.8, one jump
+  { x: -10, z: 0, halfX: 3, halfZ: 3, baseY: 3,   top: 3.6 }, // floating: +1.8 again
+  //                                  ^^^^^^^^ baseY > 0 → walk under it too, but only
+  //                                  because 3 clears `playerHeight` (1.7). A floating
+  //                                  platform at baseY 1.2 is a ceiling you bonk into.
 ];
 
 myMode: {
-  platform: { enabled: true, lockZ: true, gravity: 30, jumpVelocity: 10.5, maxJumps: 2 },
+  platform: { enabled: true, lockZ: true, gravity: 30, jumpVelocity: 12, maxJumps: 2 },
   platforms: MY_LEVEL,
   arenaHalfExtentX: 46,
   arenaHalfExtentZ: 4,     // the lane is shallow; the camera frames it

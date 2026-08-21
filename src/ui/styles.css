@@ -584,6 +584,12 @@ body {
   pointer-events: auto;
 }
 
+/* Single characters get the big face; a word has to shrink to fit the circle. */
+.touch-buttons__button--word {
+  font-size: 0.95rem;
+  letter-spacing: 0.01em;
+}
+
 .touch-buttons__button.is-held {
   border-color: var(--accent);
   background: rgba(76, 201, 240, 0.28);

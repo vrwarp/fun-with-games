@@ -232,6 +232,7 @@ test.describe('on a phone', () => {
 
     const fire = page.getByTestId('touch-button-primary');
     await expect(fire).toBeVisible();
+    await expect(fire).toHaveText('Fire');
     const box = await fire.boundingBox();
     expect(box?.width ?? 0).toBeGreaterThanOrEqual(44);
     expect(box?.height ?? 0).toBeGreaterThanOrEqual(44);
@@ -251,6 +252,9 @@ test.describe('on a phone', () => {
 
     const jump = page.getByTestId('touch-button-primary');
     await expect(jump).toBeVisible();
+    // The label is the affordance on a phone: "A" says a button exists, "Jump"
+    // says what it does.
+    await expect(jump).toHaveText('Jump');
     const box = await jump.boundingBox();
     expect(box?.width ?? 0).toBeGreaterThanOrEqual(44);
     expect(box?.height ?? 0).toBeGreaterThanOrEqual(44);

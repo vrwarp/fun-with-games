@@ -101,6 +101,9 @@ export class TouchButtons {
   #createButton(testid: string, label: string, bit: number): HTMLElement {
     const button = document.createElement('div');
     button.className = 'touch-buttons__button';
+    // A word ("Jump", "Fire") needs a smaller face than the single-character
+    // default, or it overflows the 4rem circle.
+    if (label.length > 1) button.classList.add('touch-buttons__button--word');
     button.dataset['testid'] = testid;
     button.textContent = label;
 

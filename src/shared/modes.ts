@@ -40,6 +40,15 @@ export interface GameModeInfo {
   /** Whether the mode uses the primary action button (shows it on touch). */
   readonly usesPrimaryAction: boolean;
   /**
+   * What the primary button says. Defaults to `A`, the gamepad convention.
+   *
+   * Worth setting whenever the action has a name a player would recognise:
+   * on a phone the button IS the affordance, and "Jump" tells you what it
+   * does where "A" only tells you it exists. Keep it to one short word — the
+   * button is a 4rem circle.
+   */
+  readonly primaryLabel?: string;
+  /**
    * Default camera framing. Omit for the 3D follow camera.
    *
    * This is the single knob that makes a mode read as 2D, 2.5D or 3D; the
@@ -54,6 +63,8 @@ export interface GameModeInfo {
    * this true is the only UI change such an ability needs.
    */
   readonly usesSecondaryAction?: boolean;
+  /** What the secondary button says. Defaults to `B`. Same rules as above. */
+  readonly secondaryLabel?: string;
   /** Suggested minimum players — the lobby hints to add bots below this. */
   readonly suggestedPlayers: number;
 }
@@ -99,6 +110,7 @@ export const GAME_MODES: readonly GameModeInfo[] = [
     tagline: 'Hold the centre circle — and blast rivals off it.',
     goal: 'Stand alone on the hill to score; shots shove but never hurt. First to 45 wins.',
     usesPrimaryAction: true,
+    primaryLabel: 'Shove',
     suggestedPlayers: 2,
   },
   {
@@ -115,6 +127,7 @@ export const GAME_MODES: readonly GameModeInfo[] = [
     tagline: 'Free-for-all blaster fight with power-ups.',
     goal: 'Knock players out to score. First to 10 KOs wins.',
     usesPrimaryAction: true,
+    primaryLabel: 'Fire',
     suggestedPlayers: 2,
   },
   {
@@ -123,6 +136,7 @@ export const GAME_MODES: readonly GameModeInfo[] = [
     tagline: 'Three lives. Last one standing.',
     goal: 'Everyone has 3 lives. Be the last player standing.',
     usesPrimaryAction: true,
+    primaryLabel: 'Fire',
     suggestedPlayers: 2,
   },
   {
@@ -139,6 +153,7 @@ export const GAME_MODES: readonly GameModeInfo[] = [
     tagline: 'Steal their flag, defend your own, blasters hot.',
     goal: 'Carry the enemy flag back to your base. First team to 3 captures wins.',
     usesPrimaryAction: true,
+    primaryLabel: 'Fire',
     suggestedPlayers: 4,
   },
   {
@@ -155,6 +170,7 @@ export const GAME_MODES: readonly GameModeInfo[] = [
     tagline: '2D side-scroller — run, jump, collect.',
     goal: 'Jump the platforms and collect 20 shards before anyone else.',
     usesPrimaryAction: true,
+    primaryLabel: 'Jump',
     view: 'side',
     sprites: true,
     suggestedPlayers: 1,
@@ -165,6 +181,7 @@ export const GAME_MODES: readonly GameModeInfo[] = [
     tagline: 'Flat 2D arena shooter, seen from straight above.',
     goal: 'Blast rivals from a bird’s-eye view. First to 10 KOs wins.',
     usesPrimaryAction: true,
+    primaryLabel: 'Fire',
     view: 'topdown',
     sprites: true,
     suggestedPlayers: 2,

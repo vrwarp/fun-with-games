@@ -289,13 +289,20 @@ then steps 1–4 are already done.
 ## Inputs and buttons
 
 `PlayerInput.buttons` is a bitfield: `BUTTON_PRIMARY` (Space / `J` / the
-on-screen **A** button) and `BUTTON_SECONDARY` (`E` / `K` / **B**, currently
-unused — reserved for your ability). Wiring order for a new ability:
+first on-screen button) and `BUTTON_SECONDARY` (`E` / `K` / the second,
+currently unused — reserved for your ability). Wiring order for a new ability:
 
 1. Read the bit in your system: `player.input.buttons & BUTTON_SECONDARY`.
 2. Show the button on phones: set `usesPrimaryAction` /
    `usesSecondaryAction` in the mode's metadata. Nothing else — the wire,
    prediction, touch and keyboard already carry both bits.
+3. Name it: `primaryLabel` / `secondaryLabel` in the same metadata. The
+   defaults are **A** and **B**, which say a button exists but not what it
+   does — on a phone the button is the only affordance the player gets, so
+   `'Jump'` or `'Fire'` is worth the one line. Keep it to one short word; the
+   button is a 4rem circle and anything longer than about five characters
+   stops fitting. `tests/unit/shared/modes.test.ts` enforces both the
+   coverage and the length.
 
 Movement axes carry analog magnitude: half-stick is half speed. The
 `sprint` flag comes from Shift or pushing the stick to its rim.

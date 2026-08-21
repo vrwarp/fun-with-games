@@ -200,6 +200,11 @@ async function launch(app: HTMLElement, options: LaunchOptions): Promise<void> {
   const buttons = new TouchButtons(app, {
     primary: mode.usesPrimaryAction,
     secondary: mode.usesSecondaryAction ?? false,
+    // Conditional spread rather than `label: mode.primaryLabel`:
+    // exactOptionalPropertyTypes rejects an explicit undefined here, and the
+    // absence is what selects the button's own default.
+    ...(mode.primaryLabel !== undefined ? { primaryLabel: mode.primaryLabel } : {}),
+    ...(mode.secondaryLabel !== undefined ? { secondaryLabel: mode.secondaryLabel } : {}),
   });
   buttons.attach();
 

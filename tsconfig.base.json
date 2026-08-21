@@ -25,9 +25,11 @@
 
     "noEmit": true,
 
-    "baseUrl": ".",
+    // No `baseUrl`: TypeScript 7 removed it. Paths in a config are resolved
+    // relative to that config's own directory, which is the repo root here,
+    // so the leading "./" is what makes this an explicitly relative mapping.
     "paths": {
-      "@/*": ["src/*"]
+      "@/*": ["./src/*"]
     }
   }
 }

@@ -15,7 +15,11 @@ export interface RenderPlayer {
   color: string;
   x: number;
   z: number;
+  /** Height of the feet above the floor; 0 in every flat (top-down) mode. */
+  y: number;
   heading: number;
+  /** Standing on something. Airborne players can be drawn mid-leap. */
+  grounded: boolean;
   score: number;
   /** Team index, or -1 in free-for-all modes. */
   team: number;
@@ -38,6 +42,8 @@ export interface RenderPickup {
   id: number;
   x: number;
   z: number;
+  /** Surface the shard rests on, so ledge pickups draw at the right height. */
+  y: number;
   kind: PickupKind;
   active: boolean;
 }
@@ -62,6 +68,7 @@ export interface RenderProjectile {
   id: number;
   x: number;
   z: number;
+  y: number;
   ownerId: string;
 }
 
@@ -83,6 +90,7 @@ export interface RenderItem {
   kind: 'flag' | 'crown';
   x: number;
   z: number;
+  y: number;
   /** When set, draw the item attached to this player instead of at x/z. */
   carrierId: string;
   team: number;

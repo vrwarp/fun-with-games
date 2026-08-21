@@ -242,6 +242,60 @@ test.describe('on a phone', () => {
     await expect(page.getByTestId('touch-buttons')).toBeHidden();
   });
 
+  test('the 2D platformer is playable with a thumb', async ({ page }) => {
+    // The whole 2D story has to survive the primary target. Jumping is the
+    // one interaction a side-scroller cannot do without, so it needs a real
+    // thumb-sized button, not just a keyboard binding.
+    await page.goto(`/?net=broadcast&autojoin=1&room=${ROOM}-plat&mode=platformer&name=Jump`);
+    await expect(page.getByTestId('hud')).toBeVisible({ timeout: 30_000 });
+
+    const jump = page.getByTestId('touch-button-primary');
+    await expect(jump).toBeVisible();
+    const box = await jump.boundingBox();
+    expect(box?.width ?? 0).toBeGreaterThanOrEqual(44);
+    expect(box?.height ?? 0).toBeGreaterThanOrEqual(44);
+
+    // Wait for GO, not for a tick count. Players are frozen for the whole
+    // countdown (90 ticks here), and a frozen player cannot jump — pressing
+    // early tests the freeze, not the jump.
+    await expect
+      .poll(() => page.evaluate(() => window.__FWG__.phase), { timeout: 30_000 })
+      .toBe('playing');
+
+    const heightOf = () =>
+      page.evaluate(() => {
+        const id = window.__FWG__.selfId;
+        return window.__FWG__.players.find((p) => p.id === id)?.y ?? -1;
+      });
+
+    const resting = await heightOf();
+    expect(resting).toBeGreaterThanOrEqual(0);
+
+    // Hold the button and sample the arc over real time: at this preset's
+    // gravity a jump apexes ~400ms after the press, which is many simulation
+    // ticks away. Sampling in a tight loop would read the pre-jump height
+    // eight times and conclude, wrongly, that nothing happened.
+    const jumpBox = await jump.boundingBox();
+    if (!jumpBox) throw new Error('jump button has no bounding box');
+
+    let peak = resting;
+    await page.mouse.move(jumpBox.x + jumpBox.width / 2, jumpBox.y + jumpBox.height / 2);
+    await page.mouse.down();
+    for (let i = 0; i < 12; i++) {
+      await page.waitForTimeout(60);
+      peak = Math.max(peak, await heightOf());
+    }
+    await page.mouse.up();
+
+    expect(peak).toBeGreaterThan(resting + 0.3);
+
+    // Nothing overflows a phone viewport in the side view.
+    const overflow = await page.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    );
+    expect(overflow).toBeLessThanOrEqual(1);
+  });
+
   test('the phase banner is readable on a phone', async ({ page }) => {
     await page.goto(`/?net=broadcast&autojoin=1&room=${ROOM}-rush&mode=rush&name=Racer`);
     await expect(page.getByTestId('hud')).toBeVisible({ timeout: 30_000 });

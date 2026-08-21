@@ -8,7 +8,6 @@ import { Color3, Color4 } from '@babylonjs/core/Maths/math.color.js';
 import { Vector3 } from '@babylonjs/core/Maths/math.vector.js';
 import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial.js';
 import { Texture } from '@babylonjs/core/Materials/Textures/texture.js';
-import { CreateGround } from '@babylonjs/core/Meshes/Builders/groundBuilder.js';
 import { CreateBox } from '@babylonjs/core/Meshes/Builders/boxBuilder.js';
 import type { Mesh } from '@babylonjs/core/Meshes/mesh.js';
 
@@ -23,12 +22,17 @@ import type { Obstacle } from '../sim/types.js';
 import type { RenderState } from '../net/view.js';
 import { EntityViews } from './entities.js';
 import { KitViews } from './kitviews.js';
+import { applyView, viewSpec, type ViewMode, type WallSide } from './views.js';
 import { createCheckerTexture } from './textures.js';
 
 export interface RendererOptions {
   canvas: HTMLCanvasElement;
   config: SimConfig;
   obstacles: readonly Obstacle[];
+  /** How to frame the world — 3D follow, isometric, top-down or side-on. */
+  view?: ViewMode;
+  /** Draw players as billboarded sprites instead of 3D bodies. */
+  sprites?: boolean;
 }
 
 /** How long a manual camera adjustment suspends auto-follow, in seconds. */
@@ -59,6 +63,8 @@ export class Renderer {
   #disposed = false;
 
   #canvas: HTMLCanvasElement;
+  #config: SimConfig;
+  #view: ViewMode;
   /** Seconds since the player last adjusted the camera by hand. */
   #sinceManualCamera = Number.POSITIVE_INFINITY;
   #isPortrait = false;
@@ -89,11 +95,15 @@ export class Renderer {
     this.scene.clearColor = new Color4(0.05, 0.06, 0.09, 1);
 
     this.#canvas = options.canvas;
+    this.#config = options.config;
+    this.#view = options.view ?? 'follow';
     this.camera = this.#createCamera(options.canvas, options.config);
     this.#shadows = this.#createLights(options.config);
     this.#createArena(options.config, options.obstacles);
 
-    this.#entities = new EntityViews(this.scene, options.config, this.#shadows);
+    this.#entities = new EntityViews(this.scene, options.config, this.#shadows, {
+      sprites: options.sprites ?? false,
+    });
     this.#kit = new KitViews(this.scene, options.config, this.#shadows);
 
     // Manual camera input suspends auto-follow. Registered as non-passive
@@ -137,17 +147,26 @@ export class Renderer {
 
     if (this.#localId) {
       const position = this.#entities.playerPosition(this.#localId);
+      const spec = viewSpec(this.#view);
       if (position) {
         // Ease the camera towards the player so corrections and interpolation
         // hitches do not translate into a jerky view.
         const smoothing = Math.min(1, deltaSeconds * 8);
         this.#cameraTarget.x += (position.x - this.#cameraTarget.x) * smoothing;
         this.#cameraTarget.z += (position.z - this.#cameraTarget.z) * smoothing;
-        this.camera.target.copyFromFloats(this.#cameraTarget.x, 1, this.#cameraTarget.z);
+        // Vertical tracking is slower: a platformer camera that matched every
+        // hop one-for-one would make the whole level bounce.
+        const verticalSmoothing = Math.min(1, deltaSeconds * 4);
+        const desiredY = position.y - this.#config.playerRadius * 1.7 + spec.targetHeight;
+        this.#cameraTarget.y += (desiredY - this.#cameraTarget.y) * verticalSmoothing;
+        this.#clampTargetToArena(spec);
+        this.camera.target.copyFrom(this.#cameraTarget);
       }
 
       const local = state.players.find((player) => player.id === this.#localId);
-      if (local) this.#followHeading(local.x, local.z, local.heading, deltaSeconds);
+      if (local && spec.autoFollow) {
+        this.#followHeading(local.x, local.z, local.heading, deltaSeconds);
+      }
     }
 
     this.scene.render();
@@ -207,6 +226,55 @@ export class Renderer {
   }
 
   /**
+   * Keeps an orthographic camera from panning off the edge of the world.
+   *
+   * A fixed 2D camera that scrolls past the arena shows a band of void, which
+   * reads as a bug even though nothing is wrong. Where the arena is smaller
+   * than the frustum the view simply centres instead — the classic 2D
+   * camera-bounds rule. The perspective follow camera is left alone: it
+   * orbits, so it has no stable notion of a screen edge.
+   */
+  #clampTargetToArena(spec: ReturnType<typeof viewSpec>): void {
+    const halfHeight = spec.orthoHalfHeight;
+    if (halfHeight === undefined) return;
+
+    const width = this.engine.getRenderWidth();
+    const height = this.engine.getRenderHeight();
+    if (width === 0 || height === 0) return;
+
+    const viewHalfHeight = halfHeight * (this.#isPortrait ? 1.25 : 1);
+    const viewHalfWidth = viewHalfHeight * (width / height);
+
+    const clampAxis = (value: number, arenaHalf: number, viewHalf: number): number => {
+      const slack = arenaHalf - viewHalf;
+      if (slack <= 0) return 0; // arena narrower than the view: centre it
+      return Math.max(-slack, Math.min(slack, value));
+    };
+
+    this.#cameraTarget.x = clampAxis(
+      this.#cameraTarget.x,
+      this.#config.arenaHalfExtentX,
+      viewHalfWidth,
+    );
+
+    if (this.#view === 'side') {
+      // A side-scroller scrolls along X and climbs with the player, but never
+      // sinks: this floor puts the ground line around three-quarters of the
+      // way down the frame when the player is standing on it, which is where
+      // a platformer wants it — most of the screen is the space you are about
+      // to jump into.
+      this.#cameraTarget.y = Math.max(this.#cameraTarget.y, viewHalfHeight * 0.45);
+      return;
+    }
+
+    this.#cameraTarget.z = clampAxis(
+      this.#cameraTarget.z,
+      this.#config.arenaHalfExtentZ,
+      viewHalfHeight,
+    );
+  }
+
+  /**
    * Frames the arena for the current viewport shape.
    *
    * A portrait phone is narrow, so the same camera distance shows far less of
@@ -214,9 +282,12 @@ export class Renderer {
    * into things you never saw. Pulling back and raising the angle restores a
    * comparable view.
    *
-   * Only re-applied when the orientation actually flips, never on every
-   * resize: mobile browsers fire resize constantly as the URL bar retracts,
-   * and resetting a player's chosen zoom mid-game would be maddening.
+   * The 3D follow camera is only re-framed when the orientation actually
+   * flips, never on every resize: mobile browsers fire resize constantly as
+   * the URL bar retracts, and resetting a player's chosen zoom mid-game would
+   * be maddening. The orthographic views have no player-chosen zoom to
+   * disturb, and their frustum is an absolute box that MUST track the aspect
+   * ratio, so those re-apply every time.
    */
   #applyViewportFraming(force: boolean): void {
     const width = this.engine.getRenderWidth();
@@ -224,31 +295,29 @@ export class Renderer {
     if (width === 0 || height === 0) return;
 
     const isPortrait = height > width;
-    if (!force && isPortrait === this.#isPortrait) return;
+    const orientationChanged = isPortrait !== this.#isPortrait;
     this.#isPortrait = isPortrait;
 
-    // `beta` is measured from straight up, so a *smaller* value is a more
-    // overhead view. Portrait gets both: pulled back, and tilted down. A
-    // phone-shaped viewport is narrow, so a near-horizon camera spends the top
-    // third of the screen on empty sky and still shows less arena than a
-    // desktop window does.
-    // The tilt already buys back most of the visible ground, so the distance
-    // only needs a nudge — push it much further and the player character
-    // becomes an unreadable speck on a 6-inch screen.
-    this.camera.radius = isPortrait ? 25 : 22;
-    this.camera.beta = isPortrait ? Math.PI / 4 : Math.PI / 3.2;
+    const spec = viewSpec(this.#view);
+    if (spec.orthoHalfHeight === undefined && !force && !orientationChanged) return;
+
+    applyView(this.camera, this.#view, width, height, isPortrait);
   }
 
   #createCamera(canvas: HTMLCanvasElement, config: SimConfig): ArcRotateCamera {
+    const spec = viewSpec(this.#view);
     const camera = new ArcRotateCamera(
       'camera',
-      -Math.PI / 2,
-      Math.PI / 3.2,
-      22,
-      new Vector3(0, 1, 0),
+      spec.alpha,
+      spec.beta,
+      spec.radius,
+      new Vector3(0, spec.targetHeight, 0),
       this.scene,
     );
-    camera.attachControl(canvas, true);
+    // A fixed projection is part of what the view *is*; letting a drag rotate
+    // an isometric or side-on camera would quietly turn it into a third view
+    // nobody designed.
+    if (spec.manualControl) camera.attachControl(canvas, true);
     camera.lowerRadiusLimit = 8;
     camera.upperRadiusLimit = 40;
     // Stop the camera from dropping below the floor or flipping overhead.
@@ -294,7 +363,14 @@ export class Renderer {
     const width = config.arenaHalfExtentX * 2;
     const depth = config.arenaHalfExtentZ * 2;
 
-    const ground = CreateGround('ground', { width, height: depth }, this.scene);
+    // A deep slab, not a plane. A zero-thickness ground is invisible to the
+    // side-on camera, which would leave a platformer's characters standing on
+    // nothing; a *thin* one leaves a band of void under the level. Making it
+    // deep means everything below the floor reads as solid earth. The top
+    // face still sits exactly at y = 0, where the simulation puts the floor.
+    const groundThickness = 8;
+    const ground = CreateBox('ground', { width, height: groundThickness, depth }, this.scene);
+    ground.position.y = -groundThickness / 2;
     const groundMaterial = new StandardMaterial('ground:mat', this.scene);
     const checker = createCheckerTexture(this.scene, { cells: Math.round(width / 3) });
     checker.wrapU = Texture.WRAP_ADDRESSMODE;
@@ -310,12 +386,26 @@ export class Renderer {
 
     const wallHeight = 2.5;
     const wallThickness = 0.6;
-    const walls: Array<{ w: number; d: number; x: number; z: number }> = [
-      { w: width + wallThickness * 2, d: wallThickness, x: 0, z: config.arenaHalfExtentZ },
-      { w: width + wallThickness * 2, d: wallThickness, x: 0, z: -config.arenaHalfExtentZ },
-      { w: wallThickness, d: depth, x: config.arenaHalfExtentX, z: 0 },
-      { w: wallThickness, d: depth, x: -config.arenaHalfExtentX, z: 0 },
+    const hidden = new Set<WallSide>(viewSpec(this.#view).hiddenWalls);
+    const allWalls: Array<{ w: number; d: number; x: number; z: number; side: WallSide }> = [
+      {
+        w: width + wallThickness * 2,
+        d: wallThickness,
+        x: 0,
+        z: config.arenaHalfExtentZ,
+        side: 'northZ',
+      },
+      {
+        w: width + wallThickness * 2,
+        d: wallThickness,
+        x: 0,
+        z: -config.arenaHalfExtentZ,
+        side: 'southZ',
+      },
+      { w: wallThickness, d: depth, x: config.arenaHalfExtentX, z: 0, side: 'eastX' },
+      { w: wallThickness, d: depth, x: -config.arenaHalfExtentX, z: 0, side: 'westX' },
     ];
+    const walls = allWalls.filter((wall) => !hidden.has(wall.side));
 
     for (const [index, spec] of walls.entries()) {
       const wall = CreateBox(
@@ -353,9 +443,12 @@ export class Renderer {
     proto.setEnabled(false);
 
     for (const obstacle of obstacles) {
-      const height = 1.6 + obstacle.halfX * 0.4;
+      // Height comes from the simulation now: with gravity on, the top of a
+      // box is a surface players stand on, so drawing a different height
+      // would be drawing a lie.
+      const height = Math.max(0.1, obstacle.top - obstacle.baseY);
       const instance = proto.createInstance(`obstacle:${obstacle.id}`);
-      instance.position.set(obstacle.x, height / 2, obstacle.z);
+      instance.position.set(obstacle.x, obstacle.baseY + height / 2, obstacle.z);
       instance.scaling.set(obstacle.halfX * 2, height, obstacle.halfZ * 2);
       instance.receiveShadows = true;
       this.#shadows?.addShadowCaster(instance);

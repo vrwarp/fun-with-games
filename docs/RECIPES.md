@@ -33,6 +33,19 @@ npm run dev
 | Keep-away            | `?mode=crown`                     |
 | Timed shard race     | `?mode=rush`                      |
 
+Not in 3D — same engine, different projection:
+
+| Want                     | Open                                  |
+| ------------------------ | ------------------------------------- |
+| 2D side-scrolling jumper | `?mode=platformer`                    |
+| 2D top-down shooter      | `?mode=skirmish`                      |
+| 2.5D isometric chase     | `?mode=dungeon`                       |
+| _Any_ mode, but flat 2D  | `?mode=soccer&view=topdown&sprites=1` |
+| _Any_ mode, but 2.5D     | `?mode=ctf&view=iso`                  |
+
+`view` and `sprites` are per-player presentation, never part of the room, so
+they work on every mode and need no agreement between peers.
+
 Multiplayer without a second machine: add `&net=broadcast&room=demo` and open
 two tabs. Opponents without a second player: add `&bots=3`, or tap **+ Bot**
 in the HUD (host only). Skip the lobby with `&autojoin=1`.
@@ -281,6 +294,72 @@ copy the shape of `projectiles.ts#spawnFromInputs` into a new
 `applyDamage` + `applyImpulse` knockback; `addEffect(player, 'reload', …)`.
 No entity list, so no snapshot work. ~40 lines + a test.
 
+### Recipe: a 2D game (top-down, isometric or side-on)
+
+**Tier 0 first.** `?view=topdown&sprites=1` on any existing mode is already a
+2D game. Do that before writing anything.
+
+To make it a mode's default, set two fields in its `GAME_MODES` entry
+(`src/shared/modes.ts`) — no simulation change, because the simulation was
+never 3D:
+
+```ts
+{
+  id: 'skirmish',
+  /* … */
+  view: 'topdown',   // 'topdown' | 'iso' | 'side' | 'follow'
+  sprites: true,     // pixel-art billboards instead of 3D bodies
+}
+```
+
+That is the whole recipe for top-down and isometric games. Side-scrollers need
+one more thing, because "one lane deep" IS a rule:
+
+```ts
+// in presets.ts
+platform: { enabled: true, lockZ: true, jumpButton: 'primary' },
+```
+
+### Recipe: a side-scrolling platformer level
+
+Gravity, jumping, standable geometry and the side camera all exist (see
+`platformer`). Authoring a _new_ level is a list of boxes:
+
+```ts
+// src/sim/presets.ts
+const MY_LEVEL: readonly PlatformSpec[] = [
+  { x: -20, z: 0, halfX: 4, halfZ: 3, baseY: 0,   top: 1.8 }, // ground ledge: +1.8, one jump
+  { x: -10, z: 0, halfX: 3, halfZ: 3, baseY: 3,   top: 3.6 }, // floating: +1.8 again
+  //                                  ^^^^^^^^ baseY > 0 → walk under it too, but only
+  //                                  because 3 clears `playerHeight` (1.7). A floating
+  //                                  platform at baseY 1.2 is a ceiling you bonk into.
+];
+
+myMode: {
+  platform: { enabled: true, lockZ: true, gravity: 30, jumpVelocity: 12, maxJumps: 2 },
+  platforms: MY_LEVEL,
+  arenaHalfExtentX: 46,
+  arenaHalfExtentZ: 4,     // the lane is shallow; the camera frames it
+  obstacleCount: 0,        // random boxes do not make a jumpable level
+  phases: { enabled: true, minPlayers: 1, targetScore: 20 },
+}
+```
+
+**The jump budget is arithmetic, not taste.** With `jumpVelocity` v and
+`gravity` g, one jump peaks at `v² / 2g`, and reaches `2v/g × speed`
+horizontally. The shipped preset (v = 12, g = 30, speed 8) clears **2.4 units
+up and ~6.4 across** per jump, roughly 4.8 up with the double. So keep ordinary
+steps at or below ~1.8 and save anything near 3 for a deliberate double-jump
+moment. `tests/unit/sim/platform.test.ts` pins the height relationship, so
+retuning gravity cannot silently make a shipped level unfinishable.
+
+Shards place themselves: pickups come to rest on whatever surface is beneath
+them, so scattering them across the lane automatically decorates the ledges.
+
+⚠️ `jumpButton` defaults to `'primary'`, which is also fire. A platformer that
+also shoots must move jumping to `'secondary'` and set
+`usesSecondaryAction: true` in its metadata.
+
 ### Recipe: a brand-new effect (e.g. `magnet` that pulls pickups)
 
 1. Grant it somewhere: a pickup kind (`pickupWeights` + a case in
@@ -358,7 +437,7 @@ effect. Derived-from-tick state → compute it, store nothing.
 ## The demo runbook
 
 ```bash
-npm run dev                    # localhost:5173 — add ?mode=…&bots=…
+npm run dev                    # localhost:5173 — add ?mode=…&bots=…&view=…&sprites=1
 npm run dev -- --host          # same, reachable from a phone on the LAN
 npm run test:watch             # the sub-second loop while writing sim code
 npm run verify                 # before saying "done" (format+lint+types+tests+build)

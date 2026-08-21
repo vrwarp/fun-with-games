@@ -92,8 +92,18 @@ export interface PlayerState {
   color: string;
   x: number;
   z: number;
+  /**
+   * Height of the player's FEET above the arena floor.
+   *
+   * Stays 0 in every mode with `platform.enabled` false — the simulation is a
+   * plane by default, which is what makes top-down and isometric games as
+   * natural here as third-person ones. Gravity, jumping and standable
+   * platforms switch on together with that flag.
+   */
+  y: number;
   vx: number;
   vz: number;
+  vy: number;
   /** Facing angle in radians; derived from velocity, kept for smooth turning. */
   heading: number;
   score: number;
@@ -109,6 +119,19 @@ export interface PlayerState {
   checkpoint: number;
   /** Completed laps (race modes). */
   lap: number;
+  /** Standing on the floor or a platform. False while airborne. */
+  grounded: boolean;
+  /** Jumps spent since last touching a surface (for double jumps). */
+  jumps: number;
+  /**
+   * True while the jump button is held.
+   *
+   * Jumping triggers on the press *edge*, not on the button being down, or
+   * holding it would bunny-hop forever. The simulation cannot see the
+   * previous tick's input (it only keeps the latest), so the edge has to be
+   * remembered as state — and therefore snapshotted like everything else.
+   */
+  jumpLatch: boolean;
   /** True for host-simulated bots. Bots never win host election (not peers). */
   isBot: boolean;
   /** Active timed effects: id -> expiry tick. */
@@ -141,19 +164,34 @@ export interface PickupState {
   id: number;
   x: number;
   z: number;
+  /** Rests on whatever surface is below it, so shards sit on platforms. */
+  y: number;
   kind: PickupKind;
   active: boolean;
   /** Tick at which an inactive pickup becomes active again. */
   respawnTick: number;
 }
 
-/** Static, seed-generated arena geometry. Never changes during a round. */
+/**
+ * Static arena geometry: an axis-aligned box, either seed-generated or listed
+ * in `SimConfig.platforms`. Never changes during a round, and never travels on
+ * the wire — every peer derives an identical set from the seed and the config.
+ *
+ * The box spans `[baseY, top]` vertically. Ground-level obstacles start at 0
+ * and act as walls; a `baseY` above 0 is a floating platform you can jump onto
+ * and walk under. With `platform.enabled` false the vertical span is ignored
+ * entirely and every box is a plain wall.
+ */
 export interface Obstacle {
   id: number;
   x: number;
   z: number;
   halfX: number;
   halfZ: number;
+  /** Bottom of the box. 0 sits it on the floor. */
+  baseY: number;
+  /** Top surface — the height you stand on. */
+  top: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -212,6 +250,8 @@ export interface ProjectileState {
   team: number;
   x: number;
   z: number;
+  /** Fixed firing height — shots fly level, so floors don't shoot each other. */
+  y: number;
   vx: number;
   vz: number;
   /** Despawns at `bornTick + projectiles.lifetimeTicks`. */
@@ -228,6 +268,8 @@ export interface ItemState {
   id: number;
   x: number;
   z: number;
+  /** Height, so a carried item rides its carrier up onto platforms. */
+  y: number;
   /** Carrying player, or '' when the item is on the ground. */
   carrierId: PlayerId;
   /** When a dropped item snaps back home; 0 = at home or carried. */

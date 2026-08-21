@@ -10,6 +10,7 @@ import { createBroadcastTransport } from './net/transports/broadcast.js';
 import { createTrysteroTransport } from './net/transports/trystero.js';
 import { Mesh } from '@babylonjs/core/Meshes/mesh.js';
 import { Renderer } from './render/renderer.js';
+import { isViewMode, type ViewMode } from './render/views.js';
 import { KeyboardInput, mergeIntents } from './render/input.js';
 import { TouchInput } from './render/touch.js';
 import { TouchButtons } from './render/buttons.js';
@@ -37,6 +38,15 @@ interface LaunchOptions {
   color: string;
   transportKind: 'trystero' | 'broadcast';
   botCount: number;
+  /**
+   * Camera framing and sprite style, when the URL overrides the mode's own.
+   *
+   * Both are presentation-only, so they are deliberately NOT part of the
+   * transport room name: two people can play the same match in different
+   * projections without desyncing anything.
+   */
+  view: ViewMode | undefined;
+  sprites: boolean | undefined;
 }
 
 void bootstrap();
@@ -53,6 +63,10 @@ async function bootstrap(): Promise<void> {
   const modeId: GameModeId = isGameModeId(rawMode) ? rawMode : DEFAULT_MODE_ID;
   const transportKind = params.get('net') === 'broadcast' ? 'broadcast' : 'trystero';
   const botCount = clampBotCount(params.get('bots'));
+  const rawView = params.get('view');
+  const view = isViewMode(rawView) ? rawView : undefined;
+  const spritesParam = params.get('sprites');
+  const sprites = spritesParam === null ? undefined : spritesParam === '1';
 
   // `?autojoin=1` skips the lobby. Used by the e2e tests, and handy when you
   // want a shareable link that drops straight into a room.
@@ -64,6 +78,8 @@ async function bootstrap(): Promise<void> {
       color: params.get('color') ?? '#4cc9f0',
       transportKind,
       botCount,
+      view,
+      sprites,
     });
     return;
   }
@@ -72,7 +88,7 @@ async function bootstrap(): Promise<void> {
   const choice = await lobby.waitForJoin();
   lobby.dispose();
 
-  await launch(app, { ...choice, transportKind, botCount });
+  await launch(app, { ...choice, transportKind, botCount, view, sprites });
 }
 
 async function launch(app: HTMLElement, options: LaunchOptions): Promise<void> {
@@ -100,7 +116,15 @@ async function launch(app: HTMLElement, options: LaunchOptions): Promise<void> {
   });
 
   try {
-    renderer = new Renderer({ canvas, config, obstacles: session.world.obstacles });
+    renderer = new Renderer({
+      canvas,
+      config,
+      obstacles: session.world.obstacles,
+      // URL wins over the mode's default, so any game can be demoed in any
+      // projection without touching its rules.
+      view: options.view ?? mode.view ?? 'follow',
+      sprites: options.sprites ?? mode.sprites ?? false,
+    });
   } catch (error) {
     log.error('failed to start the 3D engine', error);
     showFatalError(app, 'This browser could not start WebGL, so the game cannot render.');
@@ -266,7 +290,7 @@ async function launch(app: HTMLElement, options: LaunchOptions): Promise<void> {
   };
   window.addEventListener('pagehide', teardown, { once: true });
 
-  exposeTestHandle(session, renderer, options.modeId);
+  exposeTestHandle(session, renderer, options.modeId, options.view ?? mode.view ?? 'follow');
 }
 
 function createTransport(options: LaunchOptions): Transport {
@@ -320,6 +344,8 @@ function syncUrl(options: LaunchOptions): void {
   url.searchParams.set('room', options.roomId);
   if (options.modeId !== DEFAULT_MODE_ID) url.searchParams.set('mode', options.modeId);
   else url.searchParams.delete('mode');
+  if (options.view) url.searchParams.set('view', options.view);
+  if (options.sprites !== undefined) url.searchParams.set('sprites', options.sprites ? '1' : '0');
   if (options.transportKind === 'broadcast') url.searchParams.set('net', 'broadcast');
   window.history.replaceState(null, '', url);
 }
@@ -352,7 +378,12 @@ function showFatalError(app: HTMLElement, message: string): void {
  * happened to update". Read-only on purpose: tests observe, they do not drive
  * the simulation from outside.
  */
-function exposeTestHandle(session: NetSession, renderer: Renderer, modeId: GameModeId): void {
+function exposeTestHandle(
+  session: NetSession,
+  renderer: Renderer,
+  modeId: GameModeId,
+  view: ViewMode,
+): void {
   Object.defineProperty(window, '__FWG__', {
     configurable: true,
     value: {
@@ -374,6 +405,13 @@ function exposeTestHandle(session: NetSession, renderer: Renderer, modeId: GameM
       get mode() {
         return modeId;
       },
+      get view() {
+        return view;
+      },
+      /** Orthographic in the 2D and 2.5D views, perspective in 3D. */
+      get orthographic() {
+        return renderer.camera.mode === 1;
+      },
       get phase() {
         return session.world.phase.id;
       },
@@ -390,6 +428,7 @@ function exposeTestHandle(session: NetSession, renderer: Renderer, modeId: GameM
           name: player.name,
           x: player.x,
           z: player.z,
+          y: player.y,
           score: player.score,
         }));
       },

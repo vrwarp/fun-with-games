@@ -48,6 +48,9 @@ function spawnFromInputs(ctx: StepContext): void {
       team: player.team,
       x: player.x + dirX * muzzle,
       z: player.z + dirZ * muzzle,
+      // Fired from chest height and flying level: in a platformer that means
+      // you cannot shoot someone standing a storey above you.
+      y: player.y + ctx.config.playerHeight * 0.5,
       vx: dirX * rules.speed,
       vz: dirZ * rules.speed,
       bornTick: ctx.tick,
@@ -75,7 +78,7 @@ function moveAndCollide(ctx: StepContext): void {
     if (
       Math.abs(projectile.x) > ctx.config.arenaHalfExtentX ||
       Math.abs(projectile.z) > ctx.config.arenaHalfExtentZ ||
-      isBlocked(projectile.x, projectile.z, rules.radius, ctx.obstacles)
+      isBlocked(projectile.x, projectile.z, rules.radius, ctx.obstacles, projectile.y)
     ) {
       continue;
     }
@@ -112,6 +115,10 @@ function findHit(ctx: StepContext, projectile: ProjectileState): PlayerState | n
     if (projectile.team >= 0 && player.team === projectile.team) continue;
     if (isProtected(player, ctx.tick)) continue;
     if (distanceSq2(player.x, player.z, projectile.x, projectile.z) > hitRangeSq) continue;
+    if (ctx.config.platform.enabled) {
+      const chest = player.y + ctx.config.playerHeight * 0.5;
+      if (Math.abs(chest - projectile.y) > ctx.config.playerHeight * 0.6) continue;
+    }
     return player;
   }
   return null;

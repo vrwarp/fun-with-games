@@ -3,6 +3,7 @@ import { hashStringToSeed } from '../rng.js';
 import type { StepContext } from '../step.js';
 import {
   BUTTON_PRIMARY,
+  BUTTON_SECONDARY,
   EMPTY_INPUT,
   ROLE_IT,
   TEAM_NONE,
@@ -40,13 +41,58 @@ export function computeBotInput(ctx: StepContext, bot: PlayerState): PlayerInput
     ? steer(ctx, bot, decision.target.x, decision.target.z)
     : { x: 0, z: 0 };
 
+  let buttons = decision.fire ? BUTTON_PRIMARY : 0;
+  if (ctx.config.platform.enabled && wantsToJump(ctx, bot, decision.target)) {
+    buttons |= ctx.config.platform.jumpButton === 'secondary' ? BUTTON_SECONDARY : BUTTON_PRIMARY;
+  }
+
   return {
     seq: ctx.tick,
     moveX: move.x,
     moveZ: move.z,
     sprint: decision.sprint,
-    buttons: decision.fire ? BUTTON_PRIMARY : 0,
+    buttons,
   };
+}
+
+/**
+ * Jump when the objective is above us, or when something is in the way.
+ *
+ * Deliberately crude: a real platforming AI wants path planning, and this kit
+ * would rather have a bot that reliably makes progress than one that is
+ * clever. Releasing the button between hops falls out of the press-edge rule
+ * in `integrateVertical` — the bot re-asks every tick and the latch decides.
+ */
+function wantsToJump(
+  ctx: StepContext,
+  bot: PlayerState,
+  target: { x: number; z: number } | null,
+): boolean {
+  if (!bot.grounded) return false;
+
+  // Something to climb: probe just ahead at knee height.
+  const ahead = ctx.config.playerRadius * 2;
+  const probeX = bot.x + Math.sin(bot.heading) * ahead;
+  const probeZ = bot.z + Math.cos(bot.heading) * ahead;
+  const blockedAhead = isBlocked(
+    probeX,
+    probeZ,
+    ctx.config.playerRadius,
+    ctx.obstacles,
+    bot.y + 0.3,
+  );
+  if (blockedAhead) return true;
+
+  // Something worth reaching overhead: a shard resting on a ledge above.
+  const reachable = ctx.pickups.some(
+    (pickup) =>
+      pickup.active &&
+      pickup.y > bot.y + 0.5 &&
+      distance2(bot.x, bot.z, pickup.x, pickup.z) < ctx.config.playerRadius * 6,
+  );
+  if (reachable) return true;
+
+  return target !== null && distance2(bot.x, bot.z, target.x, target.z) < 1;
 }
 
 interface Decision {
@@ -190,7 +236,7 @@ function steer(
     const dz = direct.x * sin + direct.y * cos;
     const probeX = bot.x + dx * lookahead;
     const probeZ = bot.z + dz * lookahead;
-    if (!isBlocked(probeX, probeZ, ctx.config.playerRadius, ctx.obstacles)) {
+    if (!isBlocked(probeX, probeZ, ctx.config.playerRadius, ctx.obstacles, bot.y)) {
       return { x: dx, z: dz };
     }
   }

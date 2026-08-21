@@ -3,8 +3,23 @@ import type { Rng } from '../rng.js';
 import type { SimConfig } from '../config.js';
 import type { StepContext } from '../step.js';
 import type { Obstacle, PickupKind, PickupState } from '../types.js';
-import { findFreePosition } from './arena.js';
+import { findFreePosition, supportHeight } from './arena.js';
 import { addEffect, isKnockedOut } from './effects.js';
+
+/**
+ * Height a shard comes to rest at: on the floor in flat modes, on top of
+ * whatever it lands on once gravity exists. That single rule is what scatters
+ * collectibles across a platformer's ledges without any per-level authoring.
+ */
+function restingHeight(
+  config: SimConfig,
+  x: number,
+  z: number,
+  obstacles: readonly Obstacle[],
+): number {
+  if (!config.platform.enabled) return 0;
+  return supportHeight(x, z, config.pickupRadius, obstacles, Number.POSITIVE_INFINITY);
+}
 
 const PICKUP_KINDS: readonly PickupKind[] = ['score', 'speed', 'shield', 'heal'];
 
@@ -31,7 +46,8 @@ export function createPickups(
   for (let id = 0; id < config.pickupCount; id++) {
     const { x, z } = findFreePosition(config, rng, config.pickupRadius, obstacles);
     const kind = rollPickupKind(config, rng);
-    pickups.push({ id, x, z, kind, active: true, respawnTick: 0 });
+    const y = restingHeight(config, x, z, obstacles);
+    pickups.push({ id, x, z, y, kind, active: true, respawnTick: 0 });
   }
   return pickups;
 }
@@ -58,6 +74,7 @@ export function updatePickups(ctx: StepContext): void {
         const spot = findFreePosition(config, ctx.rng, config.pickupRadius, ctx.obstacles);
         pickup.x = spot.x;
         pickup.z = spot.z;
+        pickup.y = restingHeight(config, spot.x, spot.z, ctx.obstacles);
         pickup.active = true;
         ctx.out.push({ type: 'pickupRespawned', pickupId: pickup.id });
       }
@@ -67,6 +84,11 @@ export function updatePickups(ctx: StepContext): void {
     for (const player of ctx.players) {
       if (isKnockedOut(player, ctx.tick)) continue;
       if (distanceSq2(player.x, player.z, pickup.x, pickup.z) > pickupRangeSq) continue;
+      // Reaching through a floor would let a platformer be played from the
+      // ground; a shard on a ledge has to be stood next to.
+      if (config.platform.enabled && Math.abs(player.y - pickup.y) >= config.playerHeight) {
+        continue;
+      }
 
       switch (pickup.kind) {
         case 'score':

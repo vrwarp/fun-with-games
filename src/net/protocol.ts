@@ -23,8 +23,10 @@ import {
  *
  * v2: game kit — buttons in inputs; phase, teams, ball, projectiles, items,
  * zones and per-player kit fields in snapshots.
+ * v3: vertical axis — heights and vertical velocity for players, pickups,
+ * projectiles and items, plus jump bookkeeping.
  */
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
 
 export type MessageType = 'hello' | 'input' | 'snapshot' | 'bye';
 
@@ -110,8 +112,10 @@ export function encodeSnapshot(snapshot: WorldSnapshot): WorldSnapshot {
       ...p,
       x: quantize(p.x),
       z: quantize(p.z),
+      y: quantize(p.y),
       vx: quantize(p.vx, 2),
       vz: quantize(p.vz, 2),
+      vy: quantize(p.vy, 2),
       heading: quantize(p.heading, 2),
       effects: { ...p.effects },
       input: { ...p.input },
@@ -120,6 +124,7 @@ export function encodeSnapshot(snapshot: WorldSnapshot): WorldSnapshot {
       ...p,
       x: quantize(p.x),
       z: quantize(p.z),
+      y: quantize(p.y),
     })),
     teamScores: [...snapshot.teamScores],
     ball: snapshot.ball
@@ -135,6 +140,7 @@ export function encodeSnapshot(snapshot: WorldSnapshot): WorldSnapshot {
       ...p,
       x: quantize(p.x),
       z: quantize(p.z),
+      y: quantize(p.y),
       vx: quantize(p.vx, 2),
       vz: quantize(p.vz, 2),
     })),
@@ -142,6 +148,7 @@ export function encodeSnapshot(snapshot: WorldSnapshot): WorldSnapshot {
       ...i,
       x: quantize(i.x),
       z: quantize(i.z),
+      y: quantize(i.y),
     })),
     zones: snapshot.zones.map((z) => ({ ...z })),
   };
@@ -307,8 +314,10 @@ function decodePlayer(raw: unknown): WorldSnapshot['players'][number] | null {
   const numbers = [
     'x',
     'z',
+    'y',
     'vx',
     'vz',
+    'vy',
     'heading',
     'score',
     'team',
@@ -317,6 +326,7 @@ function decodePlayer(raw: unknown): WorldSnapshot['players'][number] | null {
     'lives',
     'checkpoint',
     'lap',
+    'jumps',
     'lastInputSeq',
   ] as const;
   for (const key of numbers) {
@@ -335,8 +345,10 @@ function decodePlayer(raw: unknown): WorldSnapshot['players'][number] | null {
     color: sanitizeColor(color),
     x: raw['x'] as number,
     z: raw['z'] as number,
+    y: raw['y'] as number,
     vx: raw['vx'] as number,
     vz: raw['vz'] as number,
+    vy: raw['vy'] as number,
     heading: raw['heading'] as number,
     score: Math.floor(raw['score'] as number),
     team: clampTeam(raw['team'] as number),
@@ -345,6 +357,9 @@ function decodePlayer(raw: unknown): WorldSnapshot['players'][number] | null {
     lives: Math.floor(raw['lives'] as number),
     checkpoint: Math.floor(raw['checkpoint'] as number),
     lap: Math.floor(raw['lap'] as number),
+    grounded: raw['grounded'] === true,
+    jumps: Math.floor(raw['jumps'] as number),
+    jumpLatch: raw['jumpLatch'] === true,
     isBot: raw['isBot'] === true,
     effects,
     lastInputSeq: Math.floor(raw['lastInputSeq'] as number),
@@ -392,6 +407,7 @@ function decodePickup(raw: unknown): WorldSnapshot['pickups'][number] | null {
   if (!isFiniteNumber(raw['id']) || !isFiniteNumber(raw['x']) || !isFiniteNumber(raw['z'])) {
     return null;
   }
+  if (!isFiniteNumber(raw['y'])) return null;
   if (!isFiniteNumber(raw['respawnTick'])) return null;
   const kind = raw['kind'];
   if (typeof kind !== 'string' || !(PICKUP_KINDS as readonly string[]).includes(kind)) return null;
@@ -400,6 +416,7 @@ function decodePickup(raw: unknown): WorldSnapshot['pickups'][number] | null {
     id: Math.floor(raw['id']),
     x: raw['x'],
     z: raw['z'],
+    y: raw['y'],
     kind: kind as PickupKind,
     active: raw['active'] === true,
     respawnTick: Math.floor(raw['respawnTick']),
@@ -435,7 +452,7 @@ function decodeBall(raw: unknown): BallState | null {
 
 function decodeProjectile(raw: unknown): ProjectileState | null {
   if (!isRecord(raw)) return null;
-  for (const key of ['id', 'team', 'x', 'z', 'vx', 'vz', 'bornTick'] as const) {
+  for (const key of ['id', 'team', 'x', 'z', 'y', 'vx', 'vz', 'bornTick'] as const) {
     if (!isFiniteNumber(raw[key])) return null;
   }
   const ownerId = raw['ownerId'];
@@ -447,6 +464,7 @@ function decodeProjectile(raw: unknown): ProjectileState | null {
     team: clampTeam(raw['team'] as number),
     x: raw['x'] as number,
     z: raw['z'] as number,
+    y: raw['y'] as number,
     vx: raw['vx'] as number,
     vz: raw['vz'] as number,
     bornTick: Math.floor(raw['bornTick'] as number),
@@ -455,7 +473,7 @@ function decodeProjectile(raw: unknown): ProjectileState | null {
 
 function decodeItem(raw: unknown): ItemState | null {
   if (!isRecord(raw)) return null;
-  for (const key of ['id', 'x', 'z', 'returnTick'] as const) {
+  for (const key of ['id', 'x', 'z', 'y', 'returnTick'] as const) {
     if (!isFiniteNumber(raw[key])) return null;
   }
   const carrierId = raw['carrierId'];
@@ -465,6 +483,7 @@ function decodeItem(raw: unknown): ItemState | null {
     id: Math.floor(raw['id'] as number),
     x: raw['x'] as number,
     z: raw['z'] as number,
+    y: raw['y'] as number,
     carrierId: carrierId.slice(0, 64),
     returnTick: Math.floor(raw['returnTick'] as number),
     atHome: raw['atHome'] === true,

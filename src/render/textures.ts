@@ -63,6 +63,81 @@ export function createCheckerTexture(
   return texture;
 }
 
+/**
+ * Draws a chunky character sprite for the 2D/2.5D views.
+ *
+ * Procedural for the same reason everything else here is: the repo ships no
+ * binaries, so `npm run dev` gives a game that looks deliberate with nothing
+ * downloaded. The art is a blocky little figure on a transparent background —
+ * head, body, arms, legs, a dark outline — tinted by the player's colour, so
+ * every player reads as the same character in their own hue.
+ *
+ * Pixels are drawn on a small grid and scaled up with filtering disabled,
+ * which is what makes the edges crisp instead of soft.
+ */
+export function createSpriteTexture(scene: Scene, color: string): DynamicTexture {
+  // 16x16 cells at 8px each: small enough to read as pixel art, big enough
+  // not to shimmer when the camera moves.
+  const cells = 16;
+  const cell = 8;
+  const size = cells * cell;
+
+  const texture = new DynamicTexture(`sprite:${color}`, { width: size, height: size }, scene, true);
+  texture.hasAlpha = true;
+  // Nearest-neighbour: the whole point of pixel art is hard edges.
+  texture.updateSamplingMode(1);
+
+  const ctx = context2d(texture);
+  ctx.clearRect(0, 0, size, size);
+
+  const shade = shiftColor(color, -0.35);
+  const light = shiftColor(color, 0.3);
+  const px = (gx: number, gy: number, w: number, h: number, fill: string): void => {
+    ctx.fillStyle = fill;
+    ctx.fillRect(gx * cell, gy * cell, w * cell, h * cell);
+  };
+
+  // Outline, drawn first as a silhouette one cell larger on each side.
+  const outline = 'rgba(0, 0, 0, 0.85)';
+  px(5, 1, 6, 5, outline); // head
+  px(4, 6, 8, 6, outline); // torso + arms
+  px(5, 12, 6, 4, outline); // legs
+
+  px(6, 2, 4, 3, light); // face
+  px(6, 4, 4, 1, shade); // chin shadow
+  px(5, 7, 6, 4, color); // torso
+  px(4, 7, 1, 3, color); // left arm
+  px(11, 7, 1, 3, color); // right arm
+  px(6, 11, 2, 4, shade); // left leg
+  px(9, 11, 2, 4, shade); // right leg
+
+  // Eyes last so they sit on top of the face block.
+  px(7, 3, 1, 1, '#101319');
+  px(9, 3, 1, 1, '#101319');
+
+  texture.update();
+  return texture;
+}
+
+/** Lightens (positive) or darkens (negative) a `#rgb`/`#rrggbb` colour. */
+function shiftColor(hex: string, amount: number): string {
+  const normalized =
+    hex.length === 4
+      ? `#${hex[1] ?? '0'}${hex[1] ?? '0'}${hex[2] ?? '0'}${hex[2] ?? '0'}${hex[3] ?? '0'}${hex[3] ?? '0'}`
+      : hex;
+  const value = Number.parseInt(normalized.slice(1), 16);
+  if (!Number.isFinite(value)) return hex;
+
+  const channel = (shift: number): number => {
+    const base = (value >> shift) & 0xff;
+    const moved = amount >= 0 ? base + (255 - base) * amount : base * (1 + amount);
+    return Math.max(0, Math.min(255, Math.round(moved)));
+  };
+
+  const to2 = (n: number): string => n.toString(16).padStart(2, '0');
+  return `#${to2(channel(16))}${to2(channel(8))}${to2(channel(0))}`;
+}
+
 /** Renders a player name onto a transparent texture for a billboard label. */
 export function createLabelTexture(scene: Scene, text: string, color: string): DynamicTexture {
   const width = 512;

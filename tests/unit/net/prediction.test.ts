@@ -220,13 +220,13 @@ describe('ClientView: interpolation', () => {
     const view = makeView();
     view.pushSnapshot(
       makeSnapshot(0, [], {
-        pickups: [{ id: 0, x: 0, z: 0, kind: 'score', active: true, respawnTick: 0 }],
+        pickups: [{ id: 0, x: 0, z: 0, y: 0, kind: 'score', active: true, respawnTick: 0 }],
       }),
       0,
     );
     view.pushSnapshot(
       makeSnapshot(1, [], {
-        pickups: [{ id: 0, x: 9, z: 0, kind: 'score', active: false, respawnTick: 5 }],
+        pickups: [{ id: 0, x: 9, z: 0, y: 0, kind: 'score', active: false, respawnTick: 5 }],
       }),
       100,
     );

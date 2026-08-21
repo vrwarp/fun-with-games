@@ -7,6 +7,13 @@
  * `SimConfig`. Keep the two files' id lists identical; a unit test checks.
  */
 
+/**
+ * How a mode is framed by default. Purely presentational — see
+ * `src/render/views.ts`. `?view=` overrides it per player, so any mode can be
+ * demoed in any projection.
+ */
+export type ModeView = 'follow' | 'iso' | 'topdown' | 'side';
+
 export type GameModeId =
   | 'gather'
   | 'rush'
@@ -18,7 +25,10 @@ export type GameModeId =
   | 'knockout'
   | 'soccer'
   | 'ctf'
-  | 'crown';
+  | 'crown'
+  | 'platformer'
+  | 'skirmish'
+  | 'dungeon';
 
 export interface GameModeInfo {
   readonly id: GameModeId;
@@ -29,6 +39,15 @@ export interface GameModeInfo {
   readonly goal: string;
   /** Whether the mode uses the primary action button (shows it on touch). */
   readonly usesPrimaryAction: boolean;
+  /**
+   * Default camera framing. Omit for the 3D follow camera.
+   *
+   * This is the single knob that makes a mode read as 2D, 2.5D or 3D; the
+   * simulation is identical either way.
+   */
+  readonly view?: ModeView;
+  /** Draw players as pixel-art sprites rather than 3D bodies. */
+  readonly sprites?: boolean;
   /**
    * Whether the mode uses the secondary action button. No built-in mode does
    * — it is reserved for abilities you add (see the dash recipe). Setting
@@ -128,6 +147,35 @@ export const GAME_MODES: readonly GameModeInfo[] = [
     tagline: 'Grab the crown, keep the crown.',
     goal: 'Hold the crown to score every second. Touch the carrier to steal it. First to 30 wins.',
     usesPrimaryAction: false,
+    suggestedPlayers: 3,
+  },
+  {
+    id: 'platformer',
+    title: 'Shard Climb',
+    tagline: '2D side-scroller — run, jump, collect.',
+    goal: 'Jump the platforms and collect 20 shards before anyone else.',
+    usesPrimaryAction: true,
+    view: 'side',
+    sprites: true,
+    suggestedPlayers: 1,
+  },
+  {
+    id: 'skirmish',
+    title: 'Top-Down Skirmish',
+    tagline: 'Flat 2D arena shooter, seen from straight above.',
+    goal: 'Blast rivals from a bird’s-eye view. First to 10 KOs wins.',
+    usesPrimaryAction: true,
+    view: 'topdown',
+    sprites: true,
+    suggestedPlayers: 2,
+  },
+  {
+    id: 'dungeon',
+    title: 'Isometric Dungeon',
+    tagline: '2.5D isometric shard hunt with a horde on your heels.',
+    goal: 'Collect shards while the infected chase you. Survive the round.',
+    usesPrimaryAction: false,
+    view: 'iso',
     suggestedPlayers: 3,
   },
 ];

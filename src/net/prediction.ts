@@ -93,7 +93,7 @@ export class ClientView {
    * against it, which reads as the character vibrating. Keeping the previous
    * step lets `sample()` interpolate across it.
    */
-  #predictedPrevious: { x: number; z: number; heading: number } | null = null;
+  #predictedPrevious: { x: number; z: number; y: number; heading: number } | null = null;
   #pendingInputs: PlayerInput[] = [];
   /** The tick the next predicted input will simulate. */
   #predictedTick = 0;
@@ -140,6 +140,7 @@ export class ClientView {
     this.#predictedPrevious = {
       x: this.#predicted.x,
       z: this.#predicted.z,
+      y: this.#predicted.y,
       heading: this.#predicted.heading,
     };
     integratePlayer(
@@ -207,7 +208,9 @@ export class ClientView {
         color: target.color,
         x: previous ? lerp(previous.x, target.x, alpha) : target.x,
         z: previous ? lerp(previous.z, target.z, alpha) : target.z,
+        y: previous ? lerp(previous.y, target.y, alpha) : target.y,
         heading: previous ? lerpAngle(previous.heading, target.heading, alpha) : target.heading,
+        grounded: target.grounded,
         score: target.score,
         team: target.team,
         role: target.role,
@@ -228,6 +231,7 @@ export class ClientView {
       id: p.id,
       x: p.x,
       z: p.z,
+      y: p.y,
       kind: p.kind,
       active: p.active,
     }));
@@ -293,6 +297,7 @@ export class ClientView {
         ownerId: projectile.ownerId,
         x: previous ? lerp(previous.x, projectile.x, alpha) : projectile.x,
         z: previous ? lerp(previous.z, projectile.z, alpha) : projectile.z,
+        y: projectile.y,
       };
     });
   }
@@ -322,6 +327,7 @@ export class ClientView {
         kind: spec?.kind ?? 'crown',
         x: item.x,
         z: item.z,
+        y: item.y,
         carrierId: item.carrierId,
         team: spec?.team ?? -1,
         atHome: item.atHome,
@@ -351,6 +357,7 @@ export class ClientView {
     const t = previous ? clamp(tickAlpha, 0, 1) : 1;
     const x = previous ? lerp(previous.x, predicted.x, t) : predicted.x;
     const z = previous ? lerp(previous.z, predicted.z, t) : predicted.z;
+    const y = previous ? lerp(previous.y, predicted.y, t) : predicted.y;
     const heading = previous
       ? lerpAngle(previous.heading, predicted.heading, t)
       : predicted.heading;
@@ -361,7 +368,9 @@ export class ClientView {
       color: predicted.color,
       x: x + this.#errorX * blend,
       z: z + this.#errorZ * blend,
+      y,
       heading,
+      grounded: predicted.grounded,
       score: predicted.score,
       team: predicted.team,
       role: predicted.role,
@@ -433,7 +442,12 @@ export class ClientView {
       // host migration, or a genuine teleport. Snapping is the honest render,
       // so collapse the interpolation span too: sliding across the arena over
       // a tick would look like a glitch rather than a teleport.
-      this.#predictedPrevious = { x: rebuilt.x, z: rebuilt.z, heading: rebuilt.heading };
+      this.#predictedPrevious = {
+        x: rebuilt.x,
+        z: rebuilt.z,
+        y: rebuilt.y,
+        heading: rebuilt.heading,
+      };
       this.#errorX = 0;
       this.#errorZ = 0;
       this.#errorRemainingMs = 0;

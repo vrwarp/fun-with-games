@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { makeSimConfig, tickDeltaSeconds } from '@/sim/config.js';
 import { integratePlayer, resolvePlayerCollisions } from '@/sim/systems/movement.js';
 import type { Obstacle } from '@/sim/types.js';
-import { makeInput as input, makePlayer } from '../../helpers/factories.js';
+import { makeInput as input, makeObstacle, makePlayer } from '../../helpers/factories.js';
 
 const config = makeSimConfig({ arenaHalfExtentX: 10, arenaHalfExtentZ: 10 });
 const dt = tickDeltaSeconds(config);
@@ -92,7 +92,7 @@ describe('integratePlayer', () => {
   });
 
   it('pushes out of an obstacle instead of passing through', () => {
-    const obstacle: Obstacle = { id: 0, x: 2, z: 0, halfX: 1, halfZ: 1 };
+    const obstacle: Obstacle = makeObstacle({ x: 2, z: 0, halfX: 1, halfZ: 1 });
     const player = makePlayer({ x: -0.5 });
 
     for (let i = 0; i < 200; i++) {
@@ -106,7 +106,7 @@ describe('integratePlayer', () => {
   it('escapes when spawned exactly inside an obstacle', () => {
     // Degenerate case: the push-out normal is undefined at the centre, so the
     // solver has to fall back to the shallowest axis.
-    const obstacle: Obstacle = { id: 0, x: 0, z: 0, halfX: 1, halfZ: 2 };
+    const obstacle: Obstacle = makeObstacle({ x: 0, z: 0, halfX: 1, halfZ: 2 });
     const player = makePlayer({ x: 0, z: 0 });
 
     integratePlayer(player, input(), config, [obstacle], dt);
@@ -117,7 +117,7 @@ describe('integratePlayer', () => {
   });
 
   it('lets the player slide along a wall rather than sticking', () => {
-    const obstacle: Obstacle = { id: 0, x: 0, z: 3, halfX: 5, halfZ: 1 };
+    const obstacle: Obstacle = makeObstacle({ x: 0, z: 3, halfX: 5, halfZ: 1 });
     const player = makePlayer({ x: 0, z: 0 });
 
     for (let i = 0; i < 60; i++) {

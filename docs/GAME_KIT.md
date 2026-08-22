@@ -164,6 +164,29 @@ phase → bot inputs → movement → player collisions → combat(respawns) →
       → projectiles → ball → items → zones → race → pickups → effect pruning
 ```
 
+### Contact — `systems/movement.ts`, config `collision`
+
+Overlapping players are always pushed apart. Whether the contact also _costs_
+anything is `collision.enabled`, and it is **off by default**: you should not
+be able to shoulder-barge a rival into a wall in `tag`, so every non-racing
+mode keeps separation alone.
+
+Turned on, a touch gets the physics an impact actually has. Masses are equal —
+a grid of identical cars is what the racing modes are — which collapses the
+impulse to a clean half-and-half exchange.
+
+| Key           | What it decides                                                                                                                                           |
+| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `restitution` | Bounciness. 0 is a dead thud that leaves the pair travelling together; 1 is a snooker ball. Cars want the thud end.                                       |
+| `friction`    | Sideways bite. 0 lets rivals slide past each other for free; above 0 running wheel-to-wheel scrubs both cars.                                             |
+| `spin`        | Yaw from that bite. A body is a disc, so a blow through the centre cannot spin it — but a scrape drags one flank and not the other, and that is a torque. |
+
+This runs on the host only. A client predicting its own car cannot see where
+anyone else is this tick, so the impulse arrives with the next snapshot — the
+right trade, because a shunt is exactly the moment a player expects to be
+shoved around by the world, and predicting it against a stale rival position
+would invent contacts that never happened.
+
 ### Phases — `systems/phase.ts`, config `phases`
 
 The match state machine: `lobby → countdown → playing → ended → countdown…`.
@@ -318,11 +341,36 @@ single "point there" vector cannot express that. Because the axes are read in
 the car's frame rather than the camera's, **driving is identical in all five
 views**, and a chase camera's own lag cannot feed back into the steering.
 
-The handling on top: speed exists only along the car's own axis (no strafing),
-`steerFalloff` takes steering authority away with speed (understeer), and
-sideways velocity is scrubbed at a `grip` rate rather than instantly (slides,
-worse on grass and worn rubber). Steering stays live whatever the throttle is
-doing, so a spun car can be turned around and driven away.
+The handling on top is a **traction limit**, not a set of fiats. Speed exists
+only along the car's own axis (no strafing), and everything else follows from
+one number, `vehicle.tyreGrip` — the most lateral acceleration the tyres can
+make:
+
+| Key              | What it decides                                                                                                                                                                        |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tyreGrip`       | Peak lateral acceleration. Holding a line costs `speed × yawRate`, so the same steering angle grips slowly and lets go fast. 0 keeps the old proportional `grip` scrub.                |
+| `frontGrip`      | How much more yaw the rack may ask for than the tyres can hold. 1 is pure understeer — the front washes out and the car goes straight on. Above 1 leaves rope to provoke a slide with. |
+| `frictionCircle` | How much braking steals from cornering. Trail braking and power oversteer both live here.                                                                                              |
+| `selfAlign`      | How fast the caster pulls a sliding car straight, in proportion to slip angle. Makes a slide catchable rather than terminal.                                                           |
+
+Whatever the tyres cannot erase survives as sideways velocity — that surplus
+**is** the drift, and it unwinds through `selfAlign`. Grass and worn rubber
+scale the limit down, so both let go sooner. Steering stays live whatever the
+throttle is doing, so a spun car can be turned around and driven away.
+
+Every rotation re-expresses the velocity in the frame it produced. Turning the
+car must never turn its momentum with it — that difference is the entire
+distinction between steering and teleporting, and getting it wrong pins the car
+sideways for ever.
+
+`slipAngle(player)` is the angle between where a car points and where it is
+going: zero on rails, large in a drift, signed toward the side it is sliding.
+
+Bots read the same limit rather than a hand-tuned lift: the road ahead turns
+through some angle over the distance they look down it, so its radius is one
+divided by the other, and they drive to `sqrt(grip × radius)`. They therefore
+re-learn every circuit for free when the grip changes — on worn tyres, on the
+grass, or when a preset is retuned.
 
 It hangs off `integratePlayer`, so it runs inside client prediction too. That
 is deliberate: a car is fast enough that an unpredicted metre is a visible one.

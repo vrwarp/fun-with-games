@@ -337,16 +337,31 @@ const PRESETS: Record<GameModeId, SimConfigOverrides> = {
     vehicle: {
       enabled: true,
       engineAccel: 22,
-      brakeDecel: 40,
+      // Under the traction limit, not over it: a car cannot brake harder than
+      // its tyres can hold, and the old 40 was writing a cheque `tyreGrip`
+      // could not cash.
+      brakeDecel: 26,
       coastDecel: 13,
-      // Understeer, deliberately: flat out the car keeps 42% of its steering,
-      // which is what makes braking for the hairpin a decision rather than a
-      // formality.
+      // The rack stays almost fully alive at speed. Understeer is the tyres'
+      // job now, and taking the angle away here as well would charge the
+      // driver twice for the same corner.
       steerRate: 3.1,
-      steerFalloff: 0.58,
+      steerFalloff: 0.15,
       grip: 8,
+      // The number that decides every corner. A car needs v^2/r to hold a
+      // line, so 26 buys a radius of about 28 flat out and about 7 at half
+      // speed — which is to say the hairpin is takeable and the chicane is
+      // not, unless you slow down first.
+      tyreGrip: 26,
+      frictionCircle: 0.55,
+      // Only a little rope. A grand prix car is precise: the drama is in
+      // being ON the limit, not in hanging the back out, and the bots hold
+      // the road for 98% of a lap at this figure.
+      frontGrip: 1.45,
+      selfAlign: 3,
       brakeButton: 'secondary',
     },
+    collision: { enabled: true, restitution: 0.15, friction: 0.4, spin: 0.03 },
     track: {
       enabled: true,
       halfWidth: 6,
@@ -420,13 +435,22 @@ const PRESETS: Record<GameModeId, SimConfigOverrides> = {
     vehicle: {
       enabled: true,
       engineAccel: 24,
-      brakeDecel: 42,
+      brakeDecel: 24,
       coastDecel: 15,
       steerRate: 3.6,
-      steerFalloff: 0.5,
+      steerFalloff: 0.15,
       grip: 9,
+      // Deliberately looser than the grand prix car: a street race should be
+      // sliding about. Measured, this is the difference between a field that
+      // is sideways 3% of a lap and one that is sideways 17% of it, with both
+      // still keeping all four wheels on the road.
+      tyreGrip: 28,
+      frictionCircle: 0.6,
+      frontGrip: 1.5,
+      selfAlign: 3.4,
       brakeButton: 'secondary',
     },
+    collision: { enabled: true, restitution: 0.2, friction: 0.45, spin: 0.04 },
     track: {
       enabled: true,
       halfWidth: 4.5,

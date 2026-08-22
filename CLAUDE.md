@@ -12,14 +12,16 @@ rules below intact even when a shortcut would be quicker.
 > skirmish, dungeon, grandprix, street), and a library of config-driven
 > systems — phases/rounds, teams, hp/combat, projectiles, tag roles, a ball
 > with goals, zones, carryable flags/crowns, timed status effects, power-ups,
-> gravity/jumping, car handling with circuits, and bots — means most new games
-> are **a preset, not new code**. The reference is
+> gravity/jumping, car handling with a traction limit and circuits, contact
+> physics, and bots — means most new games are **a preset, not new code**. The reference is
 > [`docs/GAME_KIT.md`](./docs/GAME_KIT.md). Do not rebuild any of this.
 >
 > **Racing is covered too.** `?mode=grandprix` is a full Formula-style race —
 > grid start, three laps, slipstream, DRS, tyre wear and a pit lane — and
-> `?mode=street` is a shorter one seen from above. A circuit is a list of
-> control points; see the "authoring a circuit" recipe before writing any.
+> `?mode=street` is a shorter one seen from above. Handling is a real traction
+> limit (`vehicle.tyreGrip`): cars understeer, drift and catch themselves, and
+> contact between them exchanges momentum. A circuit is a list of control
+> points; see the "authoring a circuit" recipe before writing any.
 >
 > **2D and 2.5D are already covered.** `src/sim` is a _plane_ — it has no
 > camera and no perspective — so 2D is the native model, not a port. Add

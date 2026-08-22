@@ -112,7 +112,7 @@ That is the whole change. Some more one-preset games to steal:
 | Team blasters   | `arena` + `teams: { count: 2 }` — team KO totals win (no friendly fire, already handled)                                                                                                                                                            |
 | Snail race      | `race` + `playerMaxSpeed: 5`, no obstacles, tiny checkpoints                                                                                                                                                                                        |
 | Endurance       | `grandprix` + `phases: { targetScore: 10 }` and a short `race.tyreStintTicks` — the pit stop becomes the whole strategy                                                                                                                             |
-| Slippery street | `street` + `vehicle: { grip: 4 }` — ice racing, same circuit                                                                                                                                                                                        |
+| Slippery street | `street` + `vehicle: { tyreGrip: 14 }` — ice racing, same circuit                                                                                                                                                                                   |
 | Crown of thorns | `crown` + `combat`+`projectiles`: shoot the carrier to make them drop it (KO drops are built in)                                                                                                                                                    |
 
 Numbers to remember: ticks are 1/30s — use the `seconds(n)` helper already in

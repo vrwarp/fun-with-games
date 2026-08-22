@@ -1,5 +1,5 @@
 import { clamp, clampMagnitude2, length2, normalize2 } from '../../shared/math.js';
-import type { SimConfig } from '../config.js';
+import type { CollisionConfig, SimConfig } from '../config.js';
 import {
   BUTTON_PRIMARY,
   BUTTON_SECONDARY,
@@ -336,16 +336,30 @@ export function applyImpulse(player: PlayerState, ix: number, iz: number, iy = 0
 }
 
 /**
- * Separates overlapping players.
+ * Separates overlapping players, and — where the mode asks for it — makes the
+ * contact cost something.
+ *
+ * Separation alone is the right model for a footrace: you should not be able
+ * to shoulder-barge a rival into a wall in `tag`. It is the wrong model for
+ * cars, where two bodies arriving at closing speed have momentum that has to
+ * go somewhere, and where contact being free means defending a position is
+ * free too. `collision.enabled` picks which of the two a mode gets.
  *
  * `players` MUST already be sorted by id: floating point addition is not
  * associative, so a different resolution order yields different positions and
  * the host/client replay would diverge.
+ *
+ * Unlike the rest of the movement path this runs on the host only — a client
+ * predicting its own car cannot see where anyone else is this tick, so the
+ * impulse arrives with the next snapshot. That is the right trade: a shunt is
+ * exactly the moment a player expects to be shoved around by the world, and
+ * predicting it against a stale rival position would invent phantom contacts.
  */
 export function resolvePlayerCollisions(players: PlayerState[], config: SimConfig): void {
   const minDistance = config.playerRadius * 2;
   const minDistanceSq = minDistance * minDistance;
   const verticalReach = config.playerHeight;
+  const impact = config.collision;
 
   for (let i = 0; i < players.length; i++) {
     for (let j = i + 1; j < players.length; j++) {
@@ -379,6 +393,63 @@ export function resolvePlayerCollisions(players: PlayerState[], config: SimConfi
       a.z -= nz * overlap;
       b.x += nx * overlap;
       b.z += nz * overlap;
+
+      if (impact.enabled) exchangeMomentum(a, b, nx, nz, impact);
     }
   }
+}
+
+/**
+ * The velocity half of a contact: an impulse along the normal and a scrub
+ * across it.
+ *
+ * Every body here has the same mass, which is not a simplification worth
+ * apologising for — a grid of identical cars is what the racing modes are, and
+ * equal masses collapse the impulse to a clean half-and-half exchange.
+ */
+function exchangeMomentum(
+  a: PlayerState,
+  b: PlayerState,
+  nx: number,
+  nz: number,
+  impact: CollisionConfig,
+): void {
+  // Closing speed along the contact normal. Positive means they are already
+  // moving apart — separation has done its job and an impulse now would suck
+  // them back together.
+  const rvx = b.vx - a.vx;
+  const rvz = b.vz - a.vz;
+  const normalSpeed = rvx * nx + rvz * nz;
+  if (normalSpeed > 0) return;
+
+  // Equal masses: each body takes half of the exchange.
+  const j = (-(1 + impact.restitution) * normalSpeed) / 2;
+  a.vx -= j * nx;
+  a.vz -= j * nz;
+  b.vx += j * nx;
+  b.vz += j * nz;
+
+  if (impact.friction <= 0) return;
+
+  // What is left after removing the normal component is the pair sliding along
+  // each other. Dragging them toward a common tangential speed is what makes
+  // running wheel-to-wheel scrub both cars instead of costing nothing.
+  const tx = rvx - normalSpeed * nx;
+  const tz = rvz - normalSpeed * nz;
+  const scrubX = tx * impact.friction * 0.5;
+  const scrubZ = tz * impact.friction * 0.5;
+  a.vx += scrubX;
+  a.vz += scrubZ;
+  b.vx -= scrubX;
+  b.vz -= scrubZ;
+
+  if (impact.spin === 0) return;
+
+  // That scrub acts at the rim, not through the centre, so it is also a
+  // torque. Sign it off the tangent direction (the normal turned a quarter
+  // turn) and the two bodies twist in opposite senses, which is what a
+  // side-by-side moment through a corner actually feels like.
+  const tangent = scrubX * -nz + scrubZ * nx;
+  a.heading += tangent * impact.spin;
+  b.heading -= tangent * impact.spin;
 }

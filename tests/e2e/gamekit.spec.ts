@@ -89,8 +89,10 @@ test('settings change the camera, the art and the sound without a reload', async
   const tickBefore = await page.evaluate(() => window.__FWG__.tick);
 
   await page.getByTestId('settings-button').click();
-  await page.getByTestId('settings-view').selectOption('topdown');
-  await expect.poll(() => page.evaluate(() => window.__FWG__.view)).toBe('topdown');
+  // Racing offers exactly the two supported cameras, and isometric is the
+  // orthographic one of the pair.
+  await page.getByTestId('settings-view').selectOption('iso');
+  await expect.poll(() => page.evaluate(() => window.__FWG__.view)).toBe('iso');
   expect(await page.evaluate(() => window.__FWG__.orthographic)).toBe(true);
 
   await page.getByTestId('settings-sprites').click();
@@ -100,7 +102,7 @@ test('settings change the camera, the art and the sound without a reload', async
   // Same session throughout: the simulation never restarted.
   expect(await page.evaluate(() => window.__FWG__.tick)).toBeGreaterThan(tickBefore);
   // And the address bar now describes what is actually on screen.
-  expect(page.url()).toContain('view=topdown');
+  expect(page.url()).toContain('view=iso');
   expect(page.url()).toContain('sprites=1');
 });
 
@@ -123,8 +125,8 @@ test('a link still overrides what the device remembers', async ({ page }) => {
   await page.goto('/?net=broadcast&autojoin=1&room=e2e-link&mode=tag&name=Linked');
   await waitForHud(page);
   await page.getByTestId('settings-button').click();
-  await page.getByTestId('settings-view').selectOption('side');
-  await expect.poll(() => page.evaluate(() => window.__FWG__.view)).toBe('side');
+  await page.getByTestId('settings-view').selectOption('first');
+  await expect.poll(() => page.evaluate(() => window.__FWG__.view)).toBe('first');
 
   // Someone sends a link that names a view: the link describes the game they
   // were invited to, so it wins over the preference.
@@ -210,9 +212,11 @@ test.describe('2D and 2.5D views', () => {
     expect(await page.evaluate(() => window.__FWG__.orthographic)).toBe(false);
     expect(await page.evaluate(() => window.__FWG__.cameraBeta)).toBeCloseTo(Math.PI / 2, 3);
 
-    // It also has to sit closer than the chase camera, or it is not a cockpit.
+    // It also has to sit closer than the other supported camera, or it is not
+    // a cockpit. (Grandprix now defaults to `first`, so the comparison has to
+    // name the view it is being compared against rather than take the default.)
     const cockpit = await page.evaluate(() => window.__FWG__.cameraRadius);
-    await page.goto('/?net=broadcast&autojoin=1&room=e2e-fp2&mode=grandprix&name=Driver');
+    await page.goto('/?net=broadcast&autojoin=1&room=e2e-fp2&mode=grandprix&name=Driver&view=iso');
     await waitForHud(page);
     expect(cockpit).toBeLessThan(await page.evaluate(() => window.__FWG__.cameraRadius));
 
@@ -367,23 +371,77 @@ test.describe('racing', () => {
     expect(errors).toEqual([]);
   });
 
-  test('the street circuit is a flat 2D race', async ({ page }) => {
+  test('the street circuit is an isometric race', async ({ page }) => {
     await page.goto('/?net=broadcast&autojoin=1&room=e2e-street&mode=street&bots=2&name=Racer');
     await waitForHud(page);
 
-    expect(await page.evaluate(() => window.__FWG__.view)).toBe('topdown');
+    // Isometric rather than top-down: a fixed overhead camera inverts steering
+    // whenever the car drives back toward it, which is half of any lap.
+    expect(await page.evaluate(() => window.__FWG__.view)).toBe('iso');
     expect(await page.evaluate(() => window.__FWG__.orthographic)).toBe(true);
     await expect(page.getByTestId('race-lap')).toContainText('/5');
   });
 
+  test('the isometric camera swings around behind a car', async ({ page }) => {
+    // The whole reason iso is a supported driving view and top-down is not. A
+    // fixed diagonal means "steer left" looks like right whenever the nose is
+    // pointed back at the camera; chasing the heading keeps the two agreeing.
+    await page.goto(
+      '/?net=broadcast&autojoin=1&room=e2e-isochase&mode=grandprix&name=Driver&view=iso',
+    );
+    await waitForHud(page);
+    await expect
+      .poll(() => page.evaluate(() => window.__FWG__.tick), { timeout: 30_000 })
+      .toBeGreaterThan(90);
+
+    const orbit = () => page.evaluate(() => window.__FWG__.cameraAlpha);
+    const before = await orbit();
+
+    // Drive round a corner. The camera has to have moved with it.
+    await page.keyboard.down('KeyW');
+    await page.keyboard.down('KeyD');
+    await page.waitForTimeout(2500);
+    await page.keyboard.up('KeyD');
+    await page.keyboard.up('KeyW');
+
+    const after = await orbit();
+    const swung = Math.abs(Math.atan2(Math.sin(after - before), Math.cos(after - before)));
+    expect(swung).toBeGreaterThan(0.3);
+  });
+
+  test('a camera on foot stays put in isometric', async ({ page }) => {
+    // The counterpart: on foot the stick is already rotated by the camera, so
+    // a fixed diagonal is correct and a rotating world would just be
+    // disorienting. Only a car gets the chase.
+    await page.goto('/?net=broadcast&autojoin=1&room=e2e-isofoot&mode=tag&name=Runner&view=iso');
+    await waitForHud(page);
+    await expect
+      .poll(() => page.evaluate(() => window.__FWG__.tick), { timeout: 30_000 })
+      .toBeGreaterThan(90);
+
+    const before = await page.evaluate(() => window.__FWG__.cameraAlpha);
+    await page.keyboard.down('KeyW');
+    await page.waitForTimeout(1500);
+    await page.keyboard.up('KeyW');
+    const after = await page.evaluate(() => window.__FWG__.cameraAlpha);
+
+    expect(Math.abs(after - before)).toBeLessThan(0.05);
+  });
+
   test('a car sees further ahead than a runner does', async ({ page }) => {
     // A camera framed for someone on foot shows a car under a second of road,
-    // which is not enough to plan a corner from.
-    await page.goto('/?net=broadcast&autojoin=1&room=e2e-cam-run&mode=tag&name=Runner');
+    // which is not enough to plan a corner from. Both sides ask for the same
+    // view, because the framing scale is what is under test — comparing two
+    // different cameras would only prove they are different cameras. A cockpit
+    // is deliberately exempt from the widening (pulling the eye back to see
+    // more road just puts it behind its own bodywork), so this asks for iso.
+    await page.goto('/?net=broadcast&autojoin=1&room=e2e-cam-run&mode=tag&name=Runner&view=iso');
     await waitForHud(page);
     const onFoot = await page.evaluate(() => window.__FWG__.cameraRadius);
 
-    await page.goto('/?net=broadcast&autojoin=1&room=e2e-cam-car&mode=grandprix&name=Driver');
+    await page.goto(
+      '/?net=broadcast&autojoin=1&room=e2e-cam-car&mode=grandprix&name=Driver&view=iso',
+    );
     await waitForHud(page);
     const driving = await page.evaluate(() => window.__FWG__.cameraRadius);
 

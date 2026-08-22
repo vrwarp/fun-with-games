@@ -3,6 +3,7 @@ import {
   GAME_MODES,
   VIEW_IDS,
   VIEW_LABELS,
+  viewsFor,
   isGameModeId,
   type GameModeId,
   type ModeView,
@@ -114,7 +115,12 @@ export class Lobby {
     this.#modeTagline = document.createElement('span');
     this.#modeTagline.className = 'lobby__mode-tagline';
     this.#modeTagline.dataset['testid'] = 'mode-tagline';
-    this.#modeSelect.addEventListener('change', () => this.#refreshTagline());
+    this.#modeSelect.addEventListener('change', () => {
+      this.#refreshTagline();
+      // Modes disagree about which cameras suit them, so the list has to
+      // follow the mode rather than being built once and left.
+      this.#refreshViews();
+    });
     modeField.append(modeLabel, this.#modeSelect, this.#modeTagline);
 
     const viewField = document.createElement('label');
@@ -129,15 +135,10 @@ export class Lobby {
     auto.value = '';
     auto.textContent = 'Mode default';
     this.#viewSelect.append(auto);
-    for (const id of VIEW_IDS) {
-      const option = document.createElement('option');
-      option.value = id;
-      option.textContent = VIEW_LABELS[id];
-      this.#viewSelect.append(option);
-    }
     this.#viewSelect.value = defaults.view ?? '';
     viewField.append(viewLabel, this.#viewSelect);
     this.#refreshTagline();
+    this.#refreshViews();
 
     this.#colorInput = document.createElement('input');
     this.#colorInput.type = 'hidden';
@@ -221,6 +222,31 @@ export class Lobby {
   #refreshTagline(): void {
     const mode = GAME_MODES.find((entry) => entry.id === this.#modeSelect.value);
     this.#modeTagline.textContent = mode?.tagline ?? '';
+  }
+
+  /**
+   * Rebuilds the camera list for the selected mode.
+   *
+   * "Mode default" always leads, because most players want the framing the
+   * mode was designed for and should not have to know what that is.
+   */
+  #refreshViews(): void {
+    const mode = GAME_MODES.find((entry) => entry.id === this.#modeSelect.value);
+    const chosen = VIEW_IDS.find((id) => id === this.#viewSelect.value);
+    this.#viewSelect.replaceChildren();
+
+    const auto = document.createElement('option');
+    auto.value = '';
+    auto.textContent = 'Mode default';
+    this.#viewSelect.append(auto);
+
+    for (const id of viewsFor(mode?.view ?? 'follow', chosen)) {
+      const option = document.createElement('option');
+      option.value = id;
+      option.textContent = VIEW_LABELS[id];
+      this.#viewSelect.append(option);
+    }
+    this.#viewSelect.value = chosen ?? '';
   }
 
   #submit(): void {

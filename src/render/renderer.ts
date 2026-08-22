@@ -25,6 +25,7 @@ import { KitViews } from './kitviews.js';
 import { TrackView } from './trackview.js';
 import {
   applyView,
+  viewFollowsHeading,
   viewSpec,
   type EyeSpec,
   type ViewMode,
@@ -196,7 +197,7 @@ export class Renderer {
         this.camera.target.copyFrom(this.#cameraTarget);
       }
 
-      if (local && spec.autoFollow) {
+      if (local && viewFollowsHeading(this.#view, this.#config.vehicle.enabled)) {
         this.#followHeading(local.x, local.z, local.heading, deltaSeconds);
       }
     }
@@ -254,6 +255,19 @@ export class Renderer {
   }
 
   // -------------------------------------------------------------- internals
+
+  /**
+   * Which walls to leave undrawn for a view.
+   *
+   * A fixed camera hides the two walls standing between it and the game. A
+   * camera that chases a heading orbits, so it has no stable "near" wall and
+   * hiding any of them would open a hole in the arena from three quarters of
+   * the angles it passes through.
+   */
+  #hiddenWallsFor(view: ViewMode): Set<WallSide> {
+    if (viewFollowsHeading(view, this.#config.vehicle.enabled)) return new Set<WallSide>();
+    return new Set<WallSide>(viewSpec(view).hiddenWalls);
+  }
 
   /**
    * Swings the camera around behind the direction of travel.
@@ -405,7 +419,7 @@ export class Renderer {
     this.#view = view;
     const spec = viewSpec(view);
 
-    const hidden = new Set<WallSide>(spec.hiddenWalls);
+    const hidden = this.#hiddenWallsFor(view);
     for (const [side, wall] of this.#walls) wall.setEnabled(!hidden.has(side));
 
     this.camera.detachControl();
@@ -491,7 +505,7 @@ export class Renderer {
 
     const wallHeight = 2.5;
     const wallThickness = 0.6;
-    const hidden = new Set<WallSide>(viewSpec(this.#view).hiddenWalls);
+    const hidden = this.#hiddenWallsFor(this.#view);
     const allWalls: Array<{ w: number; d: number; x: number; z: number; side: WallSide }> = [
       {
         w: width + wallThickness * 2,

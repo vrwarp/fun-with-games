@@ -25,8 +25,9 @@ rules below intact even when a shortcut would be quicker.
 >
 > **2D and 2.5D are already covered.** `src/sim` is a _plane_ — it has no
 > camera and no perspective — so 2D is the native model, not a port. Add
-> `&view=topdown`, `&view=iso` or `&view=side` (optionally `&sprites=1`) to
-> ANY mode's URL. Do not write a second engine for 2D; change the view.
+> `&view=iso` (or the deprecated `&view=topdown` / `&view=side`), optionally
+> with `&sprites=1`, to ANY mode's URL. Do not write a second engine for 2D;
+> change the view.
 
 ---
 
@@ -36,15 +37,15 @@ A peer-to-peer arena engine with a library of composable game systems, playable
 in 3D, 2.5D or 2D, on foot or in a car. The default mode is a shard-collecting
 sandbox; fifteen more modes ship with it.
 
-| Concern    | Choice                                                                                      |
-| ---------- | ------------------------------------------------------------------------------------------- |
-| Rendering  | Babylon.js 9 (`@babylonjs/core`, deep imports); 3D, isometric, top-down and side views      |
-| Networking | [Trystero](https://github.com/dmotz/trystero) — WebRTC, decentralized signalling over Nostr |
-| Authority  | Host-authoritative, host _elected_ (lowest peer id), auto-migrating                         |
-| Build      | Vite 7 + TypeScript 5.9 (strict, `noUncheckedIndexedAccess`)                                |
-| Tests      | Vitest (headless sim + net) and Playwright (browser)                                        |
-| Deploy     | GitHub Pages, on push to `main`                                                             |
-| Targets    | Desktop **and mobile browsers** — see §7, this is a hard constraint                         |
+| Concern    | Choice                                                                                             |
+| ---------- | -------------------------------------------------------------------------------------------------- |
+| Rendering  | Babylon.js 9 (`@babylonjs/core`, deep imports); cockpit and isometric, plus three deprecated views |
+| Networking | [Trystero](https://github.com/dmotz/trystero) — WebRTC, decentralized signalling over Nostr        |
+| Authority  | Host-authoritative, host _elected_ (lowest peer id), auto-migrating                                |
+| Build      | Vite 7 + TypeScript 5.9 (strict, `noUncheckedIndexedAccess`)                                       |
+| Tests      | Vitest (headless sim + net) and Playwright (browser)                                               |
+| Deploy     | GitHub Pages, on push to `main`                                                                    |
+| Targets    | Desktop **and mobile browsers** — see §7, this is a hard constraint                                |
 
 Read `docs/ARCHITECTURE.md` before your first non-trivial change.
 
@@ -104,8 +105,9 @@ Useful query parameters: `room`, `mode`, `bots`, `view`, `sprites`, `name`,
 `color`, `net=broadcast`, `autojoin=1`, `mute=1`, `log=debug`. The mode is part
 of the transport room name, so peers running different rules never meet;
 `view` and `sprites` are presentation-only and deliberately are NOT, so one
-player can watch a match top-down while another plays it in 3D. Views are
-`follow`, `first` (cockpit), `iso`, `topdown` and `side`.
+player can watch a match isometric while another plays it from the cockpit.
+The supported views are `first` (cockpit) and `iso`; `follow`, `topdown` and
+`side` still work but are deprecated — see §7.
 
 **None of the player-facing ones are URL-only.** Room, mode, name, colour and
 camera are in the lobby; camera, sprites, sound and bots are in the in-game
@@ -344,7 +346,8 @@ What this means in practice:
 
 - **Every action needs a touch affordance.** Keyboard bindings are an
   addition, never the only way in. `src/render/touch.ts` owns the on-screen
-  thumbstick and `src/render/buttons.ts` the on-screen action buttons (shown
+  thumbstick, `src/render/driving.ts` the steering track and pedals a car gets
+  instead, and `src/render/buttons.ts` the on-screen action buttons (shown
   only in modes that use them — `usesPrimaryAction` in the mode metadata);
   `mergeIntents()` in `src/render/input.ts` combines devices, so a new
   control means adding a source, not branching on device type.
@@ -353,10 +356,32 @@ What this means in practice:
   "away from the camera" — correct for something you steer like a cursor, and
   correct in every view. A car is not aimed, so with `vehicle.enabled` the two
   axes are read raw as **steering (`moveX`) and throttle (`moveZ`) in the
-  car's own frame**. That is what makes driving identical in all five views
-  rather than depending on where the camera is, and it is why a chase camera's
-  own lag cannot feed back into the steering. `main.ts` chooses by passing the
-  camera yaw or not; the devices below it are unchanged.
+  car's own frame**. That is what makes driving identical in every view rather
+  than depending on where the camera is, and it is why a chase camera's own lag
+  cannot feed back into the steering. `main.ts` chooses by passing the camera
+  yaw or not; the devices below it are unchanged.
+- **Two models means two devices, not one device read two ways.** A person is
+  walked with one thumb: "where I want to go" is a single idea and belongs on a
+  single stick. A car is two ideas — how much lock, how much speed — and a
+  stick cannot express them independently, because holding a steering angle
+  while lifting off means pinning one thumb to a diagonal and keeping it there.
+  So `vehicle.enabled` swaps the stick for a **steering track under one thumb
+  and throttle/brake pedals under the other**, and the mode's action buttons
+  ride in the pedal column rather than fighting it for the corner. Steering is
+  horizontal-only (a thumb pivots on a knuckle, so it travels in an arc, and
+  reading the vertical component would open the throttle every time you
+  steered) and re-centres on release.
+- **A fixed camera is a broken control for a car.** Steering lives in the car's
+  frame, so a camera that never moves inverts it every time the car drives back
+  toward the viewer: press left, watch it go right. `first` and `iso` are
+  therefore the two supported driving views — the cockpit is bolted to the car,
+  and `viewFollowsHeading()` makes the isometric camera orbit behind a car
+  while leaving it fixed on foot (where the stick is already camera-relative
+  and a rotating world would only be disorienting). `follow`, `topdown` and
+  `side` are **deprecated** (`DEPRECATED_VIEWS`): still valid in `?view=`, so
+  shared links keep resolving, and still offered by a mode that is defined by
+  one — a side-scroller is not a side-scroller from any other angle — but no
+  longer promoted and no longer designed around.
 - **Both input paths must produce the same `InputIntent`.** Nothing below
   `src/render` knows or cares how the player moved — the simulation, the wire
   protocol and prediction are all device-agnostic. Keep it that way; do not

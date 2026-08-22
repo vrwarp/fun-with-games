@@ -11,9 +11,10 @@ import { createTrysteroTransport } from './net/transports/trystero.js';
 import { Mesh } from '@babylonjs/core/Meshes/mesh.js';
 import { Renderer } from './render/renderer.js';
 import { isViewMode, viewSpec, type ViewMode } from './render/views.js';
-import { KeyboardInput, mergeIntents } from './render/input.js';
+import { IDLE_INTENT, KeyboardInput, mergeIntents } from './render/input.js';
 import { TouchInput } from './render/touch.js';
 import { TouchButtons } from './render/buttons.js';
+import { TouchDriving } from './render/driving.js';
 import { GameAudio } from './render/audio.js';
 import { keepScreenAwake, tapFeedback } from './render/device.js';
 import { loadManifest, loadModel } from './render/assets.js';
@@ -225,6 +226,7 @@ async function launch(app: HTMLElement, options: LaunchOptions): Promise<void> {
   app.append(utility);
 
   const settings = new Settings(utility, {
+    defaultView: mode.view ?? 'follow',
     initial: {
       view: resolvedView,
       sprites: options.sprites ?? mode.sprites ?? false,
@@ -249,14 +251,23 @@ async function launch(app: HTMLElement, options: LaunchOptions): Promise<void> {
   const input = new KeyboardInput(window);
   input.attach();
 
-  // Mobile is a supported target, so the game ships with an on-screen stick.
-  // It reveals itself on touch devices and stays out of the way otherwise.
-  const touch = new TouchInput(app);
-  touch.attach();
+  // Mobile is a supported target, so the game ships with on-screen controls,
+  // and there are two sets because there are two things to control.
+  //
+  // On foot, one stick: the thumb points where the player wants to go, which
+  // is a single idea and belongs on a single control. A car is two ideas —
+  // how much lock, and how much speed — and asking one thumb to hold both at
+  // once on a diagonal is what made driving on a phone feel vague. So a car
+  // gets a steering track under one thumb and pedals under the other.
+  const driving = config.vehicle.enabled ? new TouchDriving(app) : null;
+  const touch = driving ? null : new TouchInput(app);
+  driving?.attach();
+  touch?.attach();
 
   // Action buttons appear only in modes that use them — a fire button with
-  // nothing to fire is just thumb clutter.
-  const buttons = new TouchButtons(app, {
+  // nothing to fire is just thumb clutter. In a car they ride in the pedal
+  // column rather than claiming the same corner the throttle is in.
+  const buttons = new TouchButtons(driving?.actions ?? app, {
     primary: mode.usesPrimaryAction,
     secondary: mode.usesSecondaryAction ?? false,
     // Conditional spread rather than `label: mode.primaryLabel`:
@@ -308,7 +319,10 @@ async function launch(app: HTMLElement, options: LaunchOptions): Promise<void> {
     // no yaw is what keeps `moveX`/`moveZ` as the raw right/forward axes —
     // and what makes driving identical in all five views.
     const intentYaw = config.vehicle.enabled ? 0 : yaw;
-    const intent = mergeIntents(touch.read(intentYaw), buttons.read(), input.read(intentYaw));
+    // Exactly one of the two touch devices exists, chosen by the mode; the
+    // fallback is only here so neither branch needs an assertion.
+    const stick = driving?.read() ?? touch?.read(intentYaw) ?? IDLE_INTENT;
+    const intent = mergeIntents(stick, buttons.read(), input.read(intentYaw));
     session.setIntent(intent.moveX, intent.moveZ, intent.sprint, intent.buttons);
     session.update(now);
 
@@ -349,7 +363,8 @@ async function launch(app: HTMLElement, options: LaunchOptions): Promise<void> {
     window.removeEventListener('orientationchange', onOrientationChange);
     releaseWakeLock();
     input.detach();
-    touch.dispose();
+    touch?.dispose();
+    driving?.dispose();
     buttons.dispose();
     audio.dispose();
     announcer.dispose();

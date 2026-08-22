@@ -1,4 +1,4 @@
-import { VIEW_IDS, VIEW_LABELS, type ModeView } from '../shared/modes.js';
+import { VIEW_IDS, VIEW_LABELS, viewsFor, type ModeView } from '../shared/modes.js';
 
 export interface SettingsValues {
   view: ModeView;
@@ -9,6 +9,11 @@ export interface SettingsValues {
 export interface SettingsOptions {
   /** Current values to open with. */
   readonly initial: SettingsValues;
+  /**
+   * The view this mode is designed around, which decides what the camera
+   * picker offers alongside the supported pair.
+   */
+  readonly defaultView: ModeView;
   /** Called with the complete set whenever any one of them changes. */
   readonly onChange: (values: SettingsValues) => void;
   /** Host-only bot controls. Omit both to leave the section out. */
@@ -103,7 +108,7 @@ export class Settings {
     const camera = document.createElement('select');
     camera.className = 'settings__select';
     camera.dataset['testid'] = 'settings-view';
-    for (const id of VIEW_IDS) {
+    for (const id of viewsFor(options.defaultView, this.#values.view)) {
       const option = document.createElement('option');
       option.value = id;
       option.textContent = VIEW_LABELS[id];

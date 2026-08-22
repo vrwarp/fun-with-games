@@ -70,6 +70,7 @@ body {
 .hud,
 .touch,
 .touch-buttons,
+.driving,
 .toasts,
 .lobby__join,
 .lobby__swatch,
@@ -714,6 +715,128 @@ body {
   background: rgba(76, 201, 240, 0.28);
 }
 
+/* ------------------------------------------------------------- driving */
+
+/* A car gets two controls on two thumbs instead of one stick doing both jobs.
+   The track spans the bottom-left so a thumb can reach full lock without
+   lifting off, and the pedals sit under the other thumb on the right. */
+.driving {
+  position: absolute;
+  inset: auto 0 0 0;
+  z-index: 5;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0 max(1rem, env(safe-area-inset-right)) max(1.25rem, env(safe-area-inset-bottom))
+    max(1rem, env(safe-area-inset-left));
+  /* Only the controls themselves take input; the gap between them is scenery
+     and a touch there belongs to the camera. */
+  pointer-events: none;
+}
+
+.driving[hidden] {
+  display: none;
+}
+
+.driving__track {
+  position: relative;
+  flex: 1 1 auto;
+  max-width: 14rem;
+  height: 3.75rem;
+  border-radius: 1.9rem;
+  /* Same contrast rules as the thumbstick: this sits over arbitrary game
+     content and has to stay readable against a pale wall sliding under it. */
+  background: rgba(10, 12, 18, 0.62);
+  border: 2px solid rgba(255, 255, 255, 0.22);
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.45),
+    0 6px 18px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(6px);
+  display: grid;
+  place-items: center;
+  touch-action: none;
+  pointer-events: auto;
+}
+
+/* A centre mark, so "straight" is somewhere you can see rather than somewhere
+   you have to feel for. */
+.driving__track::before {
+  content: '';
+  position: absolute;
+  width: 2px;
+  height: 1.1rem;
+  border-radius: 1px;
+  background: rgba(255, 255, 255, 0.28);
+}
+
+.driving__knob {
+  width: 3rem;
+  height: 3rem;
+  border-radius: 50%;
+  background: rgba(240, 243, 250, 0.95);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+  pointer-events: none;
+}
+
+.driving__pedals {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.6rem;
+  /* Lifted clear of the utility bar (settings + credits), which owns the
+     bottom-right corner and sits above this layer. */
+  margin-bottom: 3.25rem;
+  pointer-events: none;
+}
+
+/* The mode's own buttons ride at the top of the pedal column rather than
+   claiming the corner for themselves. */
+.driving__actions {
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.driving .touch-buttons {
+  position: static;
+  bottom: auto;
+  right: auto;
+}
+
+.driving__pedal {
+  width: 5rem;
+  height: 3.4rem;
+  border-radius: 1.1rem;
+  font-size: 0.95rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  color: var(--text);
+  background: rgba(10, 12, 18, 0.62);
+  border: 2px solid rgba(255, 255, 255, 0.22);
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.45),
+    0 6px 18px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(6px);
+  touch-action: none;
+  pointer-events: auto;
+}
+
+/* The throttle is where the thumb lives, so it is the bigger target. */
+.driving__pedal--throttle {
+  height: 4.4rem;
+}
+
+.driving__pedal--brake.is-held {
+  border-color: #ff6b6b;
+  background: rgba(255, 107, 107, 0.3);
+}
+
+.driving__pedal--throttle.is-held {
+  border-color: var(--accent);
+  background: rgba(76, 201, 240, 0.28);
+}
+
 /* -------------------------------------------------------------- settings */
 
 /* The utility bar: settings and credits, side by side along the bottom edge,
@@ -1110,6 +1233,23 @@ body {
 
 /* Landscape phones are short rather than narrow: reclaim vertical space. */
 @media (max-height: 26rem) {
+  .driving__track {
+    height: 3rem;
+  }
+
+  .driving__knob {
+    width: 2.4rem;
+    height: 2.4rem;
+  }
+
+  .driving__pedal {
+    height: 2.8rem;
+  }
+
+  .driving__pedal--throttle {
+    height: 3.5rem;
+  }
+
   .touch__base {
     width: 5.5rem;
     height: 5.5rem;

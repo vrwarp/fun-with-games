@@ -21,6 +21,8 @@ const ZONE_BASE_COLORS: Record<RenderZone['kind'], string> = {
   goal: '#9aa0a6',
   base: '#9aa0a6',
   checkpoint: '#4cc9f0',
+  drs: '#06d6a0',
+  pit: '#adb5bd',
 };
 
 /**

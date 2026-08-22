@@ -21,9 +21,26 @@ const config = makeSimConfig({
   projectiles: { enabled: true, cooldownTicks: 4 },
   tag: { enabled: true },
   ball: { enabled: true },
+  // Cars, a circuit and the racing rules. The combination is nonsense as a
+  // game — that is fine and rather the point: this config exists to make every
+  // system write state, not to be playable.
+  vehicle: { enabled: true },
+  track: { enabled: true, halfWidth: 2 },
+  trackPath: [
+    { x: 0, z: -6 },
+    { x: 7, z: -6 },
+    { x: 7, z: 6 },
+    { x: -7, z: 6 },
+    { x: -7, z: -6 },
+  ],
+  race: { enabled: true, tyreStintTicks: 300, drsGapSeconds: 1 },
   zones: [
     { kind: 'hill', x: 0, z: 0, radius: 3, team: -1, order: 0 },
     { kind: 'goal', x: -8, z: 0, radius: 2, team: 0, order: 0 },
+    { kind: 'checkpoint', x: 0, z: -6, radius: 3, team: -1, order: 0 },
+    { kind: 'checkpoint', x: 0, z: 6, radius: 3, team: -1, order: 1 },
+    { kind: 'drs', x: 4, z: -6, radius: 2, team: -1, order: 0 },
+    { kind: 'pit', x: 0, z: -1, radius: 2, team: -1, order: 0 },
   ],
   items: [{ kind: 'crown', homeX: 3, homeZ: 3, team: -1 }],
   pickupWeights: { score: 0.5, speed: 0.2, shield: 0.2, heal: 0.1 },

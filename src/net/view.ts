@@ -75,7 +75,7 @@ export interface RenderProjectile {
 /** A zone's static geometry merged with its live ownership. */
 export interface RenderZone {
   id: number;
-  kind: 'hill' | 'goal' | 'base' | 'checkpoint';
+  kind: 'hill' | 'goal' | 'base' | 'checkpoint' | 'drs' | 'pit';
   x: number;
   z: number;
   radius: number;

@@ -105,9 +105,13 @@ export interface BallConfig {
  *   team defending this goal).
  * - `base`: where `team` delivers carried flags / where its flags live.
  * - `checkpoint`: race gates, crossed in `order` (0, 1, 2, …).
+ * - `drs`: a stretch where a car close enough to the one ahead may open its
+ *   wing (`race.drsGapSeconds`). Purely a trigger area — see `systems/race.ts`.
+ * - `pit`: the pit lane. Speed is limited to `race.pitSpeedLimit` inside it
+ *   and tyres are refitted, so it trades lap time for grip.
  */
 export interface ZoneSpec {
-  readonly kind: 'hill' | 'goal' | 'base' | 'checkpoint';
+  readonly kind: 'hill' | 'goal' | 'base' | 'checkpoint' | 'drs' | 'pit';
   readonly x: number;
   readonly z: number;
   readonly radius: number;
@@ -204,6 +208,110 @@ export interface PlatformSpec {
   readonly top: number;
 }
 
+/**
+ * Car handling: what turns a free-floating avatar into something that has to
+ * be driven.
+ *
+ * Off by default, and when off not one line of it runs — `integratePlayer`
+ * keeps the omnidirectional model every other mode uses. Switched on, the
+ * differences are the ones that make a car a car: you go where you are
+ * pointed (no strafing), turning takes time and gets harder with speed, and
+ * momentum carries you wide when you ask for too much.
+ *
+ * Top speed is `playerMaxSpeed`, shared with everything else, so effects
+ * (`speed` pickups, DRS, the slipstream, worn tyres) scale a car exactly the
+ * way they scale a runner.
+ */
+export interface VehicleConfig {
+  readonly enabled: boolean;
+  /** Acceleration at full throttle, world units/second². */
+  readonly engineAccel: number;
+  /** Deceleration under braking, world units/second². */
+  readonly brakeDecel: number;
+  /** Engine braking when the throttle is released, world units/second². */
+  readonly coastDecel: number;
+  /** Top reverse speed, as a fraction of the forward top speed. */
+  readonly reverseFraction: number;
+  /** Steering rate at a standstill, radians/second. */
+  readonly steerRate: number;
+  /**
+   * Fraction of steering authority lost at top speed, in [0, 1).
+   *
+   * This is the understeer knob: 0 corners like a shopping trolley at any
+   * speed, 0.6 means a flat-out car turns at 40% of its parked rate and the
+   * driver has to brake for the corner.
+   */
+  readonly steerFalloff: number;
+  /**
+   * How quickly sideways velocity is scrubbed off, per second. High is
+   * go-kart grip; low slides. Multiplied by the surface and the tyres.
+   */
+  readonly grip: number;
+  /** Which action button brakes. */
+  readonly brakeButton: 'primary' | 'secondary' | 'none';
+}
+
+/** One point on a circuit's centreline. Order defines the racing direction. */
+export interface TrackPoint {
+  readonly x: number;
+  readonly z: number;
+}
+
+/**
+ * The tarmac. `trackPath` holds the closed centreline; this holds how wide it
+ * is and what happens when you leave it.
+ *
+ * Track limits are grass, not walls — see `src/sim/track.ts` for why.
+ */
+export interface TrackConfig {
+  readonly enabled: boolean;
+  /** Half the road width, in world units. */
+  readonly halfWidth: number;
+  /** Top-speed multiplier once off the tarmac. */
+  readonly offTrackSpeed: number;
+  /** Grip multiplier once off the tarmac. */
+  readonly offTrackGrip: number;
+  /** Cars per row on the starting grid. 2 is the Formula-style staggered grid. */
+  readonly gridColumns: number;
+  /** Spacing between grid rows, in world units. */
+  readonly gridRowSpacing: number;
+}
+
+/**
+ * Racing rules layered on top of the circuit: the tow, the overtaking aid,
+ * the tyres and the pit lane.
+ *
+ * Every one of these is expressed as a timed effect (`tow`, `drs`, `drsok`,
+ * `tyre`) rather than as new player fields, so none of them costs a snapshot
+ * field, a protocol change or a checksum line.
+ */
+export interface RaceConfig {
+  readonly enabled: boolean;
+  /** How far back the tow reaches, in world units. 0 disables it. */
+  readonly slipstreamRange: number;
+  /** Top-speed multiplier while in another car's dirty air. */
+  readonly slipstreamMultiplier: number;
+  /**
+   * Gap to the car ahead, in seconds, that arms the wing. 0 disables DRS.
+   * Measured along the centreline, so it is a real racing gap, not a radius.
+   */
+  readonly drsGapSeconds: number;
+  /** Top-speed multiplier while the wing is open. */
+  readonly drsMultiplier: number;
+  /** How long one activation lasts. */
+  readonly drsTicks: number;
+  /** Which action button opens the wing. */
+  readonly drsButton: 'primary' | 'secondary' | 'none';
+  /** Length of a set of tyres, in ticks. 0 disables wear entirely. */
+  readonly tyreStintTicks: number;
+  /** Grip multiplier on completely worn tyres. */
+  readonly tyreWornGrip: number;
+  /** Top-speed multiplier on completely worn tyres. */
+  readonly tyreWornSpeed: number;
+  /** Speed limit inside a `pit` zone, in world units/second. */
+  readonly pitSpeedLimit: number;
+}
+
 /** Spawn weights per pickup kind; 0 disables a kind. */
 export type PickupWeights = Readonly<Record<PickupKind, number>>;
 
@@ -248,6 +356,11 @@ export interface SimConfig {
   readonly obstacleMaxHalfExtent: number;
 
   // ---- game kit sections (each system reads exactly one) -------------------
+  readonly vehicle: VehicleConfig;
+  readonly track: TrackConfig;
+  /** The circuit's closed centreline. Empty in every non-racing mode. */
+  readonly trackPath: readonly TrackPoint[];
+  readonly race: RaceConfig;
   readonly platform: PlatformConfig;
   /** Hand-placed boxes appended to the generated obstacles. */
   readonly platforms: readonly PlatformSpec[];
@@ -294,6 +407,39 @@ export const DEFAULT_SIM_CONFIG: SimConfig = {
   obstacleMinHalfExtent: 1,
   obstacleMaxHalfExtent: 3,
 
+  vehicle: {
+    enabled: false,
+    engineAccel: 20,
+    brakeDecel: 34,
+    coastDecel: 12,
+    reverseFraction: 0.35,
+    steerRate: 3.2,
+    steerFalloff: 0.55,
+    grip: 7,
+    brakeButton: 'secondary',
+  },
+  track: {
+    enabled: false,
+    halfWidth: 6,
+    offTrackSpeed: 0.45,
+    offTrackGrip: 0.35,
+    gridColumns: 2,
+    gridRowSpacing: 5,
+  },
+  trackPath: [],
+  race: {
+    enabled: false,
+    slipstreamRange: 9,
+    slipstreamMultiplier: 1.12,
+    drsGapSeconds: 1,
+    drsMultiplier: 1.22,
+    drsTicks: 60,
+    drsButton: 'primary',
+    tyreStintTicks: 0,
+    tyreWornGrip: 0.6,
+    tyreWornSpeed: 0.88,
+    pitSpeedLimit: 8,
+  },
   platform: {
     enabled: false,
     gravity: 26,
@@ -390,6 +536,9 @@ export interface SimConfigOverrides extends Partial<
   Omit<
     SimConfig,
     | 'pickupWeights'
+    | 'vehicle'
+    | 'track'
+    | 'race'
     | 'platform'
     | 'phases'
     | 'teams'
@@ -404,6 +553,9 @@ export interface SimConfigOverrides extends Partial<
   >
 > {
   readonly pickupWeights?: Partial<PickupWeights>;
+  readonly vehicle?: Partial<VehicleConfig>;
+  readonly track?: Partial<TrackConfig>;
+  readonly race?: Partial<RaceConfig>;
   readonly platform?: Partial<PlatformConfig>;
   readonly phases?: Partial<PhasesConfig>;
   readonly teams?: Partial<TeamsConfig>;
@@ -428,6 +580,10 @@ export function makeSimConfig(overrides: SimConfigOverrides = {}): SimConfig {
     ...base,
     ...overrides,
     pickupWeights: { ...base.pickupWeights, ...overrides.pickupWeights },
+    vehicle: { ...base.vehicle, ...overrides.vehicle },
+    track: { ...base.track, ...overrides.track },
+    trackPath: overrides.trackPath ?? base.trackPath,
+    race: { ...base.race, ...overrides.race },
     platform: { ...base.platform, ...overrides.platform },
     platforms: overrides.platforms ?? base.platforms,
     phases: { ...base.phases, ...overrides.phases },

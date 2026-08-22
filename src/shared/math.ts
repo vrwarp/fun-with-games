@@ -13,13 +13,24 @@ export function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * t;
 }
 
-/** Shortest-path interpolation between two angles in radians. */
-export function lerpAngle(a: number, b: number, t: number): number {
+/**
+ * Signed shortest turn from angle `a` to angle `b`, in `(-pi, pi]`.
+ *
+ * "Turn left or right?" is the whole question a steering system asks, and
+ * getting it wrong by a lap of the circle is the classic way to make something
+ * spin the long way round.
+ */
+export function angleDelta(a: number, b: number): number {
   const TAU = Math.PI * 2;
   let delta = (b - a) % TAU;
   if (delta > Math.PI) delta -= TAU;
   if (delta < -Math.PI) delta += TAU;
-  return a + delta * t;
+  return delta;
+}
+
+/** Shortest-path interpolation between two angles in radians. */
+export function lerpAngle(a: number, b: number, t: number): number {
+  return a + angleDelta(a, b) * t;
 }
 
 export function length2(x: number, y: number): number {

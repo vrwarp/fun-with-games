@@ -1,6 +1,7 @@
-import { distance2, normalize2 } from '../../shared/math.js';
+import { angleDelta, clamp, distance2, normalize2 } from '../../shared/math.js';
 import { hashStringToSeed } from '../rng.js';
 import type { StepContext } from '../step.js';
+import { hasTrack, sampleTrack, trackPoseAt } from '../track.js';
 import {
   BUTTON_PRIMARY,
   BUTTON_SECONDARY,
@@ -45,14 +46,29 @@ export function computeBotInput(ctx: StepContext, bot: PlayerState): PlayerInput
   if (ctx.config.platform.enabled && wantsToJump(ctx, bot, decision.target)) {
     buttons |= ctx.config.platform.jumpButton === 'secondary' ? BUTTON_SECONDARY : BUTTON_PRIMARY;
   }
+  if (decision.brake) buttons |= actionBit(ctx.config.vehicle.brakeButton);
+  // Bots use the wing whenever the race hands it to them, so a solo player
+  // sees DRS working from the other side of it too.
+  if (hasEffect(bot, 'drsok', ctx.tick)) buttons |= actionBit(ctx.config.race.drsButton);
+
+  // The stick's magnitude is throttle to a car and speed to a runner; either
+  // way a decision that asks for less gets less.
+  const throttle = decision.throttle ?? 1;
 
   return {
     seq: ctx.tick,
-    moveX: move.x,
-    moveZ: move.z,
+    moveX: move.x * throttle,
+    moveZ: move.z * throttle,
     sprint: decision.sprint,
     buttons,
   };
+}
+
+/** Bit for a configured button name; 0 when the action is unbound. */
+function actionBit(name: 'primary' | 'secondary' | 'none'): number {
+  if (name === 'primary') return BUTTON_PRIMARY;
+  if (name === 'secondary') return BUTTON_SECONDARY;
+  return 0;
 }
 
 /**
@@ -99,6 +115,10 @@ interface Decision {
   target: { x: number; z: number } | null;
   sprint: boolean;
   fire: boolean;
+  /** Stick deflection in [0, 1]; for a car this is the throttle. Default 1. */
+  throttle?: number;
+  /** Stand on the brake pedal. Only meaningful with `vehicle.enabled`. */
+  brake?: boolean;
 }
 
 function decide(ctx: StepContext, bot: PlayerState): Decision {
@@ -163,6 +183,9 @@ function decide(ctx: StepContext, bot: PlayerState): Decision {
     return { target: { x: ball.x, z: ball.z }, sprint: true, fire: false };
   }
 
+  // --- Circuit racing: follow the road, and lift for what is coming ---------
+  if (hasTrack(ctx.config)) return drive(ctx, bot);
+
   // --- Race: head for the next checkpoint -----------------------------------
   const nextCheckpoint = ctx.config.zones.find(
     (z) => z.kind === 'checkpoint' && z.order === bot.checkpoint,
@@ -206,6 +229,49 @@ function decide(ctx: StepContext, bot: PlayerState): Decision {
   if (pickup) return { target: pickup, sprint: false, fire: false };
 
   return { target: wanderTarget(ctx, bot), sprint: false, fire: false };
+}
+
+/**
+ * Drives the circuit.
+ *
+ * Aiming at the next checkpoint — which is what every other race mode does —
+ * makes a car cut every corner and spend the lap in the run-off, because a
+ * gate is a point and a corner is an arc. So the target is the road itself, a
+ * speed-dependent distance ahead, and the throttle comes off for however much
+ * the road bends beyond it.
+ *
+ * The bend is measured between two **chords** (here → aim, aim → beyond)
+ * rather than between two segment tangents. A tangent is piecewise constant
+ * along a polyline, so it reports a corner as a step change and a bot reading
+ * it brakes in stutters; a chord rotates smoothly as the car moves, which is
+ * what a driver actually sees coming.
+ */
+function drive(ctx: StepContext, bot: PlayerState): Decision {
+  const path = ctx.config.trackPath;
+  const speed = Math.hypot(bot.vx, bot.vz);
+  // Look further ahead the faster you are going: the distance that matters is
+  // the one you cannot stop inside.
+  const lookahead = Math.max(7, speed * 0.85);
+
+  const here = sampleTrack(path, bot.x, bot.z);
+  const aim = trackPoseAt(path, here.progress + lookahead);
+  const beyond = trackPoseAt(path, here.progress + lookahead * 2);
+
+  const toAim = Math.atan2(aim.x - bot.x, aim.z - bot.z);
+  const onward = Math.atan2(beyond.x - aim.x, beyond.z - aim.z);
+  const bend = Math.abs(angleDelta(toAim, onward));
+
+  const cruising = ctx.config.playerMaxSpeed * ctx.config.bots.speedMultiplier;
+
+  return {
+    target: { x: aim.x, z: aim.z },
+    sprint: true,
+    fire: false,
+    throttle: clamp(1 - bend * 0.55, 0.45, 1),
+    // The pedal, not just the lift: coasting sheds speed far too slowly to
+    // make a hairpin from the end of a straight.
+    brake: bend > 0.6 && speed > cruising * 0.55,
+  };
 }
 
 // ---------------------------------------------------------------------------

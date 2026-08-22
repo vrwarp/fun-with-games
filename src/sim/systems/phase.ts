@@ -1,7 +1,7 @@
 import type { SimConfig } from '../config.js';
 import type { StepContext } from '../step.js';
 import { ROLE_NONE, TEAM_NONE, type PhaseId, type PhaseState } from '../types.js';
-import { spawnPosition } from './arena.js';
+import { spawnHeading, spawnPosition } from './arena.js';
 
 /**
  * The match state machine:
@@ -101,11 +101,16 @@ function resetRound(ctx: StepContext): void {
     player.role = ROLE_NONE;
     player.checkpoint = 0;
     player.lap = 0;
+    player.lapStartTick = 0;
+    player.lastLapTicks = 0;
+    player.bestLapTicks = 0;
     player.effects = {};
     const spawn = spawnPosition(config, index);
     player.x = spawn.x;
     player.z = spawn.z;
     player.y = 0;
+    // Cars line up facing down the road; everyone else keeps facing +Z.
+    player.heading = spawnHeading(config, index);
     player.vx = 0;
     player.vz = 0;
     player.vy = 0;

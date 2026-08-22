@@ -243,6 +243,45 @@ test.describe('on a phone', () => {
     await expect(page.getByTestId('touch-buttons')).toBeHidden();
   });
 
+  test('a car is drivable with one thumb', async ({ page }) => {
+    // Racing is the mode with the most to lose on a phone: it needs a stick
+    // AND two buttons, and none of it can be keyboard-only (CLAUDE.md §7).
+    await page.goto(`/?net=broadcast&autojoin=1&room=${ROOM}-gp&mode=grandprix&name=Driver`);
+    await expect(page.getByTestId('hud')).toBeVisible({ timeout: 30_000 });
+
+    const drs = page.getByTestId('touch-button-primary');
+    const brake = page.getByTestId('touch-button-secondary');
+    await expect(drs).toHaveText('DRS');
+    await expect(brake).toHaveText('Brake');
+
+    for (const button of [drs, brake]) {
+      const box = await button.boundingBox();
+      expect(box?.width ?? 0).toBeGreaterThanOrEqual(44);
+      expect(box?.height ?? 0).toBeGreaterThanOrEqual(44);
+    }
+
+    // The pit board has to fit a phone alongside everything else.
+    const board = page.getByTestId('race-board');
+    await expect(board).toBeVisible();
+    const boardBox = await board.boundingBox();
+    const viewport = page.viewportSize();
+    expect((boardBox?.x ?? 0) + (boardBox?.width ?? 0)).toBeLessThanOrEqual(viewport?.width ?? 0);
+
+    // And the stick alone has to be enough to actually drive.
+    const before = await page.evaluate(() => {
+      const handle = window.__FWG__;
+      return handle.players.find((player) => player.id === handle.selfId);
+    });
+    await holdStick(page, 0, -40, 2500);
+    const after = await page.evaluate(() => {
+      const handle = window.__FWG__;
+      return handle.players.find((player) => player.id === handle.selfId);
+    });
+
+    expect(before).toBeDefined();
+    expect(Math.hypot(after!.x - before!.x, after!.z - before!.z)).toBeGreaterThan(3);
+  });
+
   test('the 2D platformer is playable with a thumb', async ({ page }) => {
     // The whole 2D story has to survive the primary target. Jumping is the
     // one interaction a side-scroller cannot do without, so it needs a real

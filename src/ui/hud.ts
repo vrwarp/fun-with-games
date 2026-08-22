@@ -15,6 +15,14 @@ export interface HudStatus {
 export interface HudOptions {
   /** Mode metadata: title and goal line. Omit for the plain sandbox. */
   mode?: GameModeInfo;
+  /**
+   * Whether this mode is driven rather than walked.
+   *
+   * Passed in from `main.ts` (which holds the `SimConfig`) rather than read
+   * from the mode metadata, so `vehicle.enabled` stays the single source of
+   * truth for the question. It only changes what the keyboard hint says.
+   */
+  drives?: boolean;
   /** When provided (and this peer is host), shows the add/remove bot buttons. */
   onAddBot?: () => void;
   onRemoveBot?: () => void;
@@ -32,6 +40,23 @@ export interface HudOptions {
  * Everything here is driven by `RenderState`, so it works identically on the
  * host and on clients — the HUD never asks the simulation anything directly.
  */
+/**
+ * `m:ss.t` — the way a lap time is read out loud. An unset time is a dash
+ * rather than "0:00.0", which would look like an impossibly fast lap.
+ */
+function formatLapTime(seconds: number): string {
+  if (!(seconds > 0)) return '—:––.–';
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds - minutes * 60;
+  return `${minutes}:${rest.toFixed(1).padStart(4, '0')}`;
+}
+
+/** The scoreboard's right-hand column during a race: the gap, or the lap. */
+function raceRowValue(player: RenderPlayer): string {
+  if (player.position === 1) return `L${player.lap}`;
+  return player.interval > 0 ? `+${player.interval.toFixed(1)}` : '—';
+}
+
 export class Hud {
   readonly root: HTMLElement;
 
@@ -44,14 +69,24 @@ export class Hud {
   #botRow: HTMLElement;
   #teamStrip: HTMLElement;
   #timer: HTMLElement;
+  #race: HTMLElement;
+  #racePosition: HTMLElement;
+  #raceLap: HTMLElement;
+  #raceTime: HTMLElement;
+  #raceBest: HTMLElement;
+  #raceTyres: HTMLElement;
+  #raceTyreFill: HTMLElement;
+  #raceDrs: HTMLElement;
   #banner: HTMLElement;
   #bannerTitle: HTMLElement;
   #bannerSubtitle: HTMLElement;
   #copyResetTimer: ReturnType<typeof setTimeout> | null = null;
   #mode: GameModeInfo | undefined;
+  #drives: boolean;
 
   constructor(parent: HTMLElement, options: HudOptions = {}) {
     this.#mode = options.mode;
+    this.#drives = options.drives ?? false;
 
     this.root = document.createElement('div');
     this.root.className = 'hud';
@@ -126,7 +161,51 @@ export class Hud {
     this.#timer.dataset['testid'] = 'round-timer';
     this.#timer.hidden = true;
 
-    top.append(this.#teamStrip, this.#timer);
+    // The pit board: everything a driver reads mid-corner, in the order they
+    // read it. Position first — it is the only number that decides anything.
+    this.#race = document.createElement('div');
+    this.#race.className = 'hud__race';
+    this.#race.dataset['testid'] = 'race-board';
+    this.#race.hidden = true;
+
+    const raceTop = document.createElement('div');
+    raceTop.className = 'hud__race-row';
+    this.#racePosition = document.createElement('span');
+    this.#racePosition.className = 'hud__race-pos';
+    this.#racePosition.dataset['testid'] = 'race-position';
+    this.#raceLap = document.createElement('span');
+    this.#raceLap.className = 'hud__race-lap';
+    this.#raceLap.dataset['testid'] = 'race-lap';
+    raceTop.append(this.#racePosition, this.#raceLap);
+
+    const raceTimes = document.createElement('div');
+    raceTimes.className = 'hud__race-row hud__race-row--times';
+    this.#raceTime = document.createElement('span');
+    this.#raceTime.className = 'hud__race-time';
+    this.#raceTime.dataset['testid'] = 'race-laptime';
+    this.#raceBest = document.createElement('span');
+    this.#raceBest.className = 'hud__race-best';
+    this.#raceBest.dataset['testid'] = 'race-best';
+    raceTimes.append(this.#raceTime, this.#raceBest);
+
+    this.#raceTyres = document.createElement('div');
+    this.#raceTyres.className = 'hud__race-row hud__race-row--tyres';
+    this.#raceTyres.hidden = true;
+    const tyreBar = document.createElement('span');
+    tyreBar.className = 'hud__race-tyre';
+    tyreBar.dataset['testid'] = 'race-tyres';
+    this.#raceTyreFill = document.createElement('i');
+    tyreBar.append(this.#raceTyreFill);
+    this.#raceDrs = document.createElement('span');
+    this.#raceDrs.className = 'hud__race-drs';
+    this.#raceDrs.dataset['testid'] = 'race-drs';
+    this.#raceDrs.textContent = 'DRS';
+    this.#raceDrs.hidden = true;
+    this.#raceTyres.append(tyreBar, this.#raceDrs);
+
+    this.#race.append(raceTop, raceTimes, this.#raceTyres);
+
+    top.append(this.#teamStrip, this.#timer, this.#race);
 
     // Centre: the phase banner (countdown numbers, winner screen).
     this.#banner = document.createElement('div');
@@ -141,9 +220,7 @@ export class Hud {
 
     const help = document.createElement('div');
     help.className = 'hud__help';
-    help.innerHTML =
-      '<kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move &nbsp;·&nbsp; ' +
-      '<kbd>Shift</kbd> sprint &nbsp;·&nbsp; <kbd>Space</kbd> action &nbsp;·&nbsp; drag to orbit';
+    help.innerHTML = this.#helpText();
 
     this.root.append(panel, top, this.#banner, help);
     parent.append(this.root);
@@ -154,6 +231,7 @@ export class Hud {
     this.#renderStatus(status);
     this.#renderTeams(state);
     this.#renderTimer(state);
+    this.#renderRace(state, status);
     this.#renderBanner(state, status);
     this.#renderVitals(state, status);
     this.#botRow.hidden = !status.isHost || this.#botRow.childElementCount === 0;
@@ -177,7 +255,13 @@ export class Hud {
   }
 
   #renderScores(state: RenderState, status: HudStatus): void {
-    const ranked = [...state.players].sort((a, b) => b.score - a.score || a.id.localeCompare(b.id));
+    const racing = state.totalLaps > 0;
+    // In a race the standing IS the score, and it is not the same ordering:
+    // two drivers on the same lap are separated by track position, which no
+    // amount of sorting a lap counter will tell you.
+    const ranked = racing
+      ? [...state.players].sort((a, b) => a.position - b.position || a.id.localeCompare(b.id))
+      : [...state.players].sort((a, b) => b.score - a.score || a.id.localeCompare(b.id));
 
     // Rebuild only when the roster changes; otherwise patch in place so the
     // DOM does not churn 60 times a second.
@@ -204,7 +288,7 @@ export class Hud {
       if (name) {
         name.textContent = this.#nameWithBadges(player, status);
       }
-      if (score) score.textContent = String(player.score);
+      if (score) score.textContent = racing ? raceRowValue(player) : String(player.score);
     });
   }
 
@@ -286,6 +370,67 @@ export class Hud {
     const seconds = total % 60;
     this.#timer.textContent = `${minutes}:${String(seconds).padStart(2, '0')}`;
     this.#timer.classList.toggle('is-urgent', total <= 10);
+  }
+
+  /**
+   * The driver's pit board: position, lap, the lap under way, the best so far,
+   * and the two things that decide a race — tyres and the wing.
+   *
+   * Hidden entirely outside a race, which is what `totalLaps` is for: the HUD
+   * cannot ask the simulation whether this mode has laps, so the view model
+   * tells it.
+   */
+  #renderRace(state: RenderState, status: HudStatus): void {
+    const self = state.players.find((player) => player.id === status.selfId);
+    if (state.totalLaps <= 0 || !self) {
+      this.#race.hidden = true;
+      return;
+    }
+    this.#race.hidden = false;
+
+    const field = state.players.length;
+    this.#racePosition.textContent = self.position > 0 ? `P${self.position}/${field}` : '—';
+    // Lap 0 is the run to the line; showing "LAP 0/3" would be a lie, so the
+    // board reads 1 from the moment the race starts.
+    const lap = Math.min(state.totalLaps, self.lap + 1);
+    this.#raceLap.textContent = `LAP ${lap}/${state.totalLaps}`;
+
+    this.#raceTime.textContent = formatLapTime(self.lapTime);
+    this.#raceBest.textContent =
+      self.bestLap > 0
+        ? `BEST ${formatLapTime(self.bestLap)}`
+        : `LAST ${formatLapTime(self.lastLap)}`;
+
+    // The tyre bar appears only where tyres wear; a full green bar that never
+    // moves would just be furniture.
+    const worn = self.tyres < 1;
+    this.#raceTyres.hidden = !worn && !self.effects.includes('drsok');
+    this.#raceTyreFill.style.width = `${Math.round(Math.max(0, Math.min(1, self.tyres)) * 100)}%`;
+    this.#raceTyreFill.dataset['low'] = self.tyres < 0.25 ? 'true' : 'false';
+
+    const open = self.effects.includes('drs');
+    const armed = self.effects.includes('drsok');
+    this.#raceDrs.hidden = !open && !armed;
+    this.#raceDrs.dataset['state'] = open ? 'open' : 'armed';
+  }
+
+  #helpText(): string {
+    const parts: string[] = [];
+    parts.push(
+      this.#drives
+        ? '<kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> steer'
+        : '<kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move',
+    );
+    // A car has a throttle, not a sprint key.
+    if (!this.#drives) parts.push('<kbd>Shift</kbd> sprint');
+    if (this.#mode?.usesPrimaryAction) {
+      parts.push(`<kbd>Space</kbd> ${this.#mode.primaryLabel ?? 'action'}`);
+    }
+    if (this.#mode?.usesSecondaryAction) {
+      parts.push(`<kbd>K</kbd> ${this.#mode.secondaryLabel ?? 'action'}`);
+    }
+    parts.push('drag to orbit');
+    return parts.join(' &nbsp;·&nbsp; ');
   }
 
   #renderBanner(state: RenderState, status: HudStatus): void {

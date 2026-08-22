@@ -22,6 +22,7 @@ import type { Obstacle } from '../sim/types.js';
 import type { RenderState } from '../net/view.js';
 import { EntityViews } from './entities.js';
 import { KitViews } from './kitviews.js';
+import { TrackView } from './trackview.js';
 import { applyView, viewSpec, type ViewMode, type WallSide } from './views.js';
 import { createCheckerTexture } from './textures.js';
 
@@ -57,6 +58,14 @@ export class Renderer {
 
   #entities: EntityViews;
   #kit: KitViews;
+  #track: TrackView;
+  /**
+   * How far back the camera sits, relative to the on-foot framing the view
+   * specs are written for. Driven by top speed: what a player needs to see is
+   * a second or two of road, and a car covers three times a runner's ground
+   * in that time.
+   */
+  #framingScale: number;
   #shadows: ShadowGenerator | null = null;
   #localId: string | null = null;
   #cameraTarget = new Vector3(0, 0, 0);
@@ -105,6 +114,10 @@ export class Renderer {
       sprites: options.sprites ?? false,
     });
     this.#kit = new KitViews(this.scene, options.config, this.#shadows);
+    this.#track = new TrackView(this.scene, options.config);
+    this.#framingScale = options.config.vehicle.enabled
+      ? Math.min(1.7, Math.max(1, options.config.playerMaxSpeed / 14))
+      : 1;
 
     // Manual camera input suspends auto-follow. Registered as non-passive
     // capture listeners so they see the gesture even though Babylon's own
@@ -183,6 +196,7 @@ export class Renderer {
     this.#disposed = true;
     this.#canvas.removeEventListener('pointerdown', this.#onManualCamera);
     this.#canvas.removeEventListener('wheel', this.#onManualCamera);
+    this.#track.dispose();
     this.#kit.dispose();
     this.#entities.dispose();
     this.scene.dispose();
@@ -242,7 +256,9 @@ export class Renderer {
     const height = this.engine.getRenderHeight();
     if (width === 0 || height === 0) return;
 
-    const viewHalfHeight = halfHeight * (this.#isPortrait ? 1.25 : 1);
+    // Must match `applyView`'s framing exactly: a clamp computed from the
+    // unscaled spec would let a pulled-back camera see past the arena walls.
+    const viewHalfHeight = halfHeight * this.#framingScale * (this.#isPortrait ? 1.25 : 1);
     const viewHalfWidth = viewHalfHeight * (width / height);
 
     const clampAxis = (value: number, arenaHalf: number, viewHalf: number): number => {
@@ -301,7 +317,7 @@ export class Renderer {
     const spec = viewSpec(this.#view);
     if (spec.orthoHalfHeight === undefined && !force && !orientationChanged) return;
 
-    applyView(this.camera, this.#view, width, height, isPortrait);
+    applyView(this.camera, this.#view, width, height, isPortrait, this.#framingScale);
   }
 
   #createCamera(canvas: HTMLCanvasElement, config: SimConfig): ArcRotateCamera {
@@ -372,7 +388,13 @@ export class Renderer {
     const ground = CreateBox('ground', { width, height: groundThickness, depth }, this.scene);
     ground.position.y = -groundThickness / 2;
     const groundMaterial = new StandardMaterial('ground:mat', this.scene);
-    const checker = createCheckerTexture(this.scene, { cells: Math.round(width / 3) });
+    // A circuit gets grass. The road is the one thing a driver has to be able
+    // to find instantly, and grey-on-grey is a road you discover by leaving it.
+    const racing = config.track.enabled && config.trackPath.length >= 2;
+    const checker = createCheckerTexture(this.scene, {
+      cells: Math.round(width / 3),
+      ...(racing ? { colorA: '#1c3325', colorB: '#20392a', lineColor: '#294a36' } : {}),
+    });
     checker.wrapU = Texture.WRAP_ADDRESSMODE;
     checker.wrapV = Texture.WRAP_ADDRESSMODE;
     groundMaterial.diffuseTexture = checker;

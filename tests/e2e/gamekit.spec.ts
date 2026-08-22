@@ -159,3 +159,70 @@ test.describe('2D and 2.5D views', () => {
     expect(errors).toEqual([]);
   });
 });
+
+test.describe('racing', () => {
+  test('a grand prix renders, grids up and drives', async ({ page }) => {
+    const errors: string[] = [];
+    page.on('pageerror', (error) => errors.push(error.message));
+
+    await page.goto('/?net=broadcast&autojoin=1&room=e2e-gp&mode=grandprix&bots=2&name=Driver');
+    await waitForHud(page);
+    await expect
+      .poll(() => page.evaluate(() => window.__FWG__.tick), { timeout: 30_000 })
+      .toBeGreaterThan(60);
+
+    // The pit board only exists in modes with laps, so its presence is the
+    // check that the race view model reached the DOM at all.
+    await expect(page.getByTestId('race-board')).toBeVisible();
+    await expect(page.getByTestId('race-lap')).toContainText('/3');
+    await expect(page.getByTestId('race-position')).toContainText('P');
+
+    // A car is steered, so both buttons are on offer — a keyboard-only brake
+    // would be unreachable on the primary target.
+    await expect(page.getByTestId('touch-buttons')).toBeAttached();
+
+    const before = await page.evaluate(() => {
+      const handle = window.__FWG__;
+      return handle.players.find((player) => player.id === handle.selfId);
+    });
+
+    // Hold the throttle: the car has to actually move, and along its nose.
+    await page.keyboard.down('KeyW');
+    await page.waitForTimeout(2000);
+    await page.keyboard.up('KeyW');
+
+    const after = await page.evaluate(() => {
+      const handle = window.__FWG__;
+      return handle.players.find((player) => player.id === handle.selfId);
+    });
+
+    expect(before).toBeDefined();
+    expect(after).toBeDefined();
+    const travelled = Math.hypot(after!.x - before!.x, after!.z - before!.z);
+    expect(travelled).toBeGreaterThan(5);
+    expect(errors).toEqual([]);
+  });
+
+  test('the street circuit is a flat 2D race', async ({ page }) => {
+    await page.goto('/?net=broadcast&autojoin=1&room=e2e-street&mode=street&bots=2&name=Racer');
+    await waitForHud(page);
+
+    expect(await page.evaluate(() => window.__FWG__.view)).toBe('topdown');
+    expect(await page.evaluate(() => window.__FWG__.orthographic)).toBe(true);
+    await expect(page.getByTestId('race-lap')).toContainText('/5');
+  });
+
+  test('a car sees further ahead than a runner does', async ({ page }) => {
+    // A camera framed for someone on foot shows a car under a second of road,
+    // which is not enough to plan a corner from.
+    await page.goto('/?net=broadcast&autojoin=1&room=e2e-cam-run&mode=tag&name=Runner');
+    await waitForHud(page);
+    const onFoot = await page.evaluate(() => window.__FWG__.cameraRadius);
+
+    await page.goto('/?net=broadcast&autojoin=1&room=e2e-cam-car&mode=grandprix&name=Driver');
+    await waitForHud(page);
+    const driving = await page.evaluate(() => window.__FWG__.cameraRadius);
+
+    expect(driving).toBeGreaterThan(onFoot);
+  });
+});

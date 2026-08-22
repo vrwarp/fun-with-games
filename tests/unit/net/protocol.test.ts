@@ -25,7 +25,13 @@ function sampleSnapshot() {
       projectiles: { enabled: true },
       tag: { enabled: true },
       ball: { enabled: true },
-      zones: [{ kind: 'hill', x: 0, z: 0, radius: 4, team: -1, order: 0 }],
+      zones: [
+        { kind: 'hill', x: 0, z: 0, radius: 4, team: -1, order: 0 },
+        // Two gates so a lap can actually complete during the 30 ticks below,
+        // which is what puts a real lap time in the snapshot under test.
+        { kind: 'checkpoint', x: 3, z: 0, radius: 3, team: -1, order: 0 },
+        { kind: 'checkpoint', x: -3, z: 0, radius: 3, team: -1, order: 1 },
+      ],
       items: [{ kind: 'crown', homeX: 2, homeZ: 2, team: -1 }],
     }),
   });
@@ -256,6 +262,57 @@ describe('decodeMessage: hostile and malformed input', () => {
     expect(
       decodeMessage({ v: PROTOCOL_VERSION, type: 'input', seq: 1, mx: 0, mz: 0, sprint: false }),
     ).toBeNull();
+  });
+});
+
+describe('decodeMessage: lap timing', () => {
+  it('carries lap times across the wire', () => {
+    const source = sampleSnapshot();
+    const timed = source.players[0];
+    if (timed) {
+      timed.lapStartTick = 12;
+      timed.lastLapTicks = 340;
+      timed.bestLapTicks = 331;
+    }
+
+    const decoded = decodeMessage({
+      v: PROTOCOL_VERSION,
+      type: 'snapshot',
+      hostId: 'alice',
+      snapshot: encodeSnapshot(source),
+    }) as SnapshotMessage | null;
+
+    expect(decoded?.snapshot.players[0]).toMatchObject({
+      lapStartTick: 12,
+      lastLapTicks: 340,
+      bestLapTicks: 331,
+    });
+  });
+
+  it('rejects a snapshot whose lap times are missing', () => {
+    const message = snapshotMessage();
+    const player = message.snapshot.players[0] as unknown as Record<string, unknown>;
+    delete player['bestLapTicks'];
+    expect(decodeMessage(message)).toBeNull();
+  });
+
+  it('floors a negative lap time to "none yet" rather than trusting it', () => {
+    // A duration below zero renders as an impossible "-3.4s best lap", so the
+    // parser refuses the value without refusing the whole snapshot.
+    const message = snapshotMessage();
+    const player = message.snapshot.players[0];
+    if (player) {
+      player.lastLapTicks = -500;
+      player.bestLapTicks = -1;
+      player.lapStartTick = -9;
+    }
+
+    const decoded = decodeMessage(message) as SnapshotMessage | null;
+    expect(decoded?.snapshot.players[0]).toMatchObject({
+      lapStartTick: 0,
+      lastLapTicks: 0,
+      bestLapTicks: 0,
+    });
   });
 });
 

@@ -163,3 +163,51 @@ export function createLabelTexture(scene: Scene, text: string, color: string): D
   texture.update();
   return texture;
 }
+
+/**
+ * Red-and-white kerbing, as a strip that tiles along a kerb ribbon.
+ *
+ * Drawn rather than shipped: the whole renderer has to work on a fresh clone
+ * with no binary assets, and a kerb is four rectangles.
+ */
+export function createKerbTexture(scene: Scene): DynamicTexture {
+  const width = 64;
+  const height = 16;
+  const texture = new DynamicTexture('kerb', { width, height }, scene, false);
+  const ctx = context2d(texture);
+
+  // Split along the texture's WIDTH, because a kerb ribbon runs its `u` axis
+  // down the road: stripes have to alternate as you drive past them, not
+  // across the 0.9 metres of paint.
+  ctx.fillStyle = '#f1f1f1';
+  ctx.fillRect(0, 0, width, height);
+  ctx.fillStyle = '#e63946';
+  ctx.fillRect(0, 0, width / 2, height);
+
+  texture.update();
+  return texture;
+}
+
+/** The chequered board painted across the road at the start/finish line. */
+export function createStartLineTexture(scene: Scene): DynamicTexture {
+  // Two rows deep, like the real thing. `u` spans the board's short depth and
+  // `v` runs across the road, so the cell counts are asymmetric on purpose.
+  const cell = 32;
+  const texture = new DynamicTexture(
+    'startline',
+    { width: cell * 2, height: cell * 2 },
+    scene,
+    false,
+  );
+  const ctx = context2d(texture);
+
+  for (let y = 0; y < 2; y++) {
+    for (let x = 0; x < 2; x++) {
+      ctx.fillStyle = (x + y) % 2 === 0 ? '#f8f9fa' : '#15171d';
+      ctx.fillRect(x * cell, y * cell, cell, cell);
+    }
+  }
+
+  texture.update();
+  return texture;
+}

@@ -116,27 +116,27 @@ const AUTODROME: readonly TrackPoint[] = [
   { x: 46, z: 17 },
   { x: 40, z: 24 },
   { x: 32, z: 28 },
-  { x: 23, z: 29 },
-  // Chicane: right, then hard left. The one corner that must be braked for.
-  { x: 14, z: 27 },
-  { x: 7, z: 23 },
-  { x: 2, z: 18 },
-  { x: -4, z: 19 },
-  { x: -9, z: 23 },
-  { x: -16, z: 27 },
-  { x: -26, z: 29 },
-  { x: -35, z: 27 },
-  // Hairpin at the far end.
-  { x: -43, z: 22 },
-  { x: -48, z: 14 },
-  { x: -49, z: 5 },
-  { x: -49, z: -6 },
-  { x: -47, z: -15 },
-  // Final corner, back onto the main straight.
-  { x: -43, z: -23 },
-  { x: -37, z: -28 },
-  { x: -33, z: -30 },
-  { x: -26, z: -31 },
+  // Chicane: right, then a hard left back out. The legs are long on purpose —
+  // a 90° flick needs room, or the inside of the corner is tighter than the
+  // road is wide and there is no way to draw (or drive) it.
+  { x: 24, z: 29 },
+  { x: 13, z: 18 },
+  { x: 2, z: 29 },
+  { x: -10, z: 29 },
+  { x: -21, z: 28 },
+  // Hairpin at the far end: the slowest corner on the circuit.
+  { x: -31, z: 27 },
+  { x: -41, z: 22 },
+  { x: -48, z: 13 },
+  { x: -49, z: 3 },
+  { x: -47, z: -8 },
+  { x: -45, z: -17 },
+  // Final corner, back onto the main straight — so a car arrives at the line
+  // with a tow, which is what makes the DRS zone on the straight matter.
+  { x: -41, z: -24 },
+  { x: -36, z: -28 },
+  { x: -30, z: -30 },
+  { x: -23, z: -31 },
 ];
 
 /**
@@ -156,16 +156,16 @@ const STREET: readonly TrackPoint[] = [
   { x: 20, z: 10 },
   { x: 13, z: 14 },
   { x: 5, z: 13 },
-  { x: 0, z: 8 },
-  { x: -3, z: 3 }, // the tight left-right through the old town
-  { x: -8, z: 5 },
-  { x: -15, z: 10 },
+  { x: 0, z: 9 },
+  { x: -4, z: 5 }, // the left-right through the old town
+  { x: -9, z: 5 },
+  { x: -15, z: 9 },
   { x: -22, z: 13 },
-  { x: -28, z: 9 },
-  { x: -30, z: 2 },
-  { x: -30, z: -6 },
-  { x: -28, z: -13 },
-  { x: -24, z: -17 },
+  { x: -28, z: 10 },
+  { x: -31, z: 3 },
+  { x: -31, z: -5 },
+  { x: -29, z: -12 },
+  { x: -25, z: -16 },
   { x: -20, z: -18 },
 ];
 
@@ -367,16 +367,24 @@ const PRESETS: Record<GameModeId, SimConfigOverrides> = {
       pitSpeedLimit: 9,
     },
     zones: [
-      ...trackGates(AUTODROME, 9, 12),
+      // The start/finish loop is widened so that it also spans the pit lane
+      // beside it — a car that pits still records its lap, exactly as a real
+      // timing loop crosses both. It is never drawn (the chequered board
+      // stands in for it), so the extra radius costs nothing visually.
+      ...trackGates(AUTODROME, 9, 12).map((gate, index) =>
+        index === 0 ? { ...gate, radius: 16 } : gate,
+      ),
       // DRS on the two straights only, which is where a tow is worth having.
       { kind: 'drs', x: 0, z: -31, radius: 14, team: -1, order: 0 },
       { kind: 'drs', x: 48, z: 0, radius: 12, team: -1, order: 0 },
-      // The pit lane runs down the infield beside the main straight. The
-      // middle box is inside gate 0's loop, so a car that pits still records
-      // its lap instead of getting stuck on a gate it drove around.
-      { kind: 'pit', x: -30, z: -20, radius: 4, team: -1, order: 0 },
-      { kind: 'pit', x: -22, z: -20, radius: 4, team: -1, order: 0 },
-      { kind: 'pit', x: -14, z: -20, radius: 4, team: -1, order: 0 },
+      // The pit lane runs down the infield beside the main straight, as four
+      // overlapping boxes so it reads as a lane rather than as stepping
+      // stones. It clears the tarmac by a metre, so nobody catches the
+      // limiter by taking the inside line.
+      { kind: 'pit', x: -30, z: -19, radius: 4.5, team: -1, order: 0 },
+      { kind: 'pit', x: -24, z: -19, radius: 4.5, team: -1, order: 0 },
+      { kind: 'pit', x: -18, z: -19, radius: 4.5, team: -1, order: 0 },
+      { kind: 'pit', x: -12, z: -19, radius: 4.5, team: -1, order: 0 },
     ],
     zoneRules: { lapScore: 1, hillScorePerSecond: 0, goalScore: 0 },
     phases: {

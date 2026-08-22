@@ -111,6 +111,12 @@ export function sampleTrack(points: readonly TrackPoint[], x: number, z: number)
     travelled += segLength;
   }
 
+  // Every segment was zero-length (a path of repeated points). Reporting an
+  // infinite lateral distance would make `isOnTrack` false everywhere, so a
+  // typo in a circuit would turn the whole arena into a gravel trap; reporting
+  // nothing makes it behave like a mode with no track at all.
+  if (!Number.isFinite(bestLateralSq)) return EMPTY_SAMPLE;
+
   return {
     lateral: Math.sqrt(bestLateralSq),
     progress: bestProgress,
@@ -129,8 +135,14 @@ export function sampleTrack(points: readonly TrackPoint[], x: number, z: number)
 export function trackPoseAt(points: readonly TrackPoint[], distance: number): TrackPose {
   if (points.length < 2) return ORIGIN_POSE;
 
+  const first = points[0];
+  if (!first) return ORIGIN_POSE;
+
+  // A path with no length is a single place, so that place is the answer.
+  // Falling back to the origin instead would put a starting grid at (0, 0),
+  // which on most circuits is the middle of the infield.
   const total = trackLength(points);
-  if (total === 0) return ORIGIN_POSE;
+  if (total === 0) return { x: first.x, z: first.z, dirX: 0, dirZ: 1 };
 
   // `%` keeps the sign of the dividend in JS; the extra term makes it a real
   // modulo so that -5 on a 100-unit lap is 95, not -5.
@@ -158,8 +170,8 @@ export function trackPoseAt(points: readonly TrackPoint[], distance: number): Tr
     remaining -= segLength;
   }
 
-  const first = points[0];
-  return first ? { x: first.x, z: first.z, dirX: 0, dirZ: 1 } : ORIGIN_POSE;
+  // Only reachable through float drift at exactly the wrap point.
+  return { x: first.x, z: first.z, dirX: 0, dirZ: 1 };
 }
 
 /** True when the config describes a usable circuit. */

@@ -1,4 +1,7 @@
 import { describe, expect, it, afterEach } from 'vitest';
+import { modeOverrides } from '@/sim/presets.js';
+import { effectRemaining } from '@/sim/systems/effects.js';
+import { isOnTrack } from '@/sim/track.js';
 import { BUTTON_PRIMARY, ROLE_IT } from '@/sim/types.js';
 import { SessionHarness } from '../helpers/harness.js';
 
@@ -277,5 +280,129 @@ describe('items over the network', () => {
     expect(itemSeenByAlpha?.carrierId).toBe('bravo');
     const carrier = harness.state('alpha').players.find((p) => p.id === 'bravo');
     expect(carrier?.carrying).toBe('crown');
+  });
+});
+
+describe('a grand prix over the network', () => {
+  /**
+   * The shipped circuit, but with the field shrunk to something a test can
+   * finish: two laps, and a tyre stint short enough to actually run out.
+   */
+  const grandPrix = (): SessionHarness =>
+    new SessionHarness({
+      latencyMs: 50,
+      config: {
+        ...modeOverrides('grandprix'),
+        phases: {
+          enabled: true,
+          minPlayers: 2,
+          countdownTicks: 30,
+          playTicks: 30 * 300,
+          targetScore: 2,
+        },
+      },
+    });
+
+  it('puts every car on its own grid slot, pointed down the road', () => {
+    harness = grandPrix();
+    harness.join('alpha');
+    harness.join('bravo');
+    harness.advance(200);
+
+    const cars = harness.state('bravo').players;
+    expect(cars).toHaveLength(2);
+
+    const config = harness.config;
+    for (const car of cars) {
+      // On the tarmac, behind the line, facing the way the road goes.
+      expect(isOnTrack(config, car.x, car.z)).toBe(true);
+      expect(Math.abs(car.heading - Math.PI / 2)).toBeLessThan(0.4);
+    }
+    const [pole, second] = cars;
+    expect(Math.hypot(pole!.x - second!.x, pole!.z - second!.z)).toBeGreaterThan(
+      config.playerRadius * 2,
+    );
+  });
+
+  it('runs a full race: bots lap, times are set, and a winner is declared', () => {
+    harness = grandPrix();
+    harness.join('alpha');
+    harness.join('bravo');
+    const world = harness.hostWorld();
+    world.addBot();
+    world.addBot();
+
+    // Collected as they happen rather than read off the players afterwards:
+    // finishing the race starts the next one, and the reset wipes the very
+    // lap times this is about.
+    const laps: { playerId: string; lapTicks: number; best: boolean }[] = [];
+    world.events.on('lapCompleted', (event) => laps.push(event));
+
+    // Long enough for two laps of a ~280-unit circuit at racing pace.
+    harness.advance(75_000);
+
+    // Bots that cannot lap would leave the race unwinnable and this test green
+    // for the wrong reason, so this is the real assertion.
+    for (const bot of world.bots()) {
+      const theirs = laps.filter((lap) => lap.playerId === bot.id);
+      expect(theirs.length, `${bot.id} completed a lap`).toBeGreaterThan(0);
+      for (const lap of theirs) expect(lap.lapTicks, `${bot.id} lap time`).toBeGreaterThan(0);
+      expect(
+        theirs.some((lap) => lap.best),
+        `${bot.id} set a best lap`,
+      ).toBe(true);
+    }
+
+    // Somebody won a race, and the result reached every screen.
+    expect(world.phase.round).toBeGreaterThan(1);
+    expect(harness.state('bravo').phase.round).toBe(harness.state('alpha').phase.round);
+  });
+
+  it('shows the same running order and lap times on every screen', () => {
+    harness = grandPrix();
+    harness.join('alpha');
+    harness.join('bravo');
+    harness.hostWorld().addBot();
+    harness.advance(30_000);
+
+    const seenByHost = harness.state('alpha').players;
+    const seenByClient = harness.state('bravo').players;
+    expect(seenByHost.length).toBe(3);
+
+    for (const car of seenByHost) {
+      const mirror = seenByClient.find((entry) => entry.id === car.id);
+      expect(mirror, `${car.id} on the client`).toBeDefined();
+      expect(mirror!.position).toBe(car.position);
+      expect(mirror!.bestLap).toBeCloseTo(car.bestLap, 3);
+      expect(mirror!.lap).toBe(car.lap);
+    }
+
+    // A running order is a permutation of the field, leader first.
+    const positions = seenByClient.map((car) => car.position).sort((a, b) => a - b);
+    expect(positions).toEqual([1, 2, 3]);
+    expect(harness.state('bravo').totalLaps).toBe(2);
+  });
+
+  it('wears tyres down over a stint and refits them in the pit lane', () => {
+    harness = grandPrix();
+    harness.join('alpha');
+    harness.join('bravo');
+    harness.advance(20_000);
+
+    const world = harness.hostWorld();
+    const car = world.players()[0]!;
+    const stint = world.config.race.tyreStintTicks;
+    expect(stint).toBeGreaterThan(0);
+
+    const worn = effectRemaining(car, 'tyre', world.tick);
+    expect(worn).toBeLessThan(stint);
+
+    // Park it in the pit lane; one visit is a full set again.
+    const pit = world.config.zones.find((zone) => zone.kind === 'pit');
+    expect(pit).toBeDefined();
+    Object.assign(car, { x: pit!.x, z: pit!.z, vx: 0, vz: 0 });
+    harness.advance(200);
+
+    expect(effectRemaining(car, 'tyre', world.tick)).toBeGreaterThan(worn);
   });
 });

@@ -53,7 +53,17 @@ export class KitViews {
     this.#config = config;
     this.#shadows = shadows;
 
+    // On a circuit, timing gates and DRS zones are painted onto the road by
+    // `TrackView` instead. Their radii are deliberately wider than the tarmac
+    // — so that running wide costs time rather than stranding a driver — and
+    // drawing that honestly as a disc would bury the whole circuit.
+    const onTrack = config.track.enabled && config.trackPath.length >= 2;
+    const drawn = config.zones.filter(
+      (spec) => !(onTrack && (spec.kind === 'checkpoint' || spec.kind === 'drs')),
+    );
+
     config.zones.forEach((spec, id) => {
+      if (!drawn.includes(spec)) return;
       const mesh = CreateDisc(`zone:${id}`, { radius: spec.radius, tessellation: 48 }, scene);
       mesh.rotation.x = Math.PI / 2;
       mesh.position.set(spec.x, 0.03, spec.z);
@@ -162,6 +172,9 @@ export class KitViews {
         // The local player's NEXT gate glows; passed/future gates stay dim.
         const isNext = local !== undefined && zone.order === local.checkpoint;
         alpha = isNext ? 0.55 : 0.18;
+      } else if (zone.kind === 'pit') {
+        // The pit lane is tarmac you drive on, so it has to look like tarmac.
+        alpha = 0.75;
       }
 
       view.material.emissiveColor = Color3.FromHexString(color ?? ZONE_BASE_COLORS[zone.kind]);

@@ -140,6 +140,11 @@ URL parameters: `room`, `mode`, `bots`, `view` (`follow`/`iso`/`topdown`/`side`)
 `sprites`, `name`, `color`, `net=broadcast`, `autojoin=1`, `mute=1`,
 `log=debug`.
 
+Every player-facing one of those is also a control: room, mode, name, colour
+and camera in the lobby, and camera, pixel art, sound and bots in the in-game
+**Settings** panel (the gear beside _Credits_), which changes them immediately
+and remembers them on the device.
+
 ## Documentation
 
 | Document                                               | Read it when                                |

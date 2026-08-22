@@ -66,17 +66,71 @@ test('the lobby mode picker launches the chosen mode', async ({ page }) => {
   expect(page.url()).toContain('mode=tag');
 });
 
-test('the host can add a bot from the HUD', async ({ page }) => {
+test('the host can add a bot from settings', async ({ page }) => {
   await page.goto('/?net=broadcast&autojoin=1&room=e2e-hud-bot&mode=tag&name=Host');
   await waitForHud(page);
 
-  const addBot = page.getByTestId('add-bot');
+  await page.getByTestId('settings-button').click();
+  const addBot = page.getByTestId('settings-add-bot');
   await expect(addBot).toBeVisible();
   await addBot.click();
 
   await expect
     .poll(() => page.evaluate(() => window.__FWG__.botCount), { timeout: 10_000 })
     .toBe(1);
+  await expect(page.getByTestId('settings-bot-count')).toHaveText('1');
+});
+
+test('settings change the camera, the art and the sound without a reload', async ({ page }) => {
+  // The whole point of the panel: these were query parameters, so changing one
+  // meant editing a URL and dropping out of the room to reload it.
+  await page.goto('/?net=broadcast&autojoin=1&room=e2e-settings&mode=grandprix&name=Driver');
+  await waitForHud(page);
+  const tickBefore = await page.evaluate(() => window.__FWG__.tick);
+
+  await page.getByTestId('settings-button').click();
+  await page.getByTestId('settings-view').selectOption('topdown');
+  await expect.poll(() => page.evaluate(() => window.__FWG__.view)).toBe('topdown');
+  expect(await page.evaluate(() => window.__FWG__.orthographic)).toBe(true);
+
+  await page.getByTestId('settings-sprites').click();
+  await page.getByTestId('settings-sound').click();
+  await page.getByTestId('settings-close').click();
+
+  // Same session throughout: the simulation never restarted.
+  expect(await page.evaluate(() => window.__FWG__.tick)).toBeGreaterThan(tickBefore);
+  // And the address bar now describes what is actually on screen.
+  expect(page.url()).toContain('view=topdown');
+  expect(page.url()).toContain('sprites=1');
+});
+
+test('a camera chosen in settings survives a refresh', async ({ page }) => {
+  await page.goto('/?net=broadcast&autojoin=1&room=e2e-sticky&mode=tag&name=Sticky');
+  await waitForHud(page);
+
+  await page.getByTestId('settings-button').click();
+  await page.getByTestId('settings-view').selectOption('iso');
+  await expect.poll(() => page.evaluate(() => window.__FWG__.view)).toBe('iso');
+
+  // Back in without the parameter: the stored preference has to supply it,
+  // which is what makes this a setting rather than a link.
+  await page.goto('/?net=broadcast&autojoin=1&room=e2e-sticky2&mode=tag&name=Sticky');
+  await waitForHud(page);
+  expect(await page.evaluate(() => window.__FWG__.view)).toBe('iso');
+});
+
+test('a link still overrides what the device remembers', async ({ page }) => {
+  await page.goto('/?net=broadcast&autojoin=1&room=e2e-link&mode=tag&name=Linked');
+  await waitForHud(page);
+  await page.getByTestId('settings-button').click();
+  await page.getByTestId('settings-view').selectOption('side');
+  await expect.poll(() => page.evaluate(() => window.__FWG__.view)).toBe('side');
+
+  // Someone sends a link that names a view: the link describes the game they
+  // were invited to, so it wins over the preference.
+  await page.goto('/?net=broadcast&autojoin=1&room=e2e-link2&mode=tag&name=Linked&view=topdown');
+  await waitForHud(page);
+  expect(await page.evaluate(() => window.__FWG__.view)).toBe('topdown');
 });
 
 test('gather stays the untimed sandbox: no banner, no timer, no buttons', async ({ page }) => {
@@ -136,6 +190,56 @@ test.describe('2D and 2.5D views', () => {
 
     expect(await page.evaluate(() => window.__FWG__.view)).toBe('iso');
     expect(await page.evaluate(() => window.__FWG__.orthographic)).toBe(true);
+  });
+
+  test('first person puts the camera in the driver\u2019s head', async ({ page }) => {
+    const errors: string[] = [];
+    page.on('pageerror', (error) => errors.push(error.message));
+
+    await page.goto(
+      '/?net=broadcast&autojoin=1&room=e2e-fp&mode=grandprix&bots=2&name=Driver&view=first',
+    );
+    await waitForHud(page);
+    await expect
+      .poll(() => page.evaluate(() => window.__FWG__.tick), { timeout: 30_000 })
+      .toBeGreaterThan(30);
+
+    expect(await page.evaluate(() => window.__FWG__.view)).toBe('first');
+    // A cockpit is perspective, level with the horizon, and pinned: the orbit
+    // is one arrangement rather than a range the player can drift out of.
+    expect(await page.evaluate(() => window.__FWG__.orthographic)).toBe(false);
+    expect(await page.evaluate(() => window.__FWG__.cameraBeta)).toBeCloseTo(Math.PI / 2, 3);
+
+    // It also has to sit closer than the chase camera, or it is not a cockpit.
+    const cockpit = await page.evaluate(() => window.__FWG__.cameraRadius);
+    await page.goto('/?net=broadcast&autojoin=1&room=e2e-fp2&mode=grandprix&name=Driver');
+    await waitForHud(page);
+    expect(cockpit).toBeLessThan(await page.evaluate(() => window.__FWG__.cameraRadius));
+
+    expect(errors).toEqual([]);
+  });
+
+  test('the camera turns with the car, not with where it is going', async ({ page }) => {
+    // A head is bolted to the chassis. The chase camera deliberately only
+    // swings while the player is moving; doing that in a cockpit would leave
+    // the view pointing at the scenery every time a driver turned on the spot.
+    await page.goto(
+      '/?net=broadcast&autojoin=1&room=e2e-fp3&mode=grandprix&name=Driver&view=first',
+    );
+    await waitForHud(page);
+    await expect
+      .poll(() => page.evaluate(() => window.__FWG__.tick), { timeout: 30_000 })
+      .toBeGreaterThan(60);
+
+    const before = await page.evaluate(() => window.__FWG__.cameraAlpha);
+    await page.keyboard.down('KeyA');
+    await page.waitForTimeout(1200);
+    await page.keyboard.up('KeyA');
+
+    const after = await page.evaluate(() => window.__FWG__.cameraAlpha);
+    let turned = Math.abs(after - before) % (Math.PI * 2);
+    if (turned > Math.PI) turned = Math.PI * 2 - turned;
+    expect(turned).toBeGreaterThan(0.3);
   });
 
   test('the 3D follow camera stays perspective', async ({ page }) => {

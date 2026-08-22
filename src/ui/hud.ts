@@ -23,9 +23,13 @@ export interface HudOptions {
    * truth for the question. It only changes what the keyboard hint says.
    */
   drives?: boolean;
-  /** When provided (and this peer is host), shows the add/remove bot buttons. */
-  onAddBot?: () => void;
-  onRemoveBot?: () => void;
+  /**
+   * Whether this view hands the camera to the player.
+   *
+   * The fixed projections and the cockpit do not, and telling someone to drag
+   * a camera that will not move is worse than saying nothing.
+   */
+  canOrbit?: boolean;
 }
 
 /**
@@ -62,11 +66,13 @@ export class Hud {
 
   #scoreboard: HTMLElement;
   #status: HTMLElement;
+  #panel: HTMLElement;
+  #toggle: HTMLButtonElement;
   #roomCode: HTMLElement;
   #copyButton: HTMLButtonElement;
+  #collapsed: boolean;
   #goal: HTMLElement;
   #vitals: HTMLElement;
-  #botRow: HTMLElement;
   #teamStrip: HTMLElement;
   #timer: HTMLElement;
   #race: HTMLElement;
@@ -83,14 +89,23 @@ export class Hud {
   #copyResetTimer: ReturnType<typeof setTimeout> | null = null;
   #mode: GameModeInfo | undefined;
   #drives: boolean;
+  #canOrbit: boolean;
+  #help: HTMLElement;
 
   constructor(parent: HTMLElement, options: HudOptions = {}) {
     this.#mode = options.mode;
     this.#drives = options.drives ?? false;
+    this.#canOrbit = options.canOrbit ?? true;
 
     this.root = document.createElement('div');
     this.root.className = 'hud';
     this.root.dataset['testid'] = 'hud';
+
+    // Collapsed by default on a touch device. The panel is setup UI — room
+    // code, goal, bot controls, connection status — and on a phone it sits
+    // directly on top of the game, where it is worth roughly none of that
+    // space once play has started. On a desktop there is room for all of it.
+    this.#collapsed = globalThis.matchMedia?.('(pointer: coarse)').matches ?? false;
 
     const panel = document.createElement('div');
     panel.className = 'hud__panel';
@@ -98,9 +113,23 @@ export class Hud {
     const roomRow = document.createElement('div');
     roomRow.className = 'hud__room';
 
+    // The room code doubles as the handle: a big, obvious tap target that
+    // says what it opens, rather than a lone chevron floating over the track.
+    this.#toggle = document.createElement('button');
+    this.#toggle.type = 'button';
+    this.#toggle.className = 'hud__toggle';
+    this.#toggle.dataset['testid'] = 'panel-toggle';
+    this.#toggle.addEventListener('click', () => this.#setCollapsed(!this.#collapsed));
+
     this.#roomCode = document.createElement('span');
     this.#roomCode.className = 'hud__room-code';
     this.#roomCode.dataset['testid'] = 'room-code';
+
+    const chevron = document.createElement('span');
+    chevron.className = 'hud__chevron';
+    chevron.setAttribute('aria-hidden', 'true');
+    chevron.textContent = '▾';
+    this.#toggle.append(this.#roomCode, chevron);
 
     this.#copyButton = document.createElement('button');
     this.#copyButton.type = 'button';
@@ -109,7 +138,7 @@ export class Hud {
     this.#copyButton.dataset['testid'] = 'copy-link';
     this.#copyButton.addEventListener('click', () => void this.#copyLink());
 
-    roomRow.append(this.#roomCode, this.#copyButton);
+    roomRow.append(this.#toggle, this.#copyButton);
 
     this.#goal = document.createElement('div');
     this.#goal.className = 'hud__goal';
@@ -129,23 +158,13 @@ export class Hud {
     this.#vitals.dataset['testid'] = 'vitals';
     this.#vitals.hidden = true;
 
-    this.#botRow = document.createElement('div');
-    this.#botRow.className = 'hud__bots';
-    this.#botRow.hidden = true;
-    if (options.onAddBot) {
-      const add = this.#createBotButton('+ Bot', 'add-bot', options.onAddBot);
-      this.#botRow.append(add);
-    }
-    if (options.onRemoveBot) {
-      const remove = this.#createBotButton('−', 'remove-bot', options.onRemoveBot);
-      this.#botRow.append(remove);
-    }
-
     this.#status = document.createElement('div');
     this.#status.className = 'hud__status';
     this.#status.dataset['testid'] = 'net-status';
 
-    panel.append(roomRow, this.#goal, this.#scoreboard, this.#vitals, this.#botRow, this.#status);
+    panel.append(roomRow, this.#goal, this.#scoreboard, this.#vitals, this.#status);
+    this.#panel = panel;
+    this.#applyCollapsed();
 
     // Top centre: team scores and the round timer.
     const top = document.createElement('div');
@@ -218,12 +237,24 @@ export class Hud {
     this.#bannerSubtitle.className = 'hud__banner-subtitle';
     this.#banner.append(this.#bannerTitle, this.#bannerSubtitle);
 
-    const help = document.createElement('div');
-    help.className = 'hud__help';
-    help.innerHTML = this.#helpText();
+    this.#help = document.createElement('div');
+    this.#help.className = 'hud__help';
+    this.#help.innerHTML = this.#helpText();
 
-    this.root.append(panel, top, this.#banner, help);
+    this.root.append(panel, top, this.#banner, this.#help);
     parent.append(this.root);
+  }
+
+  /**
+   * Whether the current view hands the camera to the player.
+   *
+   * The camera can change mid-game now, so the keyboard hint has to be able to
+   * change with it rather than describing whichever view the page opened in.
+   */
+  setCanOrbit(canOrbit: boolean): void {
+    if (canOrbit === this.#canOrbit) return;
+    this.#canOrbit = canOrbit;
+    this.#help.innerHTML = this.#helpText();
   }
 
   update(state: RenderState, status: HudStatus): void {
@@ -234,7 +265,6 @@ export class Hud {
     this.#renderRace(state, status);
     this.#renderBanner(state, status);
     this.#renderVitals(state, status);
-    this.#botRow.hidden = !status.isHost || this.#botRow.childElementCount === 0;
   }
 
   dispose(): void {
@@ -244,14 +274,23 @@ export class Hud {
 
   // -------------------------------------------------------------- internals
 
-  #createBotButton(label: string, testid: string, onClick: () => void): HTMLButtonElement {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'hud__bot-button';
-    button.dataset['testid'] = testid;
-    button.textContent = label;
-    button.addEventListener('click', onClick);
-    return button;
+  /**
+   * Collapses the panel to its handle, or opens it again.
+   *
+   * What survives a collapse is what a player needs *while playing* — who is
+   * winning, and which room this is. What goes is what they needed while
+   * setting up: the goal line, the invite link, the bot controls and the
+   * connection status.
+   */
+  #setCollapsed(collapsed: boolean): void {
+    this.#collapsed = collapsed;
+    this.#applyCollapsed();
+  }
+
+  #applyCollapsed(): void {
+    this.#panel.classList.toggle('is-collapsed', this.#collapsed);
+    this.#toggle.setAttribute('aria-expanded', String(!this.#collapsed));
+    this.#toggle.title = this.#collapsed ? 'Show room details' : 'Hide room details';
   }
 
   #renderScores(state: RenderState, status: HudStatus): void {
@@ -429,7 +468,7 @@ export class Hud {
     if (this.#mode?.usesSecondaryAction) {
       parts.push(`<kbd>K</kbd> ${this.#mode.secondaryLabel ?? 'action'}`);
     }
-    parts.push('drag to orbit');
+    if (this.#canOrbit) parts.push('drag to orbit');
     return parts.join(' &nbsp;·&nbsp; ');
   }
 

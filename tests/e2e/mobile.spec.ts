@@ -124,10 +124,47 @@ test.describe('on a phone', () => {
     // smaller is a control that technically exists and practically does not.
     await launch(page);
 
-    const controls = page.locator('[data-testid="copy-link"]');
-    const box = await controls.boundingBox();
+    // The panel opens with its handle, so that is the first control to check.
+    const toggle = page.getByTestId('panel-toggle');
+    const handle = await toggle.boundingBox();
+    expect(handle?.height ?? 0).toBeGreaterThanOrEqual(44);
+    expect(handle?.width ?? 0).toBeGreaterThanOrEqual(44);
+
+    await toggle.tap();
+    const box = await page.getByTestId('copy-link').boundingBox();
     expect(box?.height ?? 0).toBeGreaterThanOrEqual(44);
     expect(box?.width ?? 0).toBeGreaterThanOrEqual(44);
+  });
+
+  test('the panel stays out of the way until it is asked for', async ({ page }) => {
+    // On a phone this panel sits directly on top of the game. What it holds is
+    // setup information — the invite link, the goal line, the bot controls,
+    // the connection status — and none of that is worth a corner of the track
+    // while playing. It opens on a tap and closes again on the next one.
+    await launch(page);
+
+    const panel = page.locator('.hud__panel');
+    await expect(panel).toHaveClass(/is-collapsed/);
+    await expect(page.getByTestId('copy-link')).toBeHidden();
+    await expect(page.getByTestId('mode-goal')).toBeHidden();
+    await expect(page.getByTestId('net-status')).toBeHidden();
+
+    // What survives is what a player reads mid-corner: the room, and the score.
+    await expect(page.getByTestId('room-code')).toBeVisible();
+    await expect(page.getByTestId('score-row').first()).toBeVisible();
+
+    const shut = await panel.boundingBox();
+    await page.getByTestId('panel-toggle').tap();
+    await expect(panel).not.toHaveClass(/is-collapsed/);
+    await expect(page.getByTestId('copy-link')).toBeVisible();
+
+    const open = await panel.boundingBox();
+    expect((shut?.height ?? 0) * (shut?.width ?? 0)).toBeLessThan(
+      (open?.height ?? 0) * (open?.width ?? 0) * 0.75,
+    );
+
+    await page.getByTestId('panel-toggle').tap();
+    await expect(panel).toHaveClass(/is-collapsed/);
   });
 
   test('the camera follows the direction of travel unaided', async ({ page }) => {
@@ -280,6 +317,50 @@ test.describe('on a phone', () => {
 
     expect(before).toBeDefined();
     expect(Math.hypot(after!.x - before!.x, after!.z - before!.z)).toBeGreaterThan(3);
+  });
+
+  test('every setting is reachable and thumb-sized', async ({ page }) => {
+    // These were all query parameters, which on a phone means typing one into
+    // a browser bar mid-game. The panel is the affordance that replaces that,
+    // so it has to be openable and operable with a thumb (CLAUDE.md §7).
+    await page.goto(`/?net=broadcast&autojoin=1&room=${ROOM}-set&mode=grandprix&name=Set`);
+    await expect(page.getByTestId('hud')).toBeVisible({ timeout: 30_000 });
+
+    const gear = page.getByTestId('settings-button');
+    const gearBox = await gear.boundingBox();
+    expect(gearBox?.height ?? 0).toBeGreaterThanOrEqual(44);
+    expect(gearBox?.width ?? 0).toBeGreaterThanOrEqual(44);
+
+    await gear.tap();
+    for (const id of ['settings-view', 'settings-sprites', 'settings-sound', 'settings-close']) {
+      const box = await page.getByTestId(id).boundingBox();
+      expect(box?.height ?? 0, id).toBeGreaterThanOrEqual(40);
+    }
+
+    // The dialog has to fit a phone rather than run off the side of it.
+    const dialog = await page.getByTestId('settings-dialog').boundingBox();
+    const viewport = page.viewportSize();
+    expect((dialog?.x ?? 0) + (dialog?.width ?? 0)).toBeLessThanOrEqual((viewport?.width ?? 0) + 1);
+
+    await page.getByTestId('settings-view').selectOption('first');
+    await expect.poll(() => page.evaluate(() => window.__FWG__.view)).toBe('first');
+  });
+
+  test('the camera can be chosen without a keyboard', async ({ page }) => {
+    // Views used to be URL-only, which on a phone means typing a query string
+    // into a browser bar. The lobby offers them instead.
+    await page.goto('/?net=broadcast&room=mobile-view&mode=grandprix');
+
+    const picker = page.getByTestId('view-select');
+    await expect(picker).toBeVisible();
+    const box = await picker.boundingBox();
+    expect(box?.height ?? 0).toBeGreaterThanOrEqual(40);
+
+    await picker.selectOption('first');
+    await page.getByTestId('join-button').tap();
+    await expect(page.getByTestId('hud')).toBeVisible({ timeout: 30_000 });
+
+    expect(await page.evaluate(() => window.__FWG__.view)).toBe('first');
   });
 
   test('the 2D platformer is playable with a thumb', async ({ page }) => {

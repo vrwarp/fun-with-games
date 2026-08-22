@@ -102,7 +102,20 @@ Useful query parameters: `room`, `mode`, `bots`, `view`, `sprites`, `name`,
 `color`, `net=broadcast`, `autojoin=1`, `mute=1`, `log=debug`. The mode is part
 of the transport room name, so peers running different rules never meet;
 `view` and `sprites` are presentation-only and deliberately are NOT, so one
-player can watch a match top-down while another plays it in 3D.
+player can watch a match top-down while another plays it in 3D. Views are
+`follow`, `first` (cockpit), `iso`, `topdown` and `side`.
+
+**None of the player-facing ones are URL-only.** Room, mode, name, colour and
+camera are in the lobby; camera, sprites, sound and bots are in the in-game
+**Settings** panel (`src/ui/settings.ts`) and change immediately, without a
+reload. A parameter is for _sharing a link_, not for operating the game —
+nobody edits a query string mid-race, and on a phone nobody can. If you add an
+option, add it to one of those two surfaces in the same change.
+
+Presentation settings are remembered per device (`src/ui/preferences.ts`,
+`localStorage`). Precedence is **URL, then stored, then the mode's default**: a
+link describes the game someone was invited to, and their own settings fill in
+the rest.
 
 ---
 
@@ -309,6 +322,18 @@ and a big screen are the special cases. Concretely, that shaped:
 - **`src/ui/styles.css` is mobile-first.** Base rules are the phone. Larger
   screens are `min-width` blocks at the bottom. Do not add `max-width`
   overrides — that makes mobile a pile of exceptions, and exceptions rot.
+- **Options are controls, not query strings.** Everything a player might want
+  to change mid-game lives in the Settings panel, reachable from a 44px gear
+  beside Credits. Only presentation goes in there: anything that changes the
+  _rules_ has to be agreed with the other peers, so it belongs to the room and
+  stays in the lobby. A settings menu that could quietly desync a match would
+  be a trap.
+- **Setup UI collapses on a phone.** The HUD panel holds the room code, the
+  goal line, the invite link, the bot controls and the connection status —
+  all of which matter while setting a game up and none of which are worth a
+  corner of the track while playing. On a coarse pointer it starts collapsed
+  to its handle (room code + score), which is a 59% smaller footprint; the
+  handle is a 44px tap target that opens it again. Desktop starts expanded.
 - **It installs.** Web app manifest, generated maskable icons, standalone
   display, `theme-color`, safe-area insets, and a screen wake lock so the
   display does not sleep while a player stands still.

@@ -40,20 +40,36 @@ export class GameAudio {
 
   constructor(options: { muted?: boolean } = {}) {
     this.#muted = options.muted ?? false;
-    if (this.#muted) return;
-    try {
-      const Ctor =
-        globalThis.AudioContext ??
-        (globalThis as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-      this.#ctx = Ctor ? new Ctor() : null;
-    } catch (error) {
-      log.debug('audio unavailable', error);
+    if (!this.#muted) this.#open();
+  }
+
+  get muted(): boolean {
+    return this.#muted;
+  }
+
+  /**
+   * Turns sound on or off.
+   *
+   * Unmuting opens the audio context lazily, because a player who started
+   * muted never had one — and because browsers only allow it to start after a
+   * gesture, which flipping this switch conveniently is.
+   */
+  setMuted(muted: boolean): void {
+    if (muted === this.#muted) return;
+    this.#muted = muted;
+
+    if (muted) {
+      void this.#ctx?.close().catch(() => undefined);
       this.#ctx = null;
+      return;
     }
+
+    this.#open();
+    if (this.#attached) this.#resume();
   }
 
   attach(): void {
-    if (this.#attached || !this.#ctx) return;
+    if (this.#attached) return;
     this.#attached = true;
     window.addEventListener('pointerdown', this.#resume, { passive: true });
     window.addEventListener('keydown', this.#resume);
@@ -67,6 +83,19 @@ export class GameAudio {
     }
     void this.#ctx?.close().catch(() => undefined);
     this.#ctx = null;
+  }
+
+  #open(): void {
+    if (this.#ctx) return;
+    try {
+      const Ctor =
+        globalThis.AudioContext ??
+        (globalThis as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      this.#ctx = Ctor ? new Ctor() : null;
+    } catch (error) {
+      log.debug('audio unavailable', error);
+      this.#ctx = null;
+    }
   }
 
   play(cue: SoundCue): void {

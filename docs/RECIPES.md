@@ -44,6 +44,7 @@ Not in 3D — same engine, different projection:
 | 2.5D isometric chase     | `?mode=dungeon`                       |
 | _Any_ mode, but flat 2D  | `?mode=soccer&view=topdown&sprites=1` |
 | _Any_ mode, but 2.5D     | `?mode=ctf&view=iso`                  |
+| Onboard / cockpit        | `?mode=grandprix&view=first`          |
 
 `view` and `sprites` are per-player presentation, never part of the room, so
 they work on every mode and need no agreement between peers.

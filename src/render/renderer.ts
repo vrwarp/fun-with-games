@@ -23,7 +23,14 @@ import type { RenderState } from '../net/view.js';
 import { EntityViews } from './entities.js';
 import { KitViews } from './kitviews.js';
 import { TrackView } from './trackview.js';
-import { applyView, viewSpec, type ViewMode, type WallSide } from './views.js';
+import {
+  applyView,
+  viewSpec,
+  type EyeSpec,
+  type ViewMode,
+  type ViewSpec,
+  type WallSide,
+} from './views.js';
 import { createCheckerTexture } from './textures.js';
 
 export interface RendererOptions {
@@ -66,6 +73,8 @@ export class Renderer {
    * in that time.
    */
   #framingScale: number;
+  /** Every arena wall by side, so a view change can hide and show them. */
+  #walls = new Map<WallSide, Mesh>();
   #shadows: ShadowGenerator | null = null;
   #localId: string | null = null;
   #cameraTarget = new Vector3(0, 0, 0);
@@ -112,6 +121,9 @@ export class Renderer {
 
     this.#entities = new EntityViews(this.scene, options.config, this.#shadows, {
       sprites: options.sprites ?? false,
+      // Derived rather than passed in: the renderer already knows which view
+      // it is drawing, and a second flag would only be a way to disagree.
+      firstPerson: viewSpec(this.#view).eye !== undefined,
     });
     this.#kit = new KitViews(this.scene, options.config, this.#shadows);
     this.#track = new TrackView(this.scene, options.config);
@@ -161,6 +173,14 @@ export class Renderer {
     if (this.#localId) {
       const position = this.#entities.playerPosition(this.#localId);
       const spec = viewSpec(this.#view);
+      const local = state.players.find((player) => player.id === this.#localId);
+
+      if (position && spec.eye && local) {
+        this.#trackCockpit(local.heading, position, spec.eye);
+        this.scene.render();
+        return;
+      }
+
       if (position) {
         // Ease the camera towards the player so corrections and interpolation
         // hitches do not translate into a jerky view.
@@ -176,13 +196,43 @@ export class Renderer {
         this.camera.target.copyFrom(this.#cameraTarget);
       }
 
-      const local = state.players.find((player) => player.id === this.#localId);
       if (local && spec.autoFollow) {
         this.#followHeading(local.x, local.z, local.heading, deltaSeconds);
       }
     }
 
     this.scene.render();
+  }
+
+  /**
+   * Puts the camera in the driver's head, looking down the road.
+   *
+   * Nothing here is smoothed, and that is the point. Every other view eases
+   * toward the player because a little lag reads as a camera operator doing
+   * their job; a head is bolted to the chassis, so the same lag reads as the
+   * whole world sliding around — and it is what makes a first-person view
+   * genuinely unpleasant to sit behind.
+   *
+   * For the same reason the heading is taken directly rather than through
+   * `#followHeading`, which eases and only chases while the player is moving:
+   * turning on the spot has to turn the view.
+   */
+  #trackCockpit(heading: number, position: Vector3, eye: EyeSpec): void {
+    const forwardX = Math.sin(heading);
+    const forwardZ = Math.cos(heading);
+    const feet = position.y - this.#config.playerRadius * 1.7;
+
+    this.#cameraTarget.set(
+      position.x + forwardX * eye.lookahead,
+      feet + eye.height,
+      position.z + forwardZ * eye.lookahead,
+    );
+    this.camera.target.copyFrom(this.#cameraTarget);
+    this.camera.radius = eye.lookahead - eye.forward;
+    this.camera.beta = Math.PI / 2;
+    // The alpha that sits an orbit camera behind its target, along the
+    // player's forward vector — the same solve `#followHeading` uses.
+    this.camera.alpha = Math.atan2(-forwardZ, -forwardX);
   }
 
   resize(): void {
@@ -334,15 +384,48 @@ export class Renderer {
     // an isometric or side-on camera would quietly turn it into a third view
     // nobody designed.
     if (spec.manualControl) camera.attachControl(canvas, true);
-    camera.lowerRadiusLimit = 8;
-    camera.upperRadiusLimit = 40;
-    // Stop the camera from dropping below the floor or flipping overhead.
-    camera.lowerBetaLimit = 0.25;
-    camera.upperBetaLimit = Math.PI / 2.15;
+    applyCameraLimits(camera, spec);
     camera.wheelPrecision = 12;
     camera.panningSensibility = 0; // Panning would decouple the follow target.
     camera.maxZ = Math.max(config.arenaHalfExtentX, config.arenaHalfExtentZ) * 8;
     return camera;
+  }
+
+  /**
+   * Switches the camera at runtime.
+   *
+   * Everything a view decides has to be re-decided here, not just the angles:
+   * which walls stand between the camera and the game, whether the player may
+   * drag it, how the orbit is limited, and whether the local player's own body
+   * is drawn. Miss one and the scene is left half in the old view — a dragged
+   * isometric camera, or a cockpit staring at the back of a wall.
+   */
+  setView(view: ViewMode): void {
+    if (view === this.#view) return;
+    this.#view = view;
+    const spec = viewSpec(view);
+
+    const hidden = new Set<WallSide>(spec.hiddenWalls);
+    for (const [side, wall] of this.#walls) wall.setEnabled(!hidden.has(side));
+
+    this.camera.detachControl();
+    if (spec.manualControl) this.camera.attachControl(this.#canvas, true);
+    applyCameraLimits(this.camera, spec);
+    // Changing view is not a drag. Leaving the hold in place would strand the
+    // new camera facing wherever the old one happened to be pointing.
+    this.#sinceManualCamera = MANUAL_CAMERA_HOLD_SECONDS;
+
+    this.#entities.setFirstPerson(spec.eye !== undefined);
+    this.#applyViewportFraming(true);
+  }
+
+  /** Draw players as sprites or as bodies, from now on. */
+  setSprites(sprites: boolean): void {
+    this.#entities.setSprites(sprites);
+  }
+
+  get view(): ViewMode {
+    return this.#view;
   }
 
   #createLights(config: SimConfig): ShadowGenerator | null {
@@ -427,9 +510,10 @@ export class Renderer {
       { w: wallThickness, d: depth, x: config.arenaHalfExtentX, z: 0, side: 'eastX' },
       { w: wallThickness, d: depth, x: -config.arenaHalfExtentX, z: 0, side: 'westX' },
     ];
-    const walls = allWalls.filter((wall) => !hidden.has(wall.side));
-
-    for (const [index, spec] of walls.entries()) {
+    // All four are built and then hidden per view, rather than filtered here:
+    // the camera can change at runtime now, and a wall that was never created
+    // cannot come back when the player switches to a view that needs it.
+    for (const [index, spec] of allWalls.entries()) {
       const wall = CreateBox(
         `wall:${index}`,
         { width: spec.w, height: wallHeight, depth: spec.d },
@@ -438,7 +522,9 @@ export class Renderer {
       wall.position.set(spec.x, wallHeight / 2, spec.z);
       wall.material = wallMaterial;
       wall.receiveShadows = true;
+      wall.setEnabled(!hidden.has(spec.side));
       this.#shadows?.addShadowCaster(wall);
+      this.#walls.set(spec.side, wall);
     }
 
     if (obstacles.length > 0) {
@@ -476,4 +562,32 @@ export class Renderer {
       this.#shadows?.addShadowCaster(instance);
     }
   }
+}
+
+/**
+ * Pins or bounds the camera's orbit for a view.
+ *
+ * A cockpit's orbit is one arrangement rather than a range: pin the radius and
+ * the pitch, or Babylon's own limits quietly clamp the eye out of the car (the
+ * default upper beta stops short of level). Every other view keeps a range,
+ * because the player may be allowed to drag it.
+ */
+function applyCameraLimits(camera: ArcRotateCamera, spec: ViewSpec): void {
+  if (spec.eye) {
+    camera.lowerRadiusLimit = spec.radius;
+    camera.upperRadiusLimit = spec.radius;
+    camera.lowerBetaLimit = spec.beta;
+    camera.upperBetaLimit = spec.beta;
+    // Default near plane is 1 unit, which would slice away the bodywork the
+    // driver is sitting behind — the whole reason to be in here.
+    camera.minZ = 0.2;
+    return;
+  }
+
+  camera.lowerRadiusLimit = 8;
+  camera.upperRadiusLimit = 40;
+  // Stop the camera from dropping below the floor or flipping overhead.
+  camera.lowerBetaLimit = 0.25;
+  camera.upperBetaLimit = Math.PI / 2.15;
+  camera.minZ = 1;
 }

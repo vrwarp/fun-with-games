@@ -11,8 +11,23 @@
  * How a mode is framed by default. Purely presentational — see
  * `src/render/views.ts`. `?view=` overrides it per player, so any mode can be
  * demoed in any projection.
+ *
+ * The union lives here, in the layer everyone may read, so that the lobby can
+ * offer the choice without reaching into `src/render`.
  */
-export type ModeView = 'follow' | 'iso' | 'topdown' | 'side';
+export type ModeView = 'follow' | 'first' | 'iso' | 'topdown' | 'side';
+
+/** Every view, in the order a player should be offered them. */
+export const VIEW_IDS: readonly ModeView[] = ['follow', 'first', 'iso', 'topdown', 'side'];
+
+/** What each view is called in the UI. */
+export const VIEW_LABELS: Readonly<Record<ModeView, string>> = {
+  follow: 'Third person (3D)',
+  first: 'First person',
+  iso: 'Isometric (2.5D)',
+  topdown: 'Top-down (2D)',
+  side: 'Side-on (2D)',
+};
 
 export type GameModeId =
   | 'gather'

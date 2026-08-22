@@ -24,6 +24,16 @@ export interface EntityViewOptions {
    * completely unchanged.
    */
   sprites?: boolean;
+  /**
+   * The camera is inside the local player's head.
+   *
+   * Their name label is a billboard, so at zero distance it fills the screen;
+   * their body is whatever the camera is sitting in. A car stays — the nose
+   * and front wheels ahead of you are the whole appeal of an onboard shot —
+   * but a capsule or a sprite has to go, or the view is the inside of your
+   * own chest.
+   */
+  firstPerson?: boolean;
 }
 
 interface PlayerView {
@@ -60,7 +70,8 @@ export class EntityViews {
 
   #players = new Map<string, PlayerView>();
   #pickups = new Map<number, PickupView>();
-  readonly #sprites: boolean;
+  #sprites: boolean;
+  #firstPerson: boolean;
   /**
    * Draw cars instead of bodies.
    *
@@ -90,6 +101,7 @@ export class EntityViews {
     this.#config = config;
     this.#shadows = shadows;
     this.#sprites = options.sprites ?? false;
+    this.#firstPerson = options.firstPerson ?? false;
     this.#vehicle = config.vehicle.enabled;
 
     this.#playerProto = CreateCapsule(
@@ -130,10 +142,25 @@ export class EntityViews {
     this.#playerProto.isVisible = false;
     this.#playerProto.setEnabled(false);
     // Existing views still reference the old prototype's clones; rebuild them.
-    for (const [id, view] of this.#players) {
-      this.#disposePlayer(view);
-      this.#players.delete(id);
-    }
+    this.#rebuildPlayers();
+  }
+
+  /**
+   * Switches between sprite billboards and 3D bodies.
+   *
+   * What a player is made of is decided when their view is built, so this
+   * throws the views away rather than trying to mutate them; the next `sync`
+   * builds the other kind. There are never more than a handful.
+   */
+  setSprites(sprites: boolean): void {
+    if (sprites === this.#sprites) return;
+    this.#sprites = sprites;
+    this.#rebuildPlayers();
+  }
+
+  /** Whether the camera is inside the local player. See `EntityViewOptions`. */
+  setFirstPerson(firstPerson: boolean): void {
+    this.#firstPerson = firstPerson;
   }
 
   /** Projects one frame of state onto the scene. */
@@ -232,6 +259,13 @@ export class EntityViews {
 
   // -------------------------------------------------------------- internals
 
+  #rebuildPlayers(): void {
+    for (const [id, view] of this.#players) {
+      this.#disposePlayer(view);
+      this.#players.delete(id);
+    }
+  }
+
   #syncPlayers(players: readonly RenderPlayer[]): void {
     const seen = new Set<string>();
 
@@ -254,6 +288,14 @@ export class EntityViews {
       // The wing lies flat when the driver opens it — visible from behind,
       // which is exactly who needs to know.
       if (view.wing) view.wing.rotation.x = player.effects.includes('drs') ? -1.15 : 0;
+
+      const inside = this.#firstPerson && player.isLocal;
+      view.label.setEnabled(!inside);
+      const showBody = !inside || (this.#vehicle && !this.#sprites);
+      view.body.setEnabled(showBody);
+      view.wing?.setEnabled(showBody);
+      for (const part of view.parts) part.setEnabled(showBody);
+
       this.#applyStatus(view, player);
     }
 

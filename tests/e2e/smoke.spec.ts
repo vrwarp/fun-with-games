@@ -88,6 +88,8 @@ test.describe('a running game', () => {
 
   test('reports the host role in the status line', async ({ page }) => {
     await expect(page.getByTestId('net-status')).toHaveAttribute('data-role', 'host');
+    // A desktop has room for the whole panel, so it opens expanded.
+    await expect(page.locator('.hud__panel')).not.toHaveClass(/is-collapsed/);
   });
 
   test('moves the player in response to the keyboard', async ({ page }) => {

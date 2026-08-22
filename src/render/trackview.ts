@@ -29,10 +29,30 @@ import { createKerbTexture, createStartLineTexture } from './textures.js';
  * lie a driver could hit. The ordering below is the paint order.
  */
 const ROAD_Y = 0.02;
-const DRS_Y = 0.025;
-const KERB_Y = 0.03;
-const SECTOR_Y = 0.035;
-const LINE_Y = 0.04;
+const DRS_Y = 0.05;
+const KERB_Y = 0.08;
+const SECTOR_Y = 0.11;
+const LINE_Y = 0.14;
+
+/**
+ * Depth bias per layer, in the order they are painted.
+ *
+ * Height alone is not enough. These surfaces are all but coplanar, and a
+ * first-person camera looks *along* them from 1.35 units up — the worst case
+ * for depth precision, where a few centimetres of separation at the far end of
+ * a straight is less than the depth buffer can resolve and the road stripes
+ * itself. A polygon offset biases the comparison rather than the geometry, so
+ * the paint stays flat and still wins.
+ */
+const LAYER_BIAS = { drs: -1, kerb: -2, sector: -3, line: -4 } as const;
+
+/**
+ * The ribbons are built `sideOrientation: 2`, which bakes both facings into
+ * the geometry. Culling back faces therefore still leaves every surface
+ * visible from anywhere — and stops each one being drawn twice, which on a
+ * translucent overlay double-blends every seam into a visible stripe.
+ */
+const CULL_BACK_FACES = true;
 
 /** Spacing between road-surface samples along a band, in world units. */
 const BAND_STEP = 1.5;
@@ -148,8 +168,8 @@ export class TrackView {
    * a circuit for the same reason.
    */
   #buildZoneMarks(config: SimConfig, path: readonly TrackPoint[], half: number, lap: number): void {
-    const sector = this.#flatMaterial('track:sector', '#8d99ae', 0.35);
-    const drs = this.#flatMaterial('track:drs', '#06d6a0', 0.11);
+    const sector = this.#flatMaterial('track:sector', '#8d99ae', 0.35, LAYER_BIAS.sector);
+    const drs = this.#flatMaterial('track:drs', '#06d6a0', 0.16, LAYER_BIAS.drs);
 
     config.zones.forEach((zone, index) => {
       if (zone.kind !== 'checkpoint' && zone.kind !== 'drs') return;
@@ -177,7 +197,7 @@ export class TrackView {
       const from = Math.max(at - zone.radius, at - lap / 2);
       const to = Math.min(at + zone.radius, at + lap / 2);
       this.#band(`track:drs:${index}`, path, from, to, -half, half, DRS_Y, drs);
-      const edge = this.#flatMaterial(`track:drs:${index}:edge`, '#06d6a0', 0.7);
+      const edge = this.#flatMaterial(`track:drs:${index}:edge`, '#06d6a0', 0.7, LAYER_BIAS.sector);
       this.#band(
         `track:drs:${index}:in`,
         path,
@@ -194,13 +214,13 @@ export class TrackView {
 
   #roadMaterial(): StandardMaterial {
     const material = new StandardMaterial('track:road:mat', this.#scene);
-    // Deliberately lighter than the arena floor. The road has to be the first
-    // thing the eye finds, and a dark ribbon on a dark ground is a road you
-    // discover by driving off it.
-    material.diffuseColor = Color3.FromHexString('#565d6d');
-    material.emissiveColor = Color3.FromHexString('#1a1d24');
+    // Asphalt, and deliberately lighter than the grass it sits on: the road
+    // has to be the first thing the eye finds, from a camera 1.35 units off it
+    // as well as from directly overhead.
+    material.diffuseColor = Color3.FromHexString('#2b3038');
+    material.emissiveColor = Color3.FromHexString('#181b22');
     material.specularColor = new Color3(0.04, 0.04, 0.05);
-    material.backFaceCulling = false;
+    material.backFaceCulling = CULL_BACK_FACES;
     this.#materials.push(material);
     return material;
   }
@@ -215,10 +235,11 @@ export class TrackView {
     this.#textures.push(texture);
 
     const material = new StandardMaterial('track:kerb:mat', this.#scene);
+    material.zOffset = LAYER_BIAS.kerb;
     material.diffuseTexture = texture;
     material.emissiveColor = new Color3(0.4, 0.4, 0.4);
     material.specularColor = new Color3(0, 0, 0);
-    material.backFaceCulling = false;
+    material.backFaceCulling = CULL_BACK_FACES;
     this.#materials.push(material);
     return material;
   }
@@ -233,20 +254,22 @@ export class TrackView {
     this.#textures.push(texture);
 
     const material = new StandardMaterial('track:line:mat', this.#scene);
+    material.zOffset = LAYER_BIAS.line;
     material.diffuseTexture = texture;
     material.emissiveColor = new Color3(0.55, 0.55, 0.55);
     material.specularColor = new Color3(0, 0, 0);
-    material.backFaceCulling = false;
+    material.backFaceCulling = CULL_BACK_FACES;
     this.#materials.push(material);
     return material;
   }
 
-  #flatMaterial(name: string, hex: string, alpha: number): StandardMaterial {
+  #flatMaterial(name: string, hex: string, alpha: number, bias = 0): StandardMaterial {
     const material = new StandardMaterial(`${name}:mat`, this.#scene);
+    material.zOffset = bias;
     material.emissiveColor = Color3.FromHexString(hex);
     material.disableLighting = true;
     material.alpha = alpha;
-    material.backFaceCulling = false;
+    material.backFaceCulling = CULL_BACK_FACES;
     this.#materials.push(material);
     return material;
   }

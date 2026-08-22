@@ -309,6 +309,12 @@ and a big screen are the special cases. Concretely, that shaped:
 - **`src/ui/styles.css` is mobile-first.** Base rules are the phone. Larger
   screens are `min-width` blocks at the bottom. Do not add `max-width`
   overrides — that makes mobile a pile of exceptions, and exceptions rot.
+- **Setup UI collapses on a phone.** The HUD panel holds the room code, the
+  goal line, the invite link, the bot controls and the connection status —
+  all of which matter while setting a game up and none of which are worth a
+  corner of the track while playing. On a coarse pointer it starts collapsed
+  to its handle (room code + score), which is a 59% smaller footprint; the
+  handle is a 44px tap target that opens it again. Desktop starts expanded.
 - **It installs.** Web app manifest, generated maskable icons, standalone
   display, `theme-color`, safe-area insets, and a screen wake lock so the
   display does not sleep while a player stands still.

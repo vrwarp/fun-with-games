@@ -242,6 +242,53 @@ body {
   gap: 0.4rem;
 }
 
+/* The room code is also the panel's handle, so it has to be a real tap target
+   — 44px tall, and wide enough to hit without aiming. */
+.hud__toggle {
+  flex: 1;
+  min-width: 0;
+  min-height: var(--tap);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.35rem;
+  padding: 0.2rem 0.35rem;
+  background: none;
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.hud__chevron {
+  flex: none;
+  font-size: 0.7rem;
+  color: var(--text-dim);
+  transition: transform 140ms ease;
+}
+
+/* Points down when there is more below, right when the panel is shut. */
+.hud__panel.is-collapsed .hud__chevron {
+  transform: rotate(-90deg);
+}
+
+/* Collapsed keeps identity and the score — what you read mid-corner — and
+   drops everything that only mattered while setting the game up. */
+.hud__panel.is-collapsed .hud__goal,
+.hud__panel.is-collapsed .hud__copy,
+.hud__panel.is-collapsed .hud__vitals,
+.hud__panel.is-collapsed .hud__bots,
+.hud__panel.is-collapsed .hud__status {
+  display: none;
+}
+
+.hud__panel.is-collapsed {
+  width: fit-content;
+  max-width: min(14rem, 58vw);
+  gap: 0.2rem;
+  padding: 0.35rem 0.45rem;
+}
+
 .hud__room-code {
   font-family: ui-monospace, 'SF Mono', Menlo, monospace;
   font-size: 0.85rem;
@@ -891,9 +938,14 @@ body {
     display: block;
   }
 
-  .hud__copy {
+  .hud__copy,
+  .hud__toggle {
     min-height: 0;
     min-width: 0;
+  }
+
+  .hud__toggle:hover .hud__chevron {
+    color: var(--text);
   }
 
   .hud__copy:hover {

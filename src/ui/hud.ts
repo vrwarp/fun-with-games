@@ -62,8 +62,11 @@ export class Hud {
 
   #scoreboard: HTMLElement;
   #status: HTMLElement;
+  #panel: HTMLElement;
+  #toggle: HTMLButtonElement;
   #roomCode: HTMLElement;
   #copyButton: HTMLButtonElement;
+  #collapsed: boolean;
   #goal: HTMLElement;
   #vitals: HTMLElement;
   #botRow: HTMLElement;
@@ -92,15 +95,35 @@ export class Hud {
     this.root.className = 'hud';
     this.root.dataset['testid'] = 'hud';
 
+    // Collapsed by default on a touch device. The panel is setup UI — room
+    // code, goal, bot controls, connection status — and on a phone it sits
+    // directly on top of the game, where it is worth roughly none of that
+    // space once play has started. On a desktop there is room for all of it.
+    this.#collapsed = globalThis.matchMedia?.('(pointer: coarse)').matches ?? false;
+
     const panel = document.createElement('div');
     panel.className = 'hud__panel';
 
     const roomRow = document.createElement('div');
     roomRow.className = 'hud__room';
 
+    // The room code doubles as the handle: a big, obvious tap target that
+    // says what it opens, rather than a lone chevron floating over the track.
+    this.#toggle = document.createElement('button');
+    this.#toggle.type = 'button';
+    this.#toggle.className = 'hud__toggle';
+    this.#toggle.dataset['testid'] = 'panel-toggle';
+    this.#toggle.addEventListener('click', () => this.#setCollapsed(!this.#collapsed));
+
     this.#roomCode = document.createElement('span');
     this.#roomCode.className = 'hud__room-code';
     this.#roomCode.dataset['testid'] = 'room-code';
+
+    const chevron = document.createElement('span');
+    chevron.className = 'hud__chevron';
+    chevron.setAttribute('aria-hidden', 'true');
+    chevron.textContent = '▾';
+    this.#toggle.append(this.#roomCode, chevron);
 
     this.#copyButton = document.createElement('button');
     this.#copyButton.type = 'button';
@@ -109,7 +132,7 @@ export class Hud {
     this.#copyButton.dataset['testid'] = 'copy-link';
     this.#copyButton.addEventListener('click', () => void this.#copyLink());
 
-    roomRow.append(this.#roomCode, this.#copyButton);
+    roomRow.append(this.#toggle, this.#copyButton);
 
     this.#goal = document.createElement('div');
     this.#goal.className = 'hud__goal';
@@ -146,6 +169,8 @@ export class Hud {
     this.#status.dataset['testid'] = 'net-status';
 
     panel.append(roomRow, this.#goal, this.#scoreboard, this.#vitals, this.#botRow, this.#status);
+    this.#panel = panel;
+    this.#applyCollapsed();
 
     // Top centre: team scores and the round timer.
     const top = document.createElement('div');
@@ -243,6 +268,25 @@ export class Hud {
   }
 
   // -------------------------------------------------------------- internals
+
+  /**
+   * Collapses the panel to its handle, or opens it again.
+   *
+   * What survives a collapse is what a player needs *while playing* — who is
+   * winning, and which room this is. What goes is what they needed while
+   * setting up: the goal line, the invite link, the bot controls and the
+   * connection status.
+   */
+  #setCollapsed(collapsed: boolean): void {
+    this.#collapsed = collapsed;
+    this.#applyCollapsed();
+  }
+
+  #applyCollapsed(): void {
+    this.#panel.classList.toggle('is-collapsed', this.#collapsed);
+    this.#toggle.setAttribute('aria-expanded', String(!this.#collapsed));
+    this.#toggle.title = this.#collapsed ? 'Show room details' : 'Hide room details';
+  }
 
   #createBotButton(label: string, testid: string, onClick: () => void): HTMLButtonElement {
     const button = document.createElement('button');

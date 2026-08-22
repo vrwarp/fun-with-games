@@ -124,10 +124,47 @@ test.describe('on a phone', () => {
     // smaller is a control that technically exists and practically does not.
     await launch(page);
 
-    const controls = page.locator('[data-testid="copy-link"]');
-    const box = await controls.boundingBox();
+    // The panel opens with its handle, so that is the first control to check.
+    const toggle = page.getByTestId('panel-toggle');
+    const handle = await toggle.boundingBox();
+    expect(handle?.height ?? 0).toBeGreaterThanOrEqual(44);
+    expect(handle?.width ?? 0).toBeGreaterThanOrEqual(44);
+
+    await toggle.tap();
+    const box = await page.getByTestId('copy-link').boundingBox();
     expect(box?.height ?? 0).toBeGreaterThanOrEqual(44);
     expect(box?.width ?? 0).toBeGreaterThanOrEqual(44);
+  });
+
+  test('the panel stays out of the way until it is asked for', async ({ page }) => {
+    // On a phone this panel sits directly on top of the game. What it holds is
+    // setup information — the invite link, the goal line, the bot controls,
+    // the connection status — and none of that is worth a corner of the track
+    // while playing. It opens on a tap and closes again on the next one.
+    await launch(page);
+
+    const panel = page.locator('.hud__panel');
+    await expect(panel).toHaveClass(/is-collapsed/);
+    await expect(page.getByTestId('copy-link')).toBeHidden();
+    await expect(page.getByTestId('mode-goal')).toBeHidden();
+    await expect(page.getByTestId('net-status')).toBeHidden();
+
+    // What survives is what a player reads mid-corner: the room, and the score.
+    await expect(page.getByTestId('room-code')).toBeVisible();
+    await expect(page.getByTestId('score-row').first()).toBeVisible();
+
+    const shut = await panel.boundingBox();
+    await page.getByTestId('panel-toggle').tap();
+    await expect(panel).not.toHaveClass(/is-collapsed/);
+    await expect(page.getByTestId('copy-link')).toBeVisible();
+
+    const open = await panel.boundingBox();
+    expect((shut?.height ?? 0) * (shut?.width ?? 0)).toBeLessThan(
+      (open?.height ?? 0) * (open?.width ?? 0) * 0.75,
+    );
+
+    await page.getByTestId('panel-toggle').tap();
+    await expect(panel).toHaveClass(/is-collapsed/);
   });
 
   test('the camera follows the direction of travel unaided', async ({ page }) => {

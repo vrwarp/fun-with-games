@@ -71,7 +71,10 @@ export class TouchInput {
     this.#base.addEventListener('pointermove', this.#onPointerMove);
     this.#base.addEventListener('pointerup', this.#onPointerEnd);
     this.#base.addEventListener('pointercancel', this.#onPointerEnd);
+    this.#base.addEventListener('lostpointercapture', this.#onLostCapture);
     window.addEventListener('resize', this.#onResize);
+    window.addEventListener('blur', this.#onInterrupted);
+    document.addEventListener('visibilitychange', this.#onVisibility);
 
     // Coarse pointer is the honest signal for "this is a touch device". A
     // hybrid laptop reports fine, so also reveal the stick the first time a
@@ -88,7 +91,10 @@ export class TouchInput {
     this.#base.removeEventListener('pointermove', this.#onPointerMove);
     this.#base.removeEventListener('pointerup', this.#onPointerEnd);
     this.#base.removeEventListener('pointercancel', this.#onPointerEnd);
+    this.#base.removeEventListener('lostpointercapture', this.#onLostCapture);
     window.removeEventListener('resize', this.#onResize);
+    window.removeEventListener('blur', this.#onInterrupted);
+    document.removeEventListener('visibilitychange', this.#onVisibility);
     window.removeEventListener('touchstart', this.#onFirstTouch);
     this.#reset();
   }
@@ -144,7 +150,13 @@ export class TouchInput {
   }
 
   #onPointerDown = (event: PointerEvent): void => {
-    if (this.#pointerId !== null) return;
+    // Last touch wins rather than "first touch locks". Refusing a second
+    // pointer means one missed `pointerup` — a capture torn away, the tab
+    // backgrounded with a thumb down — strands the old id for ever: the stick
+    // stays where it was and no later touch is accepted.
+    if (this.#pointerId !== null && this.#pointerId !== event.pointerId) {
+      this.#release(this.#pointerId);
+    }
     this.#pointerId = event.pointerId;
     // Capture so the stick keeps tracking even when the thumb slides outside
     // it — which is exactly what happens when you push it to the edge.
@@ -162,12 +174,35 @@ export class TouchInput {
 
   #onPointerEnd = (event: PointerEvent): void => {
     if (event.pointerId !== this.#pointerId) return;
-    if (this.#base.hasPointerCapture(event.pointerId)) {
-      this.#base.releasePointerCapture(event.pointerId);
-    }
+    this.#release(event.pointerId);
     this.#reset();
     event.preventDefault();
   };
+
+  /** Capture taken away by the browser, with no `pointerup` to go with it. */
+  #onLostCapture = (event: PointerEvent): void => {
+    if (event.pointerId !== this.#pointerId) return;
+    this.#reset();
+  };
+
+  /** Hands off the controls: backgrounded, or the window lost focus. */
+  #onInterrupted = (): void => {
+    this.#reset();
+  };
+
+  #onVisibility = (): void => {
+    if (document.visibilityState === 'hidden') this.#reset();
+  };
+
+  #release(pointerId: number): void {
+    try {
+      if (this.#base.hasPointerCapture(pointerId)) {
+        this.#base.releasePointerCapture(pointerId);
+      }
+    } catch {
+      // Already reclaimed by the browser; the reset below is what matters.
+    }
+  }
 
   #update(event: PointerEvent): void {
     const dx = event.clientX - this.#centerX;

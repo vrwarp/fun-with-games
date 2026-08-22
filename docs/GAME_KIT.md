@@ -182,6 +182,42 @@ phase → bot inputs → movement → player collisions → combat(respawns) →
       → projectiles → ball → items → zones → race → pickups → effect pruning
 ```
 
+### Engine sound — `src/render/enginesound.ts`
+
+Synthesised, like every other sound here — no samples, no network. An engine
+is a good fit for that because it genuinely _is_ a periodic noise source: the
+firing frequency of a running engine is `rpm / 60 × cylinders / 2`, so a
+sawtooth at that frequency with its harmonics shaped by a filter is not an
+impression of an engine, it is the same construction.
+
+Three things make it read as an engine rather than a tone:
+
+- **Pitch follows RPM, not road speed.** Those differ because of the gearbox,
+  and the difference is the whole sound of accelerating: the note climbs, drops
+  on the shift, climbs again. `gearFor()` spreads six ratios so low gears are
+  short and high ones long. Tie pitch straight to speed and you get a siren.
+- **Load shapes the timbre.** A car pulling hard and a car coasting are at the
+  same RPM and sound nothing alike, so the filter opens with load and closes on
+  a lift. Load is measured, not read: a rival's throttle is not transmitted
+  (and should not be), but how its speed is changing says the same thing.
+- **Doppler is computed.** WebAudio used to do this and both
+  `PannerNode.setVelocity` and `AudioListener.dopplerFactor` were **removed**
+  from the spec and from browsers, so `dopplerRatio()` applies
+  `f' = f (c + vr) / (c + vs)` to the oscillator frequency directly. Only
+  motion _along the line between the two_ counts, which is why a car crossing
+  your path is briefly unshifted — the moment its pitch audibly falls through.
+
+Rivals get an HRTF `PannerNode`; your own car does not, because you never move
+relative to your own engine and it has no direction to come from. The listener
+rides on **the car, not the camera** — an isometric camera sits 34 units back,
+and hearing the race from up there would put a rival alongside you a
+bus-length away — while its orientation comes from the camera so that left and
+right match the screen. The scene is left-handed and WebAudio is not, so every
+z is negated on the way across.
+
+Voices are capped at the nearest few and culled beyond 90 units: HRTF panning
+is not free and a phone is the primary target.
+
 ### Contact — `systems/movement.ts`, config `collision`
 
 Overlapping players are always pushed apart. Whether the contact also _costs_

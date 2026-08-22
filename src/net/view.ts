@@ -18,6 +18,19 @@ export interface RenderPlayer {
   /** Height of the feet above the floor; 0 in every flat (top-down) mode. */
   y: number;
   heading: number;
+  /**
+   * World velocity, for anything that has to know how fast a body is moving
+   * rather than merely where it is.
+   *
+   * Present because the engine audio needs both terms and cannot get them
+   * honestly any other way: pitch follows road speed, and a Doppler shift is a
+   * function of velocity along the line to the listener. Differentiating the
+   * rendered position instead would work out to the same thing with a frame of
+   * lag and a lot of noise, and this is already on the wire for prediction, so
+   * projecting it costs nothing.
+   */
+  vx: number;
+  vz: number;
   /** Standing on something. Airborne players can be drawn mid-leap. */
   grounded: boolean;
   score: number;

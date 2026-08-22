@@ -428,6 +428,56 @@ test.describe('racing', () => {
     expect(Math.abs(after - before)).toBeLessThan(0.05);
   });
 
+  test('engines run without upsetting the page', async ({ page }) => {
+    // The engine layer is a live WebAudio graph rebuilt every frame — an
+    // oscillator bank, a filter and an HRTF panner per car, plus the listener
+    // moving with the driver. None of that can be heard from a test, but all
+    // of it can throw, and a browser that dislikes one of those nodes would
+    // otherwise take the whole render loop down with it.
+    const errors: string[] = [];
+    page.on('pageerror', (error) => errors.push(error.message));
+
+    await page.goto('/?net=broadcast&autojoin=1&room=e2e-engine&mode=grandprix&bots=3&name=Driver');
+    await waitForHud(page);
+
+    // Browsers refuse to start an AudioContext until the page has been
+    // interacted with, so without a gesture this would test the early return.
+    await page.getByTestId('viewport').click({ position: { x: 5, y: 5 } });
+    await page.keyboard.down('KeyW');
+    await expect
+      .poll(() => page.evaluate(() => window.__FWG__.tick), { timeout: 30_000 })
+      .toBeGreaterThan(150);
+    await page.keyboard.up('KeyW');
+
+    expect(errors).toEqual([]);
+  });
+
+  test('muting mid-race silences the engines cleanly', async ({ page }) => {
+    // Mute closes the whole context, which is the one moment a continuous
+    // sound can leave a dangling node behind and throw on the next frame.
+    const errors: string[] = [];
+    page.on('pageerror', (error) => errors.push(error.message));
+
+    await page.goto('/?net=broadcast&autojoin=1&room=e2e-mute&mode=grandprix&bots=2&name=Driver');
+    await waitForHud(page);
+    await page.getByTestId('viewport').click({ position: { x: 5, y: 5 } });
+
+    await page.getByTestId('settings-button').click();
+    await page.getByTestId('settings-sound').click();
+    await page.getByTestId('settings-close').click();
+
+    // Keep driving with it off, then turn it back on and keep going.
+    await page.keyboard.down('KeyW');
+    await page.waitForTimeout(1200);
+    await page.getByTestId('settings-button').click();
+    await page.getByTestId('settings-sound').click();
+    await page.getByTestId('settings-close').click();
+    await page.waitForTimeout(1200);
+    await page.keyboard.up('KeyW');
+
+    expect(errors).toEqual([]);
+  });
+
   test('a car sees further ahead than a runner does', async ({ page }) => {
     // A camera framed for someone on foot shows a car under a second of road,
     // which is not enough to plan a corner from. Both sides ask for the same

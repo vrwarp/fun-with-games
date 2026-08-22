@@ -344,6 +344,59 @@ test.describe('on a phone', () => {
     expect((boardBox?.x ?? 0) + (boardBox?.width ?? 0)).toBeLessThanOrEqual(viewport?.width ?? 0);
   });
 
+  test('never leaves the wheel stuck when a touch goes missing', async ({ page }) => {
+    // The reported bug, both halves of it. Every missed `pointerup` — a
+    // capture torn away, the tab backgrounded with a thumb down — used to
+    // strand the pointer id: the last steering angle stuck, so the car turned
+    // until it span, and no later touch was accepted, so the driver could not
+    // take it back. Backgrounding is the interruption a phone actually does.
+    await page.goto(`/?net=broadcast&autojoin=1&room=${ROOM}-stuck&mode=grandprix&name=Driver`);
+    await expect(page.getByTestId('hud')).toBeVisible({ timeout: 30_000 });
+    await expect
+      .poll(() => page.evaluate(() => window.__FWG__.tick), { timeout: 30_000 })
+      .toBeGreaterThan(60);
+
+    const heading = () =>
+      page.evaluate(() => {
+        const handle = window.__FWG__;
+        return handle.players.find((player) => player.id === handle.selfId)?.heading ?? 0;
+      });
+
+    const track = page.getByTestId('driving-steer');
+    const box = (await track.boundingBox())!;
+    const leftEnd = box.x + box.width * 0.05;
+    const rightEnd = box.x + box.width * 0.95;
+    const midY = box.y + box.height / 2;
+
+    // Full right lock, thumb still down.
+    await page.mouse.move(rightEnd, midY);
+    await page.mouse.down();
+    await page.waitForTimeout(600);
+    const turning = await heading();
+
+    // The interruption. No pointerup will ever arrive for that thumb.
+    await page.evaluate(() => window.dispatchEvent(new Event('blur')));
+    await page.waitForTimeout(400);
+    const settled = await heading();
+    await page.waitForTimeout(600);
+
+    // The wheel must have re-centred: no more rotation.
+    expect(Math.abs((await heading()) - settled)).toBeLessThan(0.05);
+    expect(Math.abs(settled - turning)).toBeLessThan(0.6);
+
+    // And the driver must be able to take it back — the half that used to
+    // leave steering dead for the rest of the race.
+    await page.mouse.up();
+    await page.mouse.move(leftEnd, midY);
+    await page.mouse.down();
+    await page.waitForTimeout(700);
+    await page.mouse.up();
+
+    const recovered = await heading();
+    const delta = Math.atan2(Math.sin(recovered - settled), Math.cos(recovered - settled));
+    expect(delta).toBeLessThan(-0.1);
+  });
+
   test('the throttle drives and the wheel only steers', async ({ page }) => {
     // The property the split exists for: one control changes speed, the other
     // changes direction, and neither does the other one's job.

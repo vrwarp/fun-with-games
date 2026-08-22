@@ -389,6 +389,14 @@ What this means in practice:
   `buttons` bitfield (`BUTTON_PRIMARY`/`BUTTON_SECONDARY`) — no wire change.
 - **Abilities fire along the facing direction.** Projectiles aim where you
   run. A phone has no aiming thumb; keep new abilities aim-free too.
+- **A control that can get stuck is a broken control.** Both touch devices
+  capture the pointer, and a capture can be taken away without a `pointerup`
+  ever arriving — the tab backgrounded mid-corner, an OS gesture cutting in.
+  Every such device must therefore reset on `lostpointercapture`, on `blur` and
+  on `visibilitychange`, and must let a new `pointerdown` take over rather than
+  refusing one while an id is held. Getting this wrong strands the last input
+  for ever: the car turns until it spins, AND no later touch is accepted, so
+  the player cannot take it back.
 - **Touch targets ≥ 44px.** Anything smaller is genuinely hard to hit with a
   thumb, and the mobile e2e suite asserts it for the join button.
 - **Watch the frame budget.** Phones report device pixel ratios of 3, which is

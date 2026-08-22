@@ -1,4 +1,5 @@
 import { createLogger } from '../shared/logger.js';
+import { EngineSound, type AudioListenerPose, type EngineVoiceInput } from './enginesound.js';
 
 const log = createLogger('render:audio');
 
@@ -30,6 +31,8 @@ export class GameAudio {
   #ctx: AudioContext | null = null;
   #attached = false;
   #muted: boolean;
+  #engines: EngineSound | null = null;
+  #engineOptions: { topSpeed: number; engineAccel: number } | null = null;
 
   #resume = (): void => {
     if (!this.#ctx) return;
@@ -59,6 +62,10 @@ export class GameAudio {
     this.#muted = muted;
 
     if (muted) {
+      // An engine is continuous, so unlike a cue it cannot just be dropped on
+      // the floor while muted — the whole chain goes with the context.
+      this.#engines?.dispose();
+      this.#engines = null;
       void this.#ctx?.close().catch(() => undefined);
       this.#ctx = null;
       return;
@@ -66,6 +73,31 @@ export class GameAudio {
 
     this.#open();
     if (this.#attached) this.#resume();
+  }
+
+  /**
+   * Turns on the continuous engine layer, for modes that have engines.
+   *
+   * Separate from the constructor because it needs the mode's own numbers: the
+   * pitch is a fraction of top speed, and load is measured against what the
+   * engine can actually pull.
+   */
+  enableEngines(options: { topSpeed: number; engineAccel: number }): void {
+    this.#engineOptions = options;
+  }
+
+  /**
+   * Advances the engine layer by one frame. A no-op when muted, when the
+   * browser has not let the context start yet, or in a mode without engines.
+   */
+  updateEngines(
+    cars: readonly EngineVoiceInput[],
+    listener: AudioListenerPose,
+    deltaSeconds: number,
+  ): void {
+    if (!this.#engineOptions || !this.#ctx || this.#ctx.state !== 'running') return;
+    this.#engines ??= new EngineSound(this.#ctx, this.#engineOptions);
+    this.#engines.update(cars, listener, deltaSeconds);
   }
 
   attach(): void {
@@ -81,6 +113,8 @@ export class GameAudio {
       window.removeEventListener('keydown', this.#resume);
       this.#attached = false;
     }
+    this.#engines?.dispose();
+    this.#engines = null;
     void this.#ctx?.close().catch(() => undefined);
     this.#ctx = null;
   }

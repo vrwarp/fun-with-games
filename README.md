@@ -4,7 +4,7 @@ A peer-to-peer multiplayer arena built with **Babylon.js** and **decentralized
 WebRTC** — no game server, no signalling server, no accounts. Playable in 3D,
 2.5D or 2D from the same engine.
 
-It is a **starter kit with a game kit inside**: fourteen playable modes (tag,
+It is a **starter kit with a game kit inside**: sixteen playable modes (tag,
 infection, blaster arena, knockout, soccer, capture the flag, king of the
 hill, checkpoint racing, crown keep-away, a timed shard rush, an endless
 sandbox, a 2D side-scrolling platformer, a 2D top-down shooter and a 2.5D
@@ -30,7 +30,7 @@ handy? Add `&bots=3`.
 
 ## What you get
 
-- **A game kit.** Fourteen modes out of the box and the systems to build many
+- **A game kit.** Sixteen modes out of the box and the systems to build many
   more: rounds and win conditions, teams, combat, projectiles, tag roles,
   ball + goals, hills/checkpoints/bases, flags and crowns, timed effects,
   power-ups, gravity with jumping and standable platforms, and bots that

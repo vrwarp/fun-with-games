@@ -99,6 +99,9 @@ constructing it would bury the point of the test.
 | Tag and infection: assignment, transfer, grace, scoring                                                      | `unit/sim/tag.test.ts`            |
 | Ball: kicks, bounces, goals, own goals                                                                       | `unit/sim/ball.test.ts`           |
 | Zones: hill ownership/contest/scoring, checkpoints and laps                                                  | `unit/sim/zones.test.ts`          |
+| Circuits: geometry, smoothing, on-track, lookahead, grids, corner radii                                      | `unit/sim/track.test.ts`          |
+| Car handling: steering, grip, brakes, surfaces, tyres, pit limiter                                           | `unit/sim/vehicle.test.ts`        |
+| Racing: running order, gaps, slipstream, DRS, tyre stints, pit stops                                         | `unit/sim/race.test.ts`           |
 | Items: flags (take/return/drop/deliver), crown (steal, carry score)                                          | `unit/sim/items.test.ts`          |
 | Bots: caps, ids, seek/chase/flee/shoot, no hidden randomness                                                 | `unit/sim/bots.test.ts`           |
 | Every game mode: determinism + snapshot restore + resume, 300+ ticks                                         | `unit/sim/presets.test.ts`        |

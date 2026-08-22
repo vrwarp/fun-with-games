@@ -30,6 +30,8 @@ npm run dev
 | Capture the flag     | `?mode=ctf`                       |
 | King of the hill     | `?mode=hill`                      |
 | Lap race             | `?mode=race`                      |
+| Formula racing       | `?mode=grandprix`                 |
+| A quick city race    | `?mode=street`                    |
 | Keep-away            | `?mode=crown`                     |
 | Timed shard race     | `?mode=rush`                      |
 
@@ -108,6 +110,8 @@ That is the whole change. Some more one-preset games to steal:
 | Team hill       | `hill` + `teams: { count: 2 }` — the zone system already scores teams                                                                                                                                                                               |
 | Team blasters   | `arena` + `teams: { count: 2 }` — team KO totals win (no friendly fire, already handled)                                                                                                                                                            |
 | Snail race      | `race` + `playerMaxSpeed: 5`, no obstacles, tiny checkpoints                                                                                                                                                                                        |
+| Endurance       | `grandprix` + `phases: { targetScore: 10 }` and a short `race.tyreStintTicks` — the pit stop becomes the whole strategy                                                                                                                             |
+| Slippery street | `street` + `vehicle: { grip: 4 }` — ice racing, same circuit                                                                                                                                                                                        |
 | Crown of thorns | `crown` + `combat`+`projectiles`: shoot the carrier to make them drop it (KO drops are built in)                                                                                                                                                    |
 
 Numbers to remember: ticks are 1/30s — use the `seconds(n)` helper already in
@@ -360,6 +364,65 @@ them, so scattering them across the lane automatically decorates the ledges.
 also shoots must move jumping to `'secondary'` and set
 `usesSecondaryAction: true` in its metadata.
 
+### Recipe: a new circuit
+
+Cars, tyres, DRS and the pit lane all exist (see `grandprix`). A new circuit is
+a list of **control points** — the shape of the lap, not the road's vertices —
+plus the gates generated from it:
+
+```ts
+// src/sim/presets.ts
+const MY_CIRCUIT_CONTROL: readonly TrackPoint[] = [
+  { x: -14, z: -31 }, // point 0 IS the start/finish line…
+  { x: 4, z: -31 }, //   …so put it on a straight: everything behind it is grid
+  { x: 22, z: -30 },
+  { x: 33, z: -26 }, //  ~35°, over 11-unit segments
+  // …round the lap, back to just before point 0
+];
+
+const MY_CIRCUIT = smoothTrack(MY_CIRCUIT_CONTROL);
+
+myRace: {
+  vehicle: { enabled: true, brakeButton: 'secondary' },
+  track: { enabled: true, halfWidth: 6, gridColumns: 2 },
+  trackPath: MY_CIRCUIT,
+  race: { enabled: true, slipstreamRange: 10, drsGapSeconds: 1 },
+  zones: [
+    ...trackGates(MY_CIRCUIT, 9, 12),          // gate 0 lands on the line
+    { kind: 'drs', x: 4, z: -31, radius: 14, team: -1, order: 0 },
+  ],
+  zoneRules: { lapScore: 1, hillScorePerSecond: 0, goalScore: 0 },
+  phases: { enabled: true, minPlayers: 2, targetScore: 3 },
+  playerMaxSpeed: 27,
+  obstacleCount: 0,
+  pickupCount: 0,
+}
+```
+
+Everything else falls out of the centreline: the starting grid, the racing line
+the bots follow, lap timing, the running order, and the whole track render.
+Add the mode id in two files as in Tier 1 and it is playable.
+
+**Two rules, and they are arithmetic rather than taste.**
+
+1. **No corner tighter than the road is wide.** `smoothTrack` rounds the control
+   points into the real centreline; if the resulting curve has a radius under
+   `halfWidth`, the inside edge of the tarmac crosses itself — an unreachable
+   pinch in the simulation, and a folded wedge of kerb lying across the racing
+   line in the renderer. In practice: keep each turn at or under **40°** with
+   segments of **nine units or more**. A 90° corner is four 40° steps, not one
+   flick.
+2. **Leave a road's width of run-off** — every point inside
+   `arenaHalfExtent - halfWidth`.
+
+`tests/unit/sim/track.test.ts` sweeps every circuit for both, so a circuit
+nobody can drive fails the suite rather than the demo.
+
+⚠️ Gates are deliberately wider than the road (radius 12 on a 12-wide road), so
+a car that runs wide still records its lap instead of getting stranded at a gate
+it drove around. If you add a pit lane, check that the start/finish gate reaches
+it — `grandprix` widens gate 0 to 16 for exactly that reason.
+
 ### Recipe: a brand-new effect (e.g. `magnet` that pulls pickups)
 
 1. Grant it somewhere: a pickup kind (`pickupWeights` + a case in
@@ -430,6 +493,8 @@ effect. Derived-from-tick state → compute it, store nothing.
 | A keyboard-only ability                                | Buttons bitfield + `TouchButtons` — see the dash recipe                    |
 | Testing gameplay through Playwright                    | `World` + `SessionHarness` in Vitest; e2e is for rendering and DOM         |
 | Editing `DEFAULT_SIM_CONFIG` to tune one mode          | Presets override; the default stays the sandbox                            |
+| A circuit corner sharper than the road is wide         | Four 40° steps, not one 90° flick — `track.test.ts` checks                 |
+| Smoothing a circuit only in the renderer               | `smoothTrack` in the preset, so sim and render share one road              |
 | Widening `decodeMessage` to accept a broken message    | Fix the sender; the parser stays total                                     |
 
 ---
@@ -438,6 +503,7 @@ effect. Derived-from-tick state → compute it, store nothing.
 
 ```bash
 npm run dev                    # localhost:5173 — add ?mode=…&bots=…&view=…&sprites=1
+                               # ?mode=grandprix&bots=3 is the racing demo
 npm run dev -- --host          # same, reachable from a phone on the LAN
 npm run test:watch             # the sub-second loop while writing sim code
 npm run verify                 # before saying "done" (format+lint+types+tests+build)

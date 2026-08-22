@@ -9,6 +9,7 @@ import {
 } from '../types.js';
 import { ceilingAbove, supportHeight } from './arena.js';
 import { isImmobilized, movementScale } from './effects.js';
+import { steerVehicle } from './vehicle.js';
 
 /** Below this speed a player is treated as stationary and stops turning. */
 const HEADING_SPEED_EPSILON = 0.05;
@@ -47,6 +48,11 @@ const LAND_TOLERANCE = 0.02;
  *
  * `tick` is the tick being simulated (used to evaluate timed effects);
  * `movementLocked` is true during countdown / round-end freezes.
+ *
+ * With `vehicle.enabled` the velocity and heading come from `steerVehicle`
+ * instead — a car is steered, not pushed — but the position integration,
+ * obstacle push-out and arena clamp below are shared, so a car hits a wall
+ * through exactly the code every other mode already exercises.
  */
 export function integratePlayer(
   player: PlayerState,
@@ -57,6 +63,17 @@ export function integratePlayer(
   tick = 0,
   movementLocked = false,
 ): void {
+  if (config.vehicle.enabled) {
+    steerVehicle(player, input, config, dt, tick, movementLocked);
+    player.x += player.vx * dt;
+    player.z += player.vz * dt;
+    resolveObstacles(player, config, obstacles);
+    clampToArena(player, config);
+    // Heading is the driver's, not the velocity's: a car that spins keeps
+    // pointing where it was pointing, which is the whole reason it is a spin.
+    return;
+  }
+
   const platform = config.platform;
   // A side-scroller is one lane deep: depth input is not merely unused, it is
   // discarded, so a stray thumbstick angle cannot drift the player off-plane.

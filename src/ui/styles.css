@@ -419,6 +419,96 @@ body {
   color: #ff5d6c;
 }
 
+/* The pit board. It lives in the same top-corner column as the timer, so it
+   inherits the phone-right / wide-screen-centre placement for free, and it is
+   the only HUD element a driver has time to read at speed: position, lap,
+   the lap under way, then the two things that decide a race. */
+.hud__race {
+  min-width: 9.5rem;
+  padding: 0.4rem 0.65rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-variant-numeric: tabular-nums;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 12px;
+  backdrop-filter: blur(8px);
+}
+
+.hud__race[hidden],
+.hud__race-row--tyres[hidden],
+.hud__race-drs[hidden] {
+  display: none;
+}
+
+.hud__race-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+
+.hud__race-pos {
+  font-size: 1.15rem;
+  font-weight: 800;
+}
+
+.hud__race-lap {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--text-dim);
+}
+
+.hud__race-time {
+  font-size: 0.95rem;
+  font-weight: 700;
+}
+
+.hud__race-best {
+  font-size: 0.68rem;
+  color: var(--text-dim);
+}
+
+/* Tyre life. Green until it is not — the colour change is the message, and it
+   has to land in peripheral vision because nobody looks away from the road. */
+.hud__race-tyre {
+  flex: 1;
+  height: 0.35rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.14);
+  overflow: hidden;
+}
+
+.hud__race-tyre i {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: #06d6a0;
+  transition: width 240ms linear;
+}
+
+.hud__race-tyre i[data-low='true'] {
+  background: #ff5d6c;
+}
+
+.hud__race-drs {
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  padding: 0.1rem 0.35rem;
+  border-radius: 5px;
+  border: 1px solid #06d6a0;
+  color: #06d6a0;
+}
+
+/* Armed is an outline; open is filled. A driver should be able to tell which
+   without reading the word. */
+.hud__race-drs[data-state='open'] {
+  background: #06d6a0;
+  color: #06231b;
+}
+
 /* The phase banner sits above the centre of the arena, not over the player's
    character (which is centre-screen), so gameplay stays visible through
    countdowns. */

@@ -33,6 +33,22 @@ export interface RenderPlayer {
   carrying: '' | 'flag' | 'crown';
   checkpoint: number;
   lap: number;
+  /**
+   * 1-based race position; 0 when the mode is not a race.
+   *
+   * Derived, not simulated — see `raceStandings` in `src/sim/systems/race.ts`.
+   */
+  position: number;
+  /** Seconds behind the car directly ahead. 0 for the leader. */
+  interval: number;
+  /** Seconds elapsed on the current lap. 0 before the first line crossing. */
+  lapTime: number;
+  /** Last completed lap, in seconds. 0 = none yet. */
+  lastLap: number;
+  /** Fastest lap this round, in seconds. 0 = none yet. */
+  bestLap: number;
+  /** Tyre life left, 1 fresh to 0 gone. Always 1 when wear is disabled. */
+  tyres: number;
   isBot: boolean;
   isLocal: boolean;
   isHost: boolean;
@@ -75,7 +91,7 @@ export interface RenderProjectile {
 /** A zone's static geometry merged with its live ownership. */
 export interface RenderZone {
   id: number;
-  kind: 'hill' | 'goal' | 'base' | 'checkpoint';
+  kind: 'hill' | 'goal' | 'base' | 'checkpoint' | 'drs' | 'pit';
   x: number;
   z: number;
   radius: number;
@@ -111,6 +127,14 @@ export interface RenderState {
   items: RenderItem[];
   /** `combat.maxHp` when combat is enabled, else 0 (hide health UI). */
   maxHp: number;
+  /**
+   * Laps needed to win, or 0 when the mode is not a race (hide the lap UI).
+   *
+   * The circuit's geometry is deliberately NOT here: it is static config, and
+   * `src/render` already holds the `SimConfig` it was built from. Only things
+   * that change belong in a per-frame view model.
+   */
+  totalLaps: number;
 }
 
 export const EMPTY_RENDER_PHASE: RenderPhase = Object.freeze({
@@ -134,4 +158,5 @@ export const EMPTY_RENDER_STATE: RenderState = Object.freeze({
   zones: [] as RenderZone[],
   items: [] as RenderItem[],
   maxHp: 0,
+  totalLaps: 0,
 });

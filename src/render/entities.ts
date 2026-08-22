@@ -4,6 +4,8 @@ import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial.js'
 import { CreateCapsule } from '@babylonjs/core/Meshes/Builders/capsuleBuilder.js';
 import { CreatePolyhedron } from '@babylonjs/core/Meshes/Builders/polyhedronBuilder.js';
 import { CreatePlane } from '@babylonjs/core/Meshes/Builders/planeBuilder.js';
+import { CreateBox } from '@babylonjs/core/Meshes/Builders/boxBuilder.js';
+import { CreateCylinder } from '@babylonjs/core/Meshes/Builders/cylinderBuilder.js';
 import type { AbstractMesh } from '@babylonjs/core/Meshes/abstractMesh.js';
 import type { Mesh } from '@babylonjs/core/Meshes/mesh.js';
 import { TransformNode } from '@babylonjs/core/Meshes/transformNode.js';
@@ -33,6 +35,10 @@ interface PlayerView {
   color: string;
   baseColor: Color3;
   baseEmissive: Color3;
+  /** Rear wing, when this body is a car. Lies flat while DRS is open. */
+  wing: Mesh | null;
+  /** Extra meshes (wheels, wings) to dispose with the body. */
+  parts: Mesh[];
 }
 
 interface PickupView {
@@ -55,6 +61,17 @@ export class EntityViews {
   #players = new Map<string, PlayerView>();
   #pickups = new Map<number, PickupView>();
   readonly #sprites: boolean;
+  /**
+   * Draw cars instead of bodies.
+   *
+   * Read from the config rather than passed in as an option: whether the game
+   * is driven is already decided by `vehicle.enabled`, and a second switch
+   * would only be a way for the two to disagree.
+   */
+  readonly #vehicle: boolean;
+  /** Shared trim materials — every car uses the same dark bodywork. */
+  #carTrim: StandardMaterial | null = null;
+  #carRubber: StandardMaterial | null = null;
 
   /** Prototype meshes; per-entity meshes are clones/instances of these. */
   #playerProto: Mesh;
@@ -73,6 +90,7 @@ export class EntityViews {
     this.#config = config;
     this.#shadows = shadows;
     this.#sprites = options.sprites ?? false;
+    this.#vehicle = config.vehicle.enabled;
 
     this.#playerProto = CreateCapsule(
       'player:proto',
@@ -201,6 +219,10 @@ export class EntityViews {
     for (const view of this.#pickups.values()) view.mesh.dispose();
     this.#pickups.clear();
     this.#playerProto.dispose();
+    this.#carTrim?.dispose();
+    this.#carTrim = null;
+    this.#carRubber?.dispose();
+    this.#carRubber = null;
     for (const proto of this.#pickupProtos.values()) {
       proto.material.dispose();
       proto.mesh.dispose();
@@ -229,6 +251,9 @@ export class EntityViews {
       // A sprite is a billboard: it must not yaw with the player, or it would
       // turn edge-on and vanish. The 3D body still faces where it is going.
       if (!this.#sprites) view.root.rotation.y = player.heading;
+      // The wing lies flat when the driver opens it — visible from behind,
+      // which is exactly who needs to know.
+      if (view.wing) view.wing.rotation.x = player.effects.includes('drs') ? -1.15 : 0;
       this.#applyStatus(view, player);
     }
 
@@ -248,6 +273,35 @@ export class EntityViews {
     const baseEmissive = player.isLocal ? baseColor.scale(0.35) : new Color3(0, 0, 0);
 
     let body: Mesh;
+    let wing: Mesh | null = null;
+    const parts: Mesh[] = [];
+
+    if (this.#vehicle && !this.#sprites) {
+      const car = this.#buildCar(player.id, root, material);
+      body = car.chassis;
+      wing = car.wing;
+      parts.push(...car.parts);
+      material.diffuseColor = baseColor;
+      material.specularColor = new Color3(0.45, 0.45, 0.45);
+      material.emissiveColor = baseEmissive;
+      body.material = material;
+      this.#shadows?.addShadowCaster(body);
+      for (const part of parts) this.#shadows?.addShadowCaster(part);
+
+      return {
+        root,
+        body,
+        label: this.#createLabel(player, root),
+        material,
+        name: player.name,
+        color: player.color,
+        baseColor,
+        baseEmissive,
+        wing,
+        parts,
+      };
+    }
+
     if (this.#sprites) {
       const height = this.#config.playerHeight * 1.2;
       body = CreatePlane(`player:${player.id}:body`, { width: height, height }, this.#scene);
@@ -291,7 +345,130 @@ export class EntityViews {
       color: player.color,
       baseColor,
       baseEmissive,
+      wing,
+      parts,
     };
+  }
+
+  /**
+   * A single-seater from seven boxes and four cylinders.
+   *
+   * Procedural like everything else here, because the kit must look
+   * intentional on a fresh clone with no art at all. Proportions are all
+   * derived from `playerRadius`, which is what the simulation actually
+   * collides with — so a car that looks like it fits through a gap does.
+   *
+   * The body points along +Z, matching `heading = atan2(vx, vz)`. That is the
+   * one detail a symmetric capsule let everyone ignore and a car cannot.
+   */
+  #buildCar(
+    id: string,
+    root: TransformNode,
+    chassisMaterial: StandardMaterial,
+  ): { chassis: Mesh; wing: Mesh; parts: Mesh[] } {
+    const scene = this.#scene;
+    const r = this.#config.playerRadius;
+    // The root is lifted so a capsule's middle sits at mid-height; a car has
+    // to be put back down on the road.
+    const floor = -r * 1.7;
+    const parts: Mesh[] = [];
+
+    const trim = this.#trimMaterial();
+    const rubber = this.#rubberMaterial();
+
+    const chassis = CreateBox(
+      `player:${id}:body`,
+      { width: r * 1.15, height: r * 0.55, depth: r * 3.4 },
+      scene,
+    );
+    chassis.parent = root;
+    chassis.position.set(0, floor + r * 0.62, 0);
+    chassis.material = chassisMaterial;
+
+    const nose = CreateBox(
+      `player:${id}:nose`,
+      { width: r * 0.5, height: r * 0.3, depth: r * 1.5 },
+      scene,
+    );
+    nose.parent = root;
+    nose.position.set(0, floor + r * 0.5, r * 2.2);
+    nose.material = chassisMaterial;
+    parts.push(nose);
+
+    const airbox = CreateBox(
+      `player:${id}:airbox`,
+      { width: r * 0.5, height: r * 0.5, depth: r * 0.8 },
+      scene,
+    );
+    airbox.parent = root;
+    airbox.position.set(0, floor + r * 1.15, -r * 0.5);
+    airbox.material = chassisMaterial;
+    parts.push(airbox);
+
+    const frontWing = CreateBox(
+      `player:${id}:fwing`,
+      { width: r * 2.1, height: r * 0.12, depth: r * 0.6 },
+      scene,
+    );
+    frontWing.parent = root;
+    frontWing.position.set(0, floor + r * 0.22, r * 2.9);
+    frontWing.material = trim;
+    parts.push(frontWing);
+
+    // The rear wing is kept as its own handle: opening DRS lays it flat, which
+    // is the only way a rival can see the overtake coming.
+    const wing = CreateBox(
+      `player:${id}:rwing`,
+      { width: r * 1.9, height: r * 0.14, depth: r * 0.7 },
+      scene,
+    );
+    wing.parent = root;
+    wing.position.set(0, floor + r * 1.35, -r * 1.9);
+    wing.material = trim;
+
+    const wheelSpecs: Array<[number, number]> = [
+      [r * 0.85, r * 1.6],
+      [-r * 0.85, r * 1.6],
+      [r * 0.9, -r * 1.35],
+      [-r * 0.9, -r * 1.35],
+    ];
+    wheelSpecs.forEach(([x, z], index) => {
+      const front = index < 2;
+      const radius = front ? r * 0.42 : r * 0.5;
+      const wheel = CreateCylinder(
+        `player:${id}:wheel${index}`,
+        { diameter: radius * 2, height: r * 0.5, tessellation: 12 },
+        scene,
+      );
+      wheel.parent = root;
+      // Cylinders stand up the Y axis by default; a wheel lies on X.
+      wheel.rotation.z = Math.PI / 2;
+      wheel.position.set(x, floor + radius, z);
+      wheel.material = rubber;
+      parts.push(wheel);
+    });
+
+    return { chassis, wing, parts };
+  }
+
+  #trimMaterial(): StandardMaterial {
+    if (!this.#carTrim) {
+      const material = new StandardMaterial('car:trim', this.#scene);
+      material.diffuseColor = Color3.FromHexString('#20242e');
+      material.specularColor = new Color3(0.2, 0.2, 0.24);
+      this.#carTrim = material;
+    }
+    return this.#carTrim;
+  }
+
+  #rubberMaterial(): StandardMaterial {
+    if (!this.#carRubber) {
+      const material = new StandardMaterial('car:rubber', this.#scene);
+      material.diffuseColor = Color3.FromHexString('#15171d');
+      material.specularColor = new Color3(0.05, 0.05, 0.05);
+      this.#carRubber = material;
+    }
+    return this.#carRubber;
   }
 
   #createLabel(player: RenderPlayer, parent: TransformNode): Mesh {
@@ -369,6 +546,8 @@ export class EntityViews {
     view.label.material?.dispose(true, true);
     view.label.dispose();
     view.material.dispose();
+    view.wing?.dispose();
+    for (const part of view.parts) part.dispose();
     view.body.dispose();
     view.root.dispose();
   }

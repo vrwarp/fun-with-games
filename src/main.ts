@@ -136,6 +136,10 @@ async function launch(app: HTMLElement, options: LaunchOptions): Promise<void> {
 
   const hud = new Hud(app, {
     mode,
+    // The UI layer may not read `SimConfig`, so the composition root hands it
+    // the one fact it needs from there rather than duplicating the answer in
+    // the mode metadata.
+    drives: config.vehicle.enabled,
     onAddBot: () => void session.addBot(),
     onRemoveBot: () => void session.removeBot(),
   });
@@ -169,6 +173,13 @@ async function launch(app: HTMLElement, options: LaunchOptions): Promise<void> {
           break;
         case 'lap':
           audio.play('lap');
+          break;
+        case 'fastlap':
+          audio.play('score');
+          tapFeedback(30);
+          break;
+        case 'drs':
+          audio.play('powerup');
           break;
         case 'item':
           audio.play('crown');

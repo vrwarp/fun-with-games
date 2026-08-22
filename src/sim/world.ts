@@ -3,7 +3,7 @@ import { quantize } from '../shared/math.js';
 import { DEFAULT_SIM_CONFIG, tickDeltaSeconds, type SimConfig } from './config.js';
 import { Rng } from './rng.js';
 import type { SimEventRecord, StepContext } from './step.js';
-import { generateObstacles, spawnPosition } from './systems/arena.js';
+import { generateObstacles, spawnHeading, spawnPosition } from './systems/arena.js';
 import { computeBotInput } from './systems/bots.js';
 import { updateCombat } from './systems/combat.js';
 import { pruneEffects } from './systems/effects.js';
@@ -14,6 +14,7 @@ import { updateProjectiles } from './systems/projectiles.js';
 import { updateBall } from './systems/ball.js';
 import { updateItems } from './systems/items.js';
 import { updateTag } from './systems/tag.js';
+import { updateRace } from './systems/race.js';
 import { updateZones } from './systems/zones.js';
 import {
   EMPTY_INPUT,
@@ -123,7 +124,8 @@ export class World {
       return existing;
     }
 
-    const spawn = spawnPosition(this.config, this.#spawnCounter++);
+    const slot = this.#spawnCounter++;
+    const spawn = spawnPosition(this.config, slot);
     const player: PlayerState = {
       id,
       name: profile.name,
@@ -134,7 +136,7 @@ export class World {
       vx: 0,
       vz: 0,
       vy: 0,
-      heading: 0,
+      heading: spawnHeading(this.config, slot),
       score: 0,
       team: this.#assignTeam(),
       role: ROLE_NONE,
@@ -142,6 +144,9 @@ export class World {
       lives: this.config.combat.lives,
       checkpoint: 0,
       lap: 0,
+      lapStartTick: 0,
+      lastLapTicks: 0,
+      bestLapTicks: 0,
       grounded: true,
       jumps: 0,
       jumpLatch: false,
@@ -312,6 +317,7 @@ export class World {
     updateBall(ctx); //       kicks, bounces, goals
     updateItems(ctx); //      flags and crowns: take, steal, drop, deliver
     updateZones(ctx); //      hill ownership + scoring, race checkpoints
+    updateRace(ctx); //       tyres, the slipstream and DRS (laps are current)
     updatePickups(ctx); //    collection, payloads, respawns
 
     // 5. Housekeeping.
@@ -443,6 +449,9 @@ export class World {
       mix(player.lives);
       mix(player.checkpoint);
       mix(player.lap);
+      mix(player.lapStartTick);
+      mix(player.lastLapTicks);
+      mix(player.bestLapTicks);
       mix(player.isBot ? 1 : 0);
       for (const id of Object.keys(player.effects).sort()) {
         mixString(id);

@@ -28,7 +28,9 @@ export type GameModeId =
   | 'crown'
   | 'platformer'
   | 'skirmish'
-  | 'dungeon';
+  | 'dungeon'
+  | 'grandprix'
+  | 'street';
 
 export interface GameModeInfo {
   readonly id: GameModeId;
@@ -184,6 +186,28 @@ export const GAME_MODES: readonly GameModeInfo[] = [
     primaryLabel: 'Fire',
     view: 'topdown',
     sprites: true,
+    suggestedPlayers: 2,
+  },
+  {
+    id: 'grandprix',
+    title: 'Grand Prix',
+    tagline: 'Formula racing — lights out, three laps, wings and tyres.',
+    goal: 'Three laps of the circuit. Catch a tow, open the wing to pass, and pit before the tyres go.',
+    usesPrimaryAction: true,
+    primaryLabel: 'DRS',
+    usesSecondaryAction: true,
+    secondaryLabel: 'Brake',
+    suggestedPlayers: 2,
+  },
+  {
+    id: 'street',
+    title: 'Street Circuit',
+    tagline: 'A tight city lap, seen from above. Same cars, no wings.',
+    goal: 'Five laps of the streets. No DRS, no pit stops — just the racing line.',
+    usesPrimaryAction: false,
+    usesSecondaryAction: true,
+    secondaryLabel: 'Brake',
+    view: 'topdown',
     suggestedPlayers: 2,
   },
   {

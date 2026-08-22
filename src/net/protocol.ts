@@ -25,8 +25,9 @@ import {
  * zones and per-player kit fields in snapshots.
  * v3: vertical axis — heights and vertical velocity for players, pickups,
  * projectiles and items, plus jump bookkeeping.
+ * v4: racing — per-player lap timing (lap start, last lap, best lap).
  */
-export const PROTOCOL_VERSION = 3;
+export const PROTOCOL_VERSION = 4;
 
 export type MessageType = 'hello' | 'input' | 'snapshot' | 'bye';
 
@@ -326,6 +327,9 @@ function decodePlayer(raw: unknown): WorldSnapshot['players'][number] | null {
     'lives',
     'checkpoint',
     'lap',
+    'lapStartTick',
+    'lastLapTicks',
+    'bestLapTicks',
     'jumps',
     'lastInputSeq',
   ] as const;
@@ -357,6 +361,11 @@ function decodePlayer(raw: unknown): WorldSnapshot['players'][number] | null {
     lives: Math.floor(raw['lives'] as number),
     checkpoint: Math.floor(raw['checkpoint'] as number),
     lap: Math.floor(raw['lap'] as number),
+    // Lap times are durations: a negative one would render as a nonsense
+    // "-3.4s best lap", so the floor is 0 ("none yet") rather than a reject.
+    lapStartTick: Math.max(0, Math.floor(raw['lapStartTick'] as number)),
+    lastLapTicks: Math.max(0, Math.floor(raw['lastLapTicks'] as number)),
+    bestLapTicks: Math.max(0, Math.floor(raw['bestLapTicks'] as number)),
     grounded: raw['grounded'] === true,
     jumps: Math.floor(raw['jumps'] as number),
     jumpLatch: raw['jumpLatch'] === true,

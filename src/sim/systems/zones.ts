@@ -13,10 +13,11 @@ import { isRoundActive } from './phase.js';
  *   render it.
  * - `checkpoint`: race gates crossed in `order`. Completing the full circuit
  *   increments `lap` and pays `lapScore` — set `phases.targetScore` to the
- *   number of laps to make it a race.
+ *   number of laps to make it a race. Gate 0 is the start/finish line, so
+ *   crossing it both ends one lap and starts the clock on the next.
  *
- * `goal` zones are consumed by the ball system and `base` zones by the item
- * system; this file ignores both.
+ * `goal` zones are consumed by the ball system, `base` zones by the item
+ * system, and `drs`/`pit` zones by the racing system; this file ignores them.
  */
 export function updateZones(ctx: StepContext): void {
   if (ctx.config.zones.length === 0) return;
@@ -88,12 +89,27 @@ function updateCheckpoints(ctx: StepContext): void {
     if (!next) continue;
     if (distanceSq2(player.x, player.z, next.x, next.z) > next.radius * next.radius) continue;
 
+    const previous = player.checkpoint;
     player.checkpoint += 1;
+
     if (player.checkpoint >= circuit) {
       player.checkpoint = 0;
       player.lap += 1;
       player.score += ctx.config.zoneRules.lapScore;
-      ctx.out.push({ type: 'lapCompleted', playerId: player.id, lap: player.lap });
+
+      const lapTicks = ctx.tick - player.lapStartTick;
+      player.lastLapTicks = lapTicks;
+      const best = player.bestLapTicks === 0 || lapTicks < player.bestLapTicks;
+      if (best) player.bestLapTicks = lapTicks;
+      // The line that ends a lap starts the next one; no gap, no double count.
+      player.lapStartTick = ctx.tick;
+
+      ctx.out.push({ type: 'lapCompleted', playerId: player.id, lap: player.lap, lapTicks, best });
+    } else if (previous === 0 && player.lap === 0) {
+      // The very first crossing of the start/finish line. Timing from here
+      // rather than from tick 0 means a lap time measures a lap, not a lap
+      // plus however long the driver dawdled on the grid.
+      player.lapStartTick = ctx.tick;
     }
   }
 }

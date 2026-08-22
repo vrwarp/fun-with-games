@@ -4,7 +4,10 @@ import {
   type PlatformSpec,
   type SimConfig,
   type SimConfigOverrides,
+  type TrackPoint,
+  type ZoneSpec,
 } from './config.js';
+import { smoothTrack, trackLength, trackPoseAt } from './track.js';
 
 /**
  * Named game modes: one `SimConfig` per `GameModeId`.
@@ -59,6 +62,117 @@ const PLATFORMER_LEVEL: readonly PlatformSpec[] = [
   { x: 35, z: 0, halfX: 3.5, halfZ: 3, baseY: 0, top: 6.1 },
   { x: 42, z: 0, halfX: 3, halfZ: 3, baseY: 5, top: 8 },
 ];
+
+// ---------------------------------------------------------------------------
+// Circuits
+// ---------------------------------------------------------------------------
+
+/**
+ * Evenly spaced timing gates around a circuit, gate 0 on the start/finish line.
+ *
+ * Generated rather than hand-placed because a gate has to sit ON the racing
+ * line to be crossable, and "on the line" is arithmetic the centreline already
+ * knows. `radius` is deliberately wider than the road: a car that runs wide
+ * still trips the loop, so a mistake costs time instead of stranding the
+ * driver at a gate they can no longer reach.
+ */
+function trackGates(path: readonly TrackPoint[], count: number, radius: number): ZoneSpec[] {
+  const length = trackLength(path);
+  return Array.from({ length: count }, (_, order) => {
+    const pose = trackPoseAt(path, (order * length) / count);
+    return { kind: 'checkpoint', x: pose.x, z: pose.z, radius, team: -1, order } as const;
+  });
+}
+
+/**
+ * A permanent road course, as control points in the order it is driven.
+ *
+ * `smoothTrack` rounds these into the centreline the game uses, so what is
+ * written here is the *shape* of the lap rather than the road's own vertices.
+ * Read it as a lap: a long main straight, a fast right onto the back straight,
+ * a long left sweeper, a chicane that has to be braked for, a hairpin at the
+ * far end, and a final corner that spits the car back onto the straight — so
+ * the driver arrives at the line with the tow.
+ *
+ * Point 0 is the start/finish line, which is what makes the grid, the gates
+ * and every lap time fall out of the list without another number being
+ * written down. It is drawn well down the main straight rather than at a
+ * corner exit, because everything behind it is grid.
+ *
+ * **Two rules when editing.** Keep each turn at or under about 40° with
+ * segments of nine units or more: past that the rounded corner ends up tighter
+ * than the road is wide, which is a corner nobody can drive and nothing can
+ * draw. And keep the whole circuit inside its arena with a road's width to
+ * spare. `tests/unit/sim/track.test.ts` checks both.
+ */
+const AUTODROME_CONTROL: readonly TrackPoint[] = [
+  // Main straight, running +X.
+  { x: -14, z: -31 }, // start/finish
+  { x: 0, z: -31 },
+  { x: 12, z: -31 },
+  { x: 22, z: -30.5 },
+  // Turn 1: a long right onto the back straight.
+  { x: 31, z: -29 },
+  { x: 38, z: -25 },
+  { x: 44, z: -19 },
+  { x: 47, z: -11 },
+  // Back straight, running +Z.
+  { x: 49, z: -2 },
+  { x: 49, z: 8 },
+  // The long left sweeper across the top of the circuit.
+  { x: 46, z: 17 },
+  { x: 41, z: 23 },
+  { x: 34, z: 27 },
+  // Chicane: right, then left, then straight again. Four 40° steps rather
+  // than one 90° flick — see the note above the list.
+  { x: 24, z: 29 },
+  { x: 16, z: 22.5 },
+  { x: 9, z: 16 },
+  { x: -1, z: 16 },
+  { x: -9, z: 22.5 },
+  { x: -19, z: 22.5 },
+  // Hairpin at the far end: the slowest corner on the circuit.
+  { x: -31, z: 27 },
+  { x: -41, z: 22 },
+  { x: -48, z: 13 },
+  { x: -49, z: 3 },
+  { x: -47, z: -8 },
+  { x: -45, z: -17 },
+  // Final corner, back onto the main straight — so a car arrives at the line
+  // with a tow, which is what makes the DRS zone on the straight matter.
+  { x: -41, z: -24 },
+  { x: -36, z: -28 },
+  { x: -30, z: -30 },
+  { x: -23, z: -31 },
+];
+
+/** A tight city lap: short straights, square corners, no room to hide. */
+const STREET_CONTROL: readonly TrackPoint[] = [
+  { x: -14, z: -18 }, // start/finish
+  { x: 0, z: -18 },
+  { x: 10, z: -18 },
+  { x: 18, z: -16 },
+  { x: 23, z: -11 },
+  { x: 25, z: -4 },
+  { x: 24, z: 4 },
+  { x: 20, z: 10 },
+  { x: 13, z: 14 },
+  { x: 5, z: 13 },
+  { x: 0, z: 9 },
+  { x: -4, z: 5 }, // the left-right through the old town
+  { x: -9, z: 5 },
+  { x: -15, z: 9 },
+  { x: -22, z: 13 },
+  { x: -28, z: 10 },
+  { x: -31, z: 3 },
+  { x: -31, z: -5 },
+  { x: -29, z: -12 },
+  { x: -25, z: -16 },
+  { x: -20, z: -18 },
+];
+
+const AUTODROME = smoothTrack(AUTODROME_CONTROL);
+const STREET = smoothTrack(STREET_CONTROL);
 
 const PRESETS: Record<GameModeId, SimConfigOverrides> = {
   /** The untouched sandbox: endless shard collecting. */
@@ -207,6 +321,147 @@ const PRESETS: Record<GameModeId, SimConfigOverrides> = {
     obstacleCount: 12,
     pickupCount: 8,
     pickupWeights: { score: 0, speed: 0.4, shield: 0.3, heal: 0.3 },
+  },
+
+  // ---- racing -------------------------------------------------------------
+  // The one place the kit swaps its movement model: `vehicle.enabled` turns
+  // the omnidirectional avatar into something that has to be driven. The rest
+  // is ordinary configuration — a centreline, gates generated from it, and
+  // three circles that mean "open the wing here" and "change tyres here".
+
+  /**
+   * The full Formula weekend: a grid start, three laps, a slipstream, DRS on
+   * the two straights, tyres that go off, and a pit lane to fix them in.
+   */
+  grandprix: {
+    vehicle: {
+      enabled: true,
+      engineAccel: 22,
+      brakeDecel: 40,
+      coastDecel: 13,
+      // Understeer, deliberately: flat out the car keeps 42% of its steering,
+      // which is what makes braking for the hairpin a decision rather than a
+      // formality.
+      steerRate: 3.1,
+      steerFalloff: 0.58,
+      grip: 8,
+      brakeButton: 'secondary',
+    },
+    track: {
+      enabled: true,
+      halfWidth: 6,
+      offTrackSpeed: 0.45,
+      offTrackGrip: 0.3,
+      gridColumns: 2,
+      gridRowSpacing: 5,
+    },
+    trackPath: AUTODROME,
+    race: {
+      enabled: true,
+      slipstreamRange: 10,
+      slipstreamMultiplier: 1.12,
+      drsGapSeconds: 1,
+      drsMultiplier: 1.24,
+      drsTicks: seconds(2),
+      drsButton: 'primary',
+      // A stint is about four laps of this circuit, so a three-lap race is
+      // winnable on one set — and a driver who runs wide often enough is not.
+      tyreStintTicks: seconds(70),
+      tyreWornGrip: 0.62,
+      tyreWornSpeed: 0.87,
+      pitSpeedLimit: 9,
+    },
+    zones: [
+      // The start/finish loop is widened so that it also spans the pit lane
+      // beside it — a car that pits still records its lap, exactly as a real
+      // timing loop crosses both. It is never drawn (the chequered board
+      // stands in for it), so the extra radius costs nothing visually.
+      ...trackGates(AUTODROME, 9, 12).map((gate, index) =>
+        index === 0 ? { ...gate, radius: 16 } : gate,
+      ),
+      // DRS on the two straights only, which is where a tow is worth having.
+      { kind: 'drs', x: 0, z: -31, radius: 14, team: -1, order: 0 },
+      { kind: 'drs', x: 48, z: 0, radius: 12, team: -1, order: 0 },
+      // The pit lane runs down the infield beside the main straight, as four
+      // overlapping boxes so it reads as a lane rather than as stepping
+      // stones. It clears the tarmac by a metre, so nobody catches the
+      // limiter by taking the inside line.
+      { kind: 'pit', x: -30, z: -19, radius: 4.5, team: -1, order: 0 },
+      { kind: 'pit', x: -24, z: -19, radius: 4.5, team: -1, order: 0 },
+      { kind: 'pit', x: -18, z: -19, radius: 4.5, team: -1, order: 0 },
+      { kind: 'pit', x: -12, z: -19, radius: 4.5, team: -1, order: 0 },
+    ],
+    zoneRules: { lapScore: 1, hillScorePerSecond: 0, goalScore: 0 },
+    phases: {
+      enabled: true,
+      minPlayers: 2,
+      // Long enough that a three-lap race always finishes; the lap count is
+      // what actually ends it.
+      playTicks: seconds(300),
+      targetScore: 3,
+      countdownTicks: seconds(4),
+    },
+    playerMaxSpeed: 27,
+    playerRadius: 0.7,
+    // Cars bump; they do not shove each other across the circuit.
+    playerHeight: 1.1,
+    arenaHalfExtentX: 62,
+    arenaHalfExtentZ: 42,
+    obstacleCount: 0,
+    pickupCount: 0,
+    bots: { maxCount: 8, speedMultiplier: 0.93 },
+  },
+
+  /**
+   * A sprint on a tight city lap, seen from above: same cars, no wings, no
+   * tyre stops. Five laps, decided on the racing line.
+   */
+  street: {
+    vehicle: {
+      enabled: true,
+      engineAccel: 24,
+      brakeDecel: 42,
+      coastDecel: 15,
+      steerRate: 3.6,
+      steerFalloff: 0.5,
+      grip: 9,
+      brakeButton: 'secondary',
+    },
+    track: {
+      enabled: true,
+      halfWidth: 4.5,
+      offTrackSpeed: 0.4,
+      offTrackGrip: 0.3,
+      gridColumns: 2,
+      gridRowSpacing: 4,
+    },
+    trackPath: STREET,
+    race: {
+      enabled: true,
+      slipstreamRange: 8,
+      slipstreamMultiplier: 1.1,
+      // No straight here is long enough to deserve a wing.
+      drsGapSeconds: 0,
+      drsButton: 'none',
+      tyreStintTicks: 0,
+    },
+    zones: [...trackGates(STREET, 6, 9)],
+    zoneRules: { lapScore: 1, hillScorePerSecond: 0, goalScore: 0 },
+    phases: {
+      enabled: true,
+      minPlayers: 2,
+      playTicks: seconds(240),
+      targetScore: 5,
+      countdownTicks: seconds(4),
+    },
+    playerMaxSpeed: 20,
+    playerRadius: 0.6,
+    playerHeight: 1.1,
+    arenaHalfExtentX: 38,
+    arenaHalfExtentZ: 26,
+    obstacleCount: 0,
+    pickupCount: 0,
+    bots: { maxCount: 8, speedMultiplier: 0.94 },
   },
 
   /** 2.5D isometric: an infection chase through a cluttered floor plan. */

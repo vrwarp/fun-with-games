@@ -3,6 +3,8 @@ import { tickDeltaSeconds, type SimConfig } from '../sim/config.js';
 import { activeEffects } from '../sim/systems/effects.js';
 import { integratePlayer } from '../sim/systems/movement.js';
 import { isMovementLocked } from '../sim/systems/phase.js';
+import { raceStandings, type RaceStanding } from '../sim/systems/race.js';
+import { tyreLife } from '../sim/systems/vehicle.js';
 import type { Obstacle, PlayerInput, PlayerState, WorldSnapshot } from '../sim/types.js';
 import {
   EMPTY_RENDER_STATE,
@@ -80,6 +82,11 @@ export class ClientView {
   readonly #interpolationDelayMs: number;
   readonly #errorSmoothingMs: number;
   readonly #teleportThreshold: number;
+  /**
+   * Whether this mode is a race — decided once from the config, because it is
+   * a property of the room, not of any given frame.
+   */
+  readonly #isRace: boolean;
 
   #buffer: BufferedSnapshot[] = [];
   #predicted: PlayerState | null = null;
@@ -107,6 +114,7 @@ export class ClientView {
 
   constructor(options: ClientViewOptions) {
     this.#selfId = options.selfId;
+    this.#isRace = options.config.zones.some((zone) => zone.kind === 'checkpoint');
     this.#config = options.config;
     this.#obstacles = options.obstacles;
     this.#interpolationDelayMs = options.interpolationDelayMs ?? DEFAULT_INTERPOLATION_DELAY_MS;
@@ -194,10 +202,17 @@ export class ClientView {
     const [from, to, alpha] = this.#findInterpolationPair(renderTime);
     const latestTick = latest.snapshot.tick;
 
+    // Positions and gaps come from the authoritative snapshot rather than the
+    // interpolated one: a running order that flickers because two cars were
+    // rendered 120 ms apart would be worse than one that is a frame stale.
+    const standings = this.#standings(latest.snapshot);
+
     const players: RenderPlayer[] = [];
     for (const target of to.snapshot.players) {
       if (target.id === this.#selfId && this.#predicted) {
-        players.push(this.#localPlayer(this.#predicted, latest.snapshot, hostId, tickAlpha));
+        players.push(
+          this.#localPlayer(this.#predicted, latest.snapshot, hostId, tickAlpha, standings),
+        );
         continue;
       }
 
@@ -220,6 +235,7 @@ export class ClientView {
         carrying: this.#carrying(latest.snapshot, target.id),
         checkpoint: target.checkpoint,
         lap: target.lap,
+        ...this.#raceView(target, standings, latestTick),
         isBot: target.isBot,
         isLocal: target.id === this.#selfId,
         isHost: target.id === hostId,
@@ -247,6 +263,7 @@ export class ClientView {
       zones: this.#zoneViews(latest.snapshot),
       items: this.#itemViews(latest.snapshot),
       maxHp: this.#config.combat.enabled ? this.#config.combat.maxHp : 0,
+      totalLaps: this.#isRace ? this.#config.phases.targetScore : 0,
     };
   }
 
@@ -346,6 +363,7 @@ export class ClientView {
     latest: WorldSnapshot,
     hostId: string,
     tickAlpha: number,
+    standings: readonly RaceStanding[],
   ): RenderPlayer {
     const blend = this.#errorRemainingMs > 0 ? this.#errorRemainingMs / this.#errorSmoothingMs : 0;
 
@@ -380,9 +398,44 @@ export class ClientView {
       carrying: this.#carrying(latest, predicted.id),
       checkpoint: predicted.checkpoint,
       lap: predicted.lap,
+      ...this.#raceView(predicted, standings, latest.tick),
       isBot: false,
       isLocal: true,
       isHost: predicted.id === hostId,
+    };
+  }
+
+  /**
+   * The running order, or nothing at all outside a race.
+   *
+   * Sorting a field costs nothing at this size, but `raceStandings` is only
+   * meaningful where there are gates to be ranked by, and a "P1" badge in a
+   * game of tag would be noise.
+   */
+  #standings(snapshot: WorldSnapshot): readonly RaceStanding[] {
+    if (!this.#isRace) return [];
+    return raceStandings(this.#config, snapshot.players);
+  }
+
+  /** One player's race numbers, in the seconds the HUD wants to print. */
+  #raceView(
+    player: PlayerState,
+    standings: readonly RaceStanding[],
+    tick: number,
+  ): Pick<RenderPlayer, 'position' | 'interval' | 'lapTime' | 'lastLap' | 'bestLap' | 'tyres'> {
+    const seconds = (ticks: number): number => ticks / this.#config.tickRate;
+    const standing = standings.find((entry) => entry.id === player.id);
+    // Before the first crossing there is no lap under way, and counting from
+    // tick 0 would show a driver on the grid a lap time they never set.
+    const running = player.lapStartTick > 0 ? Math.max(0, tick - player.lapStartTick) : 0;
+
+    return {
+      position: standing?.position ?? 0,
+      interval: standing?.interval ?? 0,
+      lapTime: seconds(running),
+      lastLap: seconds(player.lastLapTicks),
+      bestLap: seconds(player.bestLapTicks),
+      tyres: tyreLife(player, this.#config, tick),
     };
   }
 

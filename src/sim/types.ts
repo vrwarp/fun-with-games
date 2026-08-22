@@ -119,6 +119,21 @@ export interface PlayerState {
   checkpoint: number;
   /** Completed laps (race modes). */
   lap: number;
+  /**
+   * Tick the current lap started on — the last crossing of the start/finish
+   * line. 0 before the first crossing, so the clock starts at the line rather
+   * than on the grid.
+   */
+  lapStartTick: number;
+  /** Duration of the last completed lap, in ticks. 0 = none finished yet. */
+  lastLapTicks: number;
+  /**
+   * Fastest lap of the current round, in ticks. 0 = none yet.
+   *
+   * Stored rather than derived: a lap time is history, and history is the one
+   * thing a tick number cannot be asked for after the fact.
+   */
+  bestLapTicks: number;
   /** Standing on the floor or a platform. False while airborne. */
   grounded: boolean;
   /** Jumps spent since last touching a surface (for double jumps). */
@@ -339,7 +354,8 @@ export type SimEvents = {
   playerRespawned: { playerId: PlayerId };
   goalScored: { team: number; byId: PlayerId };
   zoneCaptured: { zoneId: number; ownerId: PlayerId; ownerTeam: number };
-  lapCompleted: { playerId: PlayerId; lap: number };
+  lapCompleted: { playerId: PlayerId; lap: number; lapTicks: number; best: boolean };
+  drsOpened: { playerId: PlayerId };
   itemTaken: { itemId: number; playerId: PlayerId };
   itemDropped: { itemId: number; playerId: PlayerId };
   itemDelivered: { itemId: number; playerId: PlayerId; score: number };

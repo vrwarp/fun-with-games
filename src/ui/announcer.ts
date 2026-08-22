@@ -4,6 +4,13 @@ import { TEAM_INFO } from '../shared/modes.js';
 const TOAST_LIFETIME_MS = 2600;
 const MAX_TOASTS = 3;
 
+/** `m:ss.t`, the way a lap time is read out loud. */
+function formatTime(seconds: number): string {
+  if (!(seconds > 0)) return '—';
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes}:${(seconds - minutes * 60).toFixed(1).padStart(4, '0')}`;
+}
+
 /**
  * A semantic label for each announcement, so the caller can attach sound or
  * haptics without re-deriving the diff. Deliberately plain strings: the ui
@@ -17,6 +24,8 @@ export type AnnouncerCue =
   | 'respawn'
   | 'goal'
   | 'lap'
+  | 'fastlap'
+  | 'drs'
   | 'item'
   | 'powerup'
   | 'frozen'
@@ -63,6 +72,7 @@ export class Announcer {
 
     this.#announcePhase(previous, state);
     this.#announceSelf(previous, state);
+    this.#announceRace(previous, state);
     this.#announceGoals(previous, state);
     this.#announceCrown(previous, state);
     this.#announcePickups(previous, state);
@@ -100,9 +110,50 @@ export class Announcer {
     if (gained('shield')) this.#toast('🛡 Shield!', '', 'powerup');
     if (gained('frozen')) this.#toast('❄ Frozen!', '', 'frozen');
 
-    if (now.lap > was.lap) this.#toast(`🏁 Lap ${now.lap}!`, '', 'lap');
+    // Races get a lap time with theirs; see `#announceRace`.
+    if (now.lap > was.lap && state.totalLaps <= 0) {
+      this.#toast(`🏁 Lap ${now.lap}!`, '', 'lap');
+    }
     if (now.carrying === 'flag' && was.carrying !== 'flag') {
       this.#toast('⚑ You have the flag!', '', 'item');
+    }
+  }
+
+  /**
+   * The four things a driver needs told to them, because they are all things
+   * that happen while their eyes are on the road: the lap time they just set,
+   * a position change, the wing arming, and tyres about to end their race.
+   *
+   * Silent outside a race — `totalLaps` is the view model's way of saying
+   * whether laps are a thing here at all.
+   */
+  #announceRace(previous: RenderState, state: RenderState): void {
+    if (state.totalLaps <= 0) return;
+    const was = previous.players.find((player) => player.id === this.#selfId);
+    const now = state.players.find((player) => player.id === this.#selfId);
+    if (!was || !now) return;
+
+    if (now.lap > was.lap) {
+      this.#toast(`🏁 Lap ${now.lap} — ${formatTime(now.lastLap)}`, '', 'lap');
+      // A personal best is the number a driver is actually chasing.
+      if (now.bestLap > 0 && now.bestLap !== was.bestLap) {
+        this.#toast(`⏱ Fastest lap ${formatTime(now.bestLap)}`, '', 'fastlap');
+      }
+    }
+
+    if (now.position > 0 && was.position > 0 && now.position !== was.position) {
+      const gained = now.position < was.position;
+      this.#toast(`${gained ? '▲' : '▼'} P${now.position}`, '', gained ? 'powerup' : 'tagged');
+    }
+
+    const gained = (effect: string): boolean =>
+      now.effects.includes(effect) && !was.effects.includes(effect);
+    if (gained('drsok')) this.#toast('DRS available', '', 'drs');
+    if (gained('drs')) this.#toast('🪽 DRS open!', '', 'drs');
+
+    // One warning, at the crossing rather than for every tick below it.
+    if (now.tyres < 0.25 && was.tyres >= 0.25) {
+      this.#toast('🛞 Tyres gone — pit!', '', 'frozen');
     }
   }
 

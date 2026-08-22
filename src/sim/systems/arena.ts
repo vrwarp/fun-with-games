@@ -1,5 +1,6 @@
 import type { Rng } from '../rng.js';
 import type { SimConfig } from '../config.js';
+import { hasTrack, trackPoseAt } from '../track.js';
 import type { Obstacle } from '../types.js';
 
 /**
@@ -189,11 +190,50 @@ export function findFreePosition(
 }
 
 /**
+ * Where the car with this grid index lines up, and which way it points.
+ *
+ * A Formula-style grid: rows of `track.gridColumns` cars stacked back from the
+ * start/finish line, each column offset to one side of the centreline and set
+ * half a row further back than the one inside it. Pole is index 0, and every
+ * slot is derived from the centreline, so a circuit gets its grid for free.
+ *
+ * Pure geometry — no RNG — so a peer restoring a snapshot mid-countdown puts
+ * every car on the same square as everyone else.
+ */
+function gridSlot(config: SimConfig, index: number): { x: number; z: number; heading: number } {
+  const columns = Math.max(1, Math.floor(config.track.gridColumns));
+  const row = Math.floor(index / columns);
+  const column = index % columns;
+
+  // Back from the line, plus the stagger that makes the outside of the grid
+  // the slower side into turn one.
+  const spacing = config.track.gridRowSpacing;
+  const back = (row + 1) * spacing + column * spacing * 0.5;
+  const pose = trackPoseAt(config.trackPath, -back);
+
+  // Spread the columns across the road without putting anyone on the paint.
+  const lane = (config.track.halfWidth * 2) / (columns + 1);
+  const offset = (column - (columns - 1) / 2) * lane;
+  // Right-hand normal of the road: forward is (sin h, cos h), right is
+  // (cos h, -sin h), which for a direction (dx, dz) is (dz, -dx).
+  return {
+    x: pose.x + pose.dirZ * offset,
+    z: pose.z - pose.dirX * offset,
+    heading: Math.atan2(pose.dirX, pose.dirZ),
+  };
+}
+
+/**
  * Deterministic spawn point for a player index — evenly spaced on a ring so
- * players never spawn inside one another. Side-scrollers get a line instead of
- * a ring, since they only have one usable axis.
+ * players never spawn inside one another. Circuits get a starting grid and
+ * side-scrollers get a line, since each only has the one usable arrangement.
  */
 export function spawnPosition(config: SimConfig, index: number): { x: number; z: number } {
+  if (hasTrack(config)) {
+    const slot = gridSlot(config, index);
+    return { x: slot.x, z: slot.z };
+  }
+
   if (config.platform.enabled && config.platform.lockZ) {
     const spacing = config.playerRadius * 3;
     const startX = -config.arenaHalfExtentX + 3;
@@ -203,4 +243,15 @@ export function spawnPosition(config: SimConfig, index: number): { x: number; z:
   const ringRadius = Math.min(config.arenaHalfExtentX, config.arenaHalfExtentZ) * 0.35;
   const angle = (index * Math.PI * 2) / 8;
   return { x: Math.cos(angle) * ringRadius, z: Math.sin(angle) * ringRadius };
+}
+
+/**
+ * Which way a player spawned at `index` faces.
+ *
+ * Only circuits have an opinion — a car pointing across its own grid slot is
+ * a car that starts the race by driving into the pit wall. Everywhere else
+ * this is 0 (facing +Z), exactly as before grids existed.
+ */
+export function spawnHeading(config: SimConfig, index: number): number {
+  return hasTrack(config) ? gridSlot(config, index).heading : 0;
 }

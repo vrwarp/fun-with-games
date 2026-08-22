@@ -105,6 +105,52 @@ describe('zones: checkpoints', () => {
     expect(a.lap).toBe(1);
     expect(a.checkpoint).toBe(0); // wrapped for the next lap
     expect(a.score).toBe(world.config.zoneRules.lapScore);
-    expect(lap).toHaveBeenCalledWith({ playerId: 'a', lap: 1 });
+    expect(lap).toHaveBeenCalledWith({ playerId: 'a', lap: 1, lapTicks: 1, best: true });
+  });
+
+  it('times each lap from the start/finish line, and remembers the best', () => {
+    const world = worldWith({ zones: [...gates] });
+    const a = world.addPlayer('a', profile);
+
+    const crossLine = (): void => {
+      Object.assign(a, { x: 10, z: 0, vx: 0, vz: 0 });
+      world.step();
+    };
+    const crossBack = (): void => {
+      Object.assign(a, { x: -10, z: 0, vx: 0, vz: 0 });
+      world.step();
+    };
+    const idle = (ticks: number): void => {
+      Object.assign(a, { x: 0, z: 20, vx: 0, vz: 0 });
+      world.stepMany(ticks);
+    };
+
+    // Dawdling on the grid must not land on the first lap time: the clock
+    // starts at the line, not at tick zero.
+    idle(10);
+    crossLine();
+    const started = world.tick - 1;
+    expect(a.lapStartTick).toBe(started);
+    expect(a.lap).toBe(0);
+
+    // Gate 1 is the last gate of this two-gate circuit, so crossing it is
+    // what completes the lap.
+    idle(20);
+    crossBack();
+    const firstEnd = world.tick - 1;
+    expect(a.lap).toBe(1);
+    expect(a.lastLapTicks).toBe(firstEnd - started);
+    expect(a.bestLapTicks).toBe(a.lastLapTicks);
+    // The lap that just ended is where the next one starts from.
+    expect(a.lapStartTick).toBe(firstEnd);
+    const firstLap = a.lastLapTicks;
+
+    // A slower second lap leaves the best alone.
+    crossLine();
+    idle(60);
+    crossBack();
+    expect(a.lap).toBe(2);
+    expect(a.lastLapTicks).toBeGreaterThan(firstLap);
+    expect(a.bestLapTicks).toBe(firstLap);
   });
 });

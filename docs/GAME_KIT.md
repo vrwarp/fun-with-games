@@ -7,7 +7,7 @@ walkthroughs, read [`RECIPES.md`](./RECIPES.md); this file is the reference.
 
 **The one-sentence summary: most new games are a config, not new code.**
 
-## The fourteen built-in modes
+## The sixteen built-in modes
 
 Every mode is a named `SimConfig` preset in `src/sim/presets.ts` with display
 metadata in `src/shared/modes.ts`. Launch any of them with `?mode=<id>` (the
@@ -30,6 +30,14 @@ http://localhost:5173/?net=broadcast&room=demo&mode=tag
 | `soccer`    | 2 teams push a ball into goals, first to 5 | teams, ball, zones(goal)                |
 | `ctf`       | Capture the flag with blasters, first to 3 | teams, items(flag), zones(base), combat |
 | `crown`     | Hold the crown to score, steal by touch    | items(crown), phases                    |
+
+Two of them are races with cars rather than runners. They are ordinary presets
+too — the new ingredient is a handling model and a centreline:
+
+| id          | Game                                        | Systems it exercises             |
+| ----------- | ------------------------------------------- | -------------------------------- |
+| `grandprix` | Three laps, slipstream, DRS, tyres and pits | vehicle, track, race, zones(all) |
+| `street`    | Five laps of a tight city lap, seen flat    | vehicle, track, race(tow), zones |
 
 The last three ship a non-3D projection. They are ordinary presets — the only
 new ingredients are gravity and a camera angle:
@@ -99,7 +107,7 @@ No binaries are involved, so this works on a fresh clone like everything else.
 
 This one **is** simulation, so it is part of the mode's rules and must match
 across peers. With `platform.enabled` false — the default, and the case for
-thirteen of the fourteen shipped modes — every player's `y` stays 0 and the
+fifteen of the sixteen shipped modes — every player's `y` stays 0 and the
 code path is exactly the flat game that existed before the axis did.
 
 Switched on, you get:
@@ -134,7 +142,7 @@ Pipeline order inside `World.step()` (fixed on purpose — determinism):
 
 ```
 phase → bot inputs → movement → player collisions → combat(respawns) → tag
-      → projectiles → ball → items → zones → pickups → effect pruning
+      → projectiles → ball → items → zones → race → pickups → effect pruning
 ```
 
 ### Phases — `systems/phase.ts`, config `phases`
@@ -172,6 +180,10 @@ snapshots, wire codec and checksum carry the whole map.
 | `safe`   | cannot be tagged, damaged or robbed (grace after tag/spawn)   |
 | `reload` | cannot fire until it expires                                  |
 | `carry`  | × `itemRules.carrySpeedMultiplier` (refreshed while carrying) |
+| `tow`    | × `race.slipstreamMultiplier` (refreshed while in the tow)    |
+| `drs`    | × `race.drsMultiplier` while the wing is open                 |
+| `drsok`  | the wing may be opened (HUD/renderer only; no behaviour)      |
+| `tyre`   | remaining tyre life; its duration IS the wear                 |
 
 API: `addEffect(player, id, untilTick)` (extends, never shortens),
 `hasEffect`, `clearEffect`, `effectRemaining`, `isImmobilized`, `isProtected`,
@@ -223,6 +235,9 @@ Static circles on the floor; what each does is its `kind`:
   lap: `lapScore` points. Set `phases.targetScore` to laps-to-win. The local
   player's next gate glows.
 - `goal` — see ball. `base` — see items.
+- `drs` — a stretch where a car within `race.drsGapSeconds` of the one ahead
+  may open its wing. `pit` — the pit lane: speed is capped at
+  `race.pitSpeedLimit` inside it and tyres are refitted.
 
 ### Items — config `items` (list of `ItemSpec`) + `itemRules`
 
@@ -266,6 +281,51 @@ Four kinds, chosen by weight at world creation: `score` (points), `speed`,
 KOs, goals, deliveries, hill seconds and score pickups; the phase system
 checks it for the win. Team names/colours for the UI live in
 `TEAM_INFO` (`src/shared/modes.ts`).
+
+### Racing — `systems/vehicle.ts`, `systems/race.ts`, `track.ts`
+
+The one place the kit swaps its movement model. With `vehicle.enabled` the
+thumbstick stops being a velocity and becomes a **heading request**: the car
+rotates toward it at a rate that shrinks with speed, speed exists only along
+the car's own axis, and sideways velocity is scrubbed off at a `grip` rate
+rather than instantly. No strafing, understeer, and slides — and a stick pulled
+back past 90° brakes rather than asking for an impossible U-turn.
+
+It hangs off `integratePlayer`, so it runs inside client prediction too. That
+is deliberate: a car is fast enough that an unpredicted metre is a visible one.
+
+**The circuit is one closed centreline** (`SimConfig.trackPath`) plus a
+half-width. `src/sim/track.ts` derives everything else from it — whether a car
+is on the tarmac, how far round the lap it is, the racing line a bot follows,
+and the starting grid. Off-track is grass, not a wall: `track.offTrackSpeed`
+and `offTrackGrip` make it slow and slippery, which is forgiving on a thumb.
+
+Circuits are authored as **control points** and rounded by `smoothTrack`
+(Chaikin corner-cutting) into the centreline both layers use. A raw polyline
+corner changes direction all at once, which leaves an unreachable pinch on the
+inside and folds anything offset by half the road width — the tarmac's own edge.
+Two rules when authoring: keep each turn at or under about 40° with segments of
+nine units or more, and leave a road's width of run-off inside the arena.
+`tests/unit/sim/track.test.ts` checks both, the way the platformer's tests
+check jump heights.
+
+`systems/race.ts` adds the rules on top, none of which carry state:
+
+- **Running order** from laps, gates and distance to the next gate. Ranked that
+  way rather than by one distance-round-the-lap number, because that number has
+  to wrap somewhere and "somewhere" is the start/finish line.
+- **Slipstream**: the closest car ahead within `slipstreamRange` grants `tow`.
+- **DRS**: inside a `drs` zone, within `drsGapSeconds` of the car ahead, the
+  wing arms (`drsok`) and the button opens it (`drs`). Gaps are measured along
+  the centreline, so they are racing gaps, not radii.
+- **Tyres**: a set is the `tyre` effect, whose remaining duration is its life.
+  Fresh rubber is fitted whenever the race is not running and inside a `pit`
+  zone — which is the trade: a slow lane in exchange for grip.
+
+Lap times (`lapStartTick`, `lastLapTicks`, `bestLapTicks`) are the only new
+state in any of it, because history is the one thing a tick number cannot be
+asked for afterwards. `raceStandings` is projected into `RenderState` by
+`ClientView`, so the HUD gets positions and intervals without importing `sim`.
 
 ## The state-carrying contract
 

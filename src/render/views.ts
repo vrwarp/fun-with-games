@@ -129,6 +129,12 @@ export function viewSpec(view: ViewMode): ViewSpec {
  * Babylon's ortho box is absolute, not aspect-derived, so it has to be
  * recomputed on every resize — otherwise a phone rotating to landscape
  * squashes the whole world.
+ *
+ * `framingScale` pulls the camera back for games where the player covers
+ * ground quickly. The specs above are framed for someone running at about 9
+ * units a second; a car at 27 would arrive at the edge of that frame in under
+ * a second, which is not enough road to plan a corner from. It only ever
+ * widens the shot — a value below 1 is ignored.
  */
 export function applyView(
   camera: ArcRotateCamera,
@@ -136,18 +142,20 @@ export function applyView(
   widthPx: number,
   heightPx: number,
   portrait: boolean,
+  framingScale = 1,
 ): void {
   const spec = SPECS[view];
+  const scale = Math.max(1, framingScale);
 
   camera.alpha = spec.alpha;
   camera.beta = spec.beta;
-  camera.radius = spec.radius;
+  camera.radius = spec.radius * scale;
 
   if (spec.orthoHalfHeight === undefined) {
     camera.mode = Camera.PERSPECTIVE_CAMERA;
     // Portrait is narrow: pull back and tilt down or a third of the screen is
     // sky and you walk into things you never saw.
-    camera.radius = portrait ? spec.radius + 3 : spec.radius;
+    camera.radius = (portrait ? spec.radius + 3 : spec.radius) * scale;
     camera.beta = portrait ? Math.PI / 4 : spec.beta;
     return;
   }
@@ -155,7 +163,7 @@ export function applyView(
   camera.mode = Camera.ORTHOGRAPHIC_CAMERA;
   // Portrait phones get a little more of the world vertically, since that is
   // the axis they actually have to spare.
-  const halfHeight = spec.orthoHalfHeight * (portrait ? 1.25 : 1);
+  const halfHeight = spec.orthoHalfHeight * scale * (portrait ? 1.25 : 1);
   const aspect = widthPx > 0 && heightPx > 0 ? widthPx / heightPx : 1;
   const halfWidth = halfHeight * aspect;
 

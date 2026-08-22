@@ -136,6 +136,13 @@ export function steerVehicle(
 ): void {
   const car = config.vehicle;
 
+  // Acknowledged before anything can return early. The host echoes this back
+  // in the snapshot, and it is what lets a client drop inputs it no longer
+  // needs to replay — so skipping it during a countdown would leave every
+  // client replaying four seconds of grid-bound input the moment the lights
+  // went out, which is the worst possible moment for a correction.
+  if (input.seq > player.lastInputSeq) player.lastInputSeq = input.seq;
+
   // Decompose velocity into the car's own axes. `heading` is measured the same
   // way the rest of the kit measures it: atan2(x, z), so forward is
   // (sin h, cos h) and the car's right-hand side is (cos h, -sin h).
@@ -227,9 +234,6 @@ export function steerVehicle(
   }
 
   writeBack(player, forward, lateral, sin, cos);
-
-  // Inputs can arrive out of order over an unreliable channel; never regress.
-  if (input.seq > player.lastInputSeq) player.lastInputSeq = input.seq;
 }
 
 /** Recomposes car-local velocity back into world axes. */

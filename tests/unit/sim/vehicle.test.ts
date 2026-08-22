@@ -138,6 +138,23 @@ describe('vehicle handling', () => {
     expect(car.heading).toBe(0);
   });
 
+  it('acknowledges input even while frozen on the grid', () => {
+    // The host echoes `lastInputSeq` back in the snapshot, and that is what
+    // lets a client discard inputs it no longer has to replay. Skipping it
+    // through a countdown would leave every client replaying four seconds of
+    // grid-bound input at the exact moment the lights go out.
+    const config = carConfig();
+    const car = makePlayer();
+    const dt = tickDeltaSeconds(config);
+
+    integratePlayer(car, makeInput({ seq: 42, moveZ: 1 }), config, [], dt, 0, true);
+    expect(car.lastInputSeq).toBe(42);
+
+    // Still never regresses on an out-of-order arrival.
+    integratePlayer(car, makeInput({ seq: 7, moveZ: 1 }), config, [], dt, 1, true);
+    expect(car.lastInputSeq).toBe(42);
+  });
+
   it('stays put while the lights are on, and does not creep or rotate', () => {
     const config = carConfig();
     const car = makePlayer({ heading: 0.4, vz: 6 });

@@ -1,7 +1,7 @@
 import { distanceSq2 } from '../../shared/math.js';
 import type { SimConfig } from '../config.js';
 import type { StepContext } from '../step.js';
-import { hasTrack, sampleTrack } from '../track.js';
+import { hasTrack, sampleTrack, trackLength } from '../track.js';
 import { BUTTON_PRIMARY, BUTTON_SECONDARY, type PlayerId, type PlayerState } from '../types.js';
 import { addEffect, hasEffect, isKnockedOut } from './effects.js';
 import { isRoundActive } from './phase.js';
@@ -113,19 +113,45 @@ function isInDrsZone(config: SimConfig, x: number, z: number): boolean {
   return false;
 }
 
+/**
+ * Every car's position round the lap, measured once.
+ *
+ * The tow and the wing both ask "who is just ahead of me?", which is a
+ * question about every pair of cars. Projecting each car onto the centreline
+ * once and then doing arithmetic keeps that linear in the length of the
+ * circuit rather than quadratic — the difference between a few hundred float
+ * operations a tick and a few hundred thousand, on a phone.
+ */
+function lapProgress(ctx: StepContext): Map<PlayerId, number> {
+  const progress = new Map<PlayerId, number>();
+  for (const player of ctx.players) {
+    progress.set(player.id, sampleTrack(ctx.config.trackPath, player.x, player.z).progress);
+  }
+  return progress;
+}
+
 /** The closest car ahead on the road, and how far ahead it is. */
 function carAhead(
   ctx: StepContext,
   player: PlayerState,
+  progress: ReadonlyMap<PlayerId, number>,
+  lapLength: number,
 ): { other: PlayerState; distance: number } | null {
+  const mine = progress.get(player.id);
+  if (mine === undefined || lapLength <= 0) return null;
+
   let best: { other: PlayerState; distance: number } | null = null;
 
   for (const other of ctx.players) {
     if (other.id === player.id || isKnockedOut(other, ctx.tick)) continue;
-    const distance = gapAhead(ctx.config, player, other);
-    // A gap of zero is the car you are inside of, which is a collision, not a
-    // tow; and anything past half a lap is a car you are ahead of.
-    if (distance <= 0 || !Number.isFinite(distance)) continue;
+    const theirs = progress.get(other.id);
+    if (theirs === undefined) continue;
+
+    const delta = theirs - mine;
+    const distance = delta >= 0 ? delta : delta + lapLength;
+    // A gap of zero is the car you are inside of, which is a collision rather
+    // than a tow.
+    if (distance <= 0) continue;
     if (!best || distance < best.distance) best = { other, distance };
   }
 
@@ -157,12 +183,15 @@ export function updateRace(ctx: StepContext): void {
     }
   }
 
-  if (!active) return;
+  if (!active || !hasTrack(ctx.config)) return;
+
+  const lapLength = trackLength(ctx.config.trackPath);
+  const progress = lapProgress(ctx);
 
   for (const player of ctx.players) {
     if (isKnockedOut(player, ctx.tick)) continue;
 
-    const ahead = carAhead(ctx, player);
+    const ahead = carAhead(ctx, player, progress, lapLength);
     if (!ahead) continue;
 
     // --- Slipstream ------------------------------------------------------

@@ -245,8 +245,56 @@ export interface VehicleConfig {
   /**
    * How quickly sideways velocity is scrubbed off, per second. High is
    * go-kart grip; low slides. Multiplied by the surface and the tyres.
+   *
+   * This is the *residual* scrub, used below the traction limit and to settle
+   * a car that is already straight. What decides whether the car slides at all
+   * is `tyreGrip`.
    */
   readonly grip: number;
+  /**
+   * Peak lateral acceleration the tyres can generate, world units/second².
+   * Zero keeps the old always-proportional scrub.
+   *
+   * This is the traction limit, and it is the difference between a car that
+   * understeers by fiat and one that actually breaks away. Holding a corner
+   * costs `speed × yawRate` of lateral acceleration; ask for more than the
+   * tyres can supply and the surplus becomes sideways velocity — a slide the
+   * driver has to catch. Because the demand scales with speed, the same steering
+   * angle grips at 8 units/second and lets go at 25, which is what makes the
+   * brake pedal a real decision rather than a formality.
+   */
+  readonly tyreGrip: number;
+  /**
+   * How strongly longitudinal load steals from the lateral budget, in [0, 1].
+   *
+   * The friction circle: a tyre has one contact patch to spend on stopping and
+   * turning both. At 1 a car braking at its limit cannot corner at all; at 0
+   * the two axes are independent and you can stand on the brakes mid-corner
+   * with no consequence. Trail braking and power oversteer both come from here.
+   */
+  readonly frictionCircle: number;
+  /**
+   * How much more yaw the steering rack may ask for than the front tyres can
+   * hold, as a multiple. 0 disables the cap entirely.
+   *
+   * A rack can always be turned further, but a front axle that has lost grip
+   * does not rotate the car — it washes out. That is what understeer *is*, and
+   * deriving it from the traction limit rather than from a fixed
+   * `steerFalloff` means it arrives exactly when the tyres run out. 1 pins the
+   * car to pure understeer and it can never be provoked; a little above 1
+   * leaves enough rope to hang yourself with, which is where the fun is.
+   */
+  readonly frontGrip: number;
+  /**
+   * How quickly a sliding car straightens itself out, per second.
+   *
+   * The self-aligning moment a real steering rack feels through the caster. It
+   * pulls the nose toward the direction of travel in proportion to the slip
+   * angle, which is what makes a slide catchable instead of terminal — the car
+   * helps you, the way a real one does, and a spin still needs the driver to
+   * unwind the lock.
+   */
+  readonly selfAlign: number;
   /** Which action button brakes. */
   readonly brakeButton: 'primary' | 'secondary' | 'none';
 }
@@ -326,6 +374,47 @@ export interface PowerupConfig {
 // The config
 // ---------------------------------------------------------------------------
 
+/**
+ * What happens when two bodies touch.
+ *
+ * The kit has always separated overlapping players and left their velocities
+ * alone, which is right for a footrace — you cannot shoulder-barge someone in
+ * `tag` and send them into a wall. A car is a different object: two tonnes
+ * arriving at 25 units/second has momentum that has to go somewhere, and a
+ * racing game in which contact is free is a racing game without defending.
+ *
+ * `enabled` is therefore off by default and every non-racing mode keeps the
+ * historical push-apart. Turning it on adds the physics an impact actually
+ * has: momentum swaps across the contact normal, the surfaces scrub along it,
+ * and a glancing blow twists the car it lands on.
+ */
+export interface CollisionConfig {
+  /** Exchange momentum on contact. Off keeps push-apart-only separation. */
+  readonly enabled: boolean;
+  /**
+   * Bounciness, in [0, 1]. 0 is a dead thud that leaves the pair travelling
+   * together; 1 is a snooker ball. Cars want to be near the thud end — a
+   * springy shunt reads as a bug, not as a crash.
+   */
+  readonly restitution: number;
+  /**
+   * Sideways bite between the two bodies on contact, in [0, 1].
+   *
+   * 0 lets them slide past frictionlessly, which is why rubbing along a rival
+   * currently costs nothing. Above 0 the pair drag each other toward a common
+   * sideways speed, so running wheel-to-wheel scrubs both cars' momentum.
+   */
+  readonly friction: number;
+  /**
+   * Yaw imparted by that sideways bite, in radians per unit of scrub.
+   *
+   * A body is a disc here, so a blow straight through the centre cannot spin
+   * it — but a scrape drags one flank and not the other, and that is a torque.
+   * This is what makes a late lunge down the inside dangerous for both cars.
+   */
+  readonly spin: number;
+}
+
 export interface SimConfig {
   /** Fixed simulation steps per second. The wire protocol assumes this too. */
   readonly tickRate: number;
@@ -357,6 +446,7 @@ export interface SimConfig {
 
   // ---- game kit sections (each system reads exactly one) -------------------
   readonly vehicle: VehicleConfig;
+  readonly collision: CollisionConfig;
   readonly track: TrackConfig;
   /** The circuit's closed centreline. Empty in every non-racing mode. */
   readonly trackPath: readonly TrackPoint[];
@@ -416,7 +506,17 @@ export const DEFAULT_SIM_CONFIG: SimConfig = {
     steerRate: 3.2,
     steerFalloff: 0.55,
     grip: 7,
+    tyreGrip: 0,
+    frictionCircle: 0,
+    frontGrip: 0,
+    selfAlign: 0,
     brakeButton: 'secondary',
+  },
+  collision: {
+    enabled: false,
+    restitution: 0.2,
+    friction: 0.35,
+    spin: 0.02,
   },
   track: {
     enabled: false,
@@ -537,6 +637,7 @@ export interface SimConfigOverrides extends Partial<
     SimConfig,
     | 'pickupWeights'
     | 'vehicle'
+    | 'collision'
     | 'track'
     | 'race'
     | 'platform'
@@ -554,6 +655,7 @@ export interface SimConfigOverrides extends Partial<
 > {
   readonly pickupWeights?: Partial<PickupWeights>;
   readonly vehicle?: Partial<VehicleConfig>;
+  readonly collision?: Partial<CollisionConfig>;
   readonly track?: Partial<TrackConfig>;
   readonly race?: Partial<RaceConfig>;
   readonly platform?: Partial<PlatformConfig>;
@@ -581,6 +683,7 @@ export function makeSimConfig(overrides: SimConfigOverrides = {}): SimConfig {
     ...overrides,
     pickupWeights: { ...base.pickupWeights, ...overrides.pickupWeights },
     vehicle: { ...base.vehicle, ...overrides.vehicle },
+    collision: { ...base.collision, ...overrides.collision },
     track: { ...base.track, ...overrides.track },
     trackPath: overrides.trackPath ?? base.trackPath,
     race: { ...base.race, ...overrides.race },

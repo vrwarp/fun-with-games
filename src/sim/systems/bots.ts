@@ -1,7 +1,7 @@
 import { angleDelta, clamp, distance2, normalize2 } from '../../shared/math.js';
 import { hashStringToSeed } from '../rng.js';
 import type { StepContext } from '../step.js';
-import { hasTrack, sampleTrack, trackPoseAt } from '../track.js';
+import { hasTrack, isOnTrack, sampleTrack, trackPoseAt } from '../track.js';
 import {
   BUTTON_PRIMARY,
   BUTTON_SECONDARY,
@@ -14,6 +14,7 @@ import {
 import { isBlocked } from './arena.js';
 import { hasEffect, isKnockedOut, isProtected } from './effects.js';
 import { isMovementLocked, isRoundActive } from './phase.js';
+import { vehicleTraction } from './vehicle.js';
 
 /**
  * Deterministic bots, simulated inside the world.
@@ -73,6 +74,10 @@ export function computeBotInput(ctx: StepContext, bot: PlayerState): PlayerInput
  * at the wheel down a straight.
  */
 const FULL_LOCK_RADIANS = 0.5;
+/** Radius standing in for "straight": big enough that no car is grip-limited. */
+const CORNER_STRAIGHT_RADIUS = 1e4;
+/** Fraction of the corner speed a bot will accelerate up to before coasting. */
+const BOT_CORNER_MARGIN = 0.9;
 
 /** Turns a wanted world direction into the axes a car actually understands. */
 function driveAxes(
@@ -284,6 +289,33 @@ function drive(ctx: StepContext, bot: PlayerState): Decision {
   const toAim = Math.atan2(aim.x - bot.x, aim.z - bot.z);
   const onward = Math.atan2(beyond.x - aim.x, beyond.z - aim.z);
   const bend = Math.abs(angleDelta(toAim, onward));
+
+  const traction = vehicleTraction(bot, ctx.config, ctx.tick, isOnTrack(ctx.config, bot.x, bot.z));
+
+  if (traction > 0) {
+    // Drive to the tyres rather than to a hand-picked constant.
+    //
+    // The road ahead turns through `bend` radians over the `lookahead` units
+    // we just looked down, so its radius is one divided by the other, and a
+    // tyre-limited car holds that radius at sqrt(grip x radius) — the same
+    // sum a driver does by feel on the way to a corner. Deriving the number
+    // means the bots re-learn the circuit for free whenever the grip changes,
+    // on worn rubber, and on the grass.
+    const radius = bend > 1e-3 ? lookahead / bend : CORNER_STRAIGHT_RADIUS;
+    const corner = Math.sqrt(traction * Math.min(radius, CORNER_STRAIGHT_RADIUS));
+
+    return {
+      target: { x: aim.x, z: aim.z },
+      sprint: true,
+      fire: false,
+      // Full throttle with margin in hand, coast through the band, and stand
+      // on the pedal once the corner is genuinely too fast to make. The band
+      // matters: braking the instant you are one unit over turns every sweeper
+      // into a stutter.
+      throttle: speed < corner * BOT_CORNER_MARGIN ? 1 : 0,
+      brake: speed > corner,
+    };
+  }
 
   const cruising = ctx.config.playerMaxSpeed * ctx.config.bots.speedMultiplier;
 

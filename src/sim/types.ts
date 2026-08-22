@@ -20,15 +20,25 @@ export const BUTTON_MASK = BUTTON_PRIMARY | BUTTON_SECONDARY;
  *
  * `buttons` is a bitfield (`BUTTON_PRIMARY | BUTTON_SECONDARY`) so that new
  * abilities never require a wire-format change — game systems read the bit
- * they care about. Movement axes carry analog magnitude: a half-pushed
- * thumbstick arrives as a vector of length 0.5 and moves the player at half
- * speed.
+ * they care about.
+ *
+ * **The two axes mean different things depending on the movement model**, and
+ * the mode's config decides which — see `moveX`/`moveZ` below. Both readings
+ * carry analog magnitude, so a half-pushed thumbstick is half of whatever it
+ * is asking for.
  */
 export interface PlayerInput {
   readonly seq: number;
-  /** Desired movement on the X axis, in [-1, 1]. */
+  /**
+   * On foot: desired movement on the world X axis, in [-1, 1].
+   * With `vehicle.enabled`: **steering**, -1 full left to +1 full right.
+   */
   readonly moveX: number;
-  /** Desired movement on the Z axis, in [-1, 1]. */
+  /**
+   * On foot: desired movement on the world Z axis, in [-1, 1].
+   * With `vehicle.enabled`: **throttle**, +1 full, 0 coasting, negative
+   * braking and then reversing.
+   */
   readonly moveZ: number;
   readonly sprint: boolean;
   /** Pressed action buttons, as a bitfield of `BUTTON_*` constants. */

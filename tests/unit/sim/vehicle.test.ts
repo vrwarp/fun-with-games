@@ -41,16 +41,56 @@ function drive(
 const speedOf = (p: PlayerState): number => Math.hypot(p.vx, p.vz);
 
 describe('vehicle handling', () => {
-  it('accelerates along its nose, not along the stick', () => {
+  it('reads the two axes as separate controls, not as a direction', () => {
+    // The whole point of the model: steering is `moveX`, throttle is `moveZ`,
+    // and neither implies the other.
     const config = carConfig();
-    const car = makePlayer({ heading: 0 }); // facing +Z
-    // Stick hard right. A runner would strafe; a car has to turn first.
-    drive(car, config, makeInput({ moveX: 1, moveZ: 0 }), 3);
 
-    expect(car.heading).toBeGreaterThan(0); // turning toward the stick
-    expect(car.heading).toBeLessThan(Math.PI / 2); // but nowhere near there yet
-    // Almost all of the speed is still along the original heading.
-    expect(car.vz).toBeGreaterThan(car.vx);
+    // Steering alone turns the car and moves it nowhere.
+    const turning = makePlayer({ heading: 0 });
+    drive(turning, config, makeInput({ moveX: 1, moveZ: 0 }), 10);
+    expect(turning.heading).toBeGreaterThan(0);
+    expect(speedOf(turning)).toBe(0);
+
+    // Throttle alone drives it dead straight.
+    const straight = makePlayer({ heading: 0 });
+    drive(straight, config, makeInput({ moveX: 0, moveZ: 1 }), 10);
+    expect(straight.heading).toBe(0);
+    expect(straight.vz).toBeGreaterThan(0);
+    expect(straight.vx).toBe(0);
+  });
+
+  it('steers at full lock left and right, symmetrically', () => {
+    const config = carConfig();
+    const left = makePlayer({ heading: 0 });
+    const right = makePlayer({ heading: 0 });
+    drive(left, config, makeInput({ moveX: -1 }), 5);
+    drive(right, config, makeInput({ moveX: 1 }), 5);
+    expect(left.heading).toBeCloseTo(-right.heading, 6);
+    expect(right.heading).toBeGreaterThan(0);
+  });
+
+  it('carries analog throttle: half the axis is half the speed', () => {
+    const config = carConfig();
+    const half = makePlayer({ heading: 0 });
+    drive(half, config, makeInput({ moveZ: 0.5 }), 300);
+    expect(speedOf(half)).toBeCloseTo(config.playerMaxSpeed * 0.5, 1);
+  });
+
+  it('ignores a resting thumb on either axis', () => {
+    const config = carConfig();
+    const car = makePlayer({ heading: 0 });
+    drive(car, config, makeInput({ moveX: 0.02, moveZ: 0.02 }), 30);
+    expect(car.heading).toBe(0);
+    expect(speedOf(car)).toBe(0);
+  });
+
+  it('steers while braking — a corner is entered on the brakes', () => {
+    const config = carConfig();
+    const car = makePlayer({ heading: 0, vz: 15 });
+    drive(car, config, makeInput({ moveX: 1, moveZ: -1 }), 10);
+    expect(car.heading).toBeGreaterThan(0);
+    expect(speedOf(car)).toBeLessThan(15);
   });
 
   it('cannot strafe: velocity stays on the car axis', () => {
@@ -95,27 +135,27 @@ describe('vehicle handling', () => {
     expect(speedOf(coasting)).toBeLessThan(18);
   });
 
-  it('reads a stick pulled back past the nose as braking', () => {
+  it('reads a pulled-back axis as the brake pedal', () => {
     const config = carConfig();
     const braked = makePlayer({ heading: 0, vz: 15 });
     const held = makePlayer({ heading: 0, vz: 15 });
 
-    // Facing +Z at speed, stick pushed to -Z: an instant U-turn is not on
-    // offer, so the request is read as "slow down" instead.
     drive(braked, config, makeInput({ moveZ: -1 }), 10);
     drive(held, config, makeInput({ moveZ: 1 }), 10);
     expect(speedOf(braked)).toBeLessThan(speedOf(held));
+    expect(braked.heading).toBe(0); // braking is not steering
   });
 
   it('turns a stopped car around rather than stranding it', () => {
     const config = carConfig();
     const car = makePlayer({ heading: 0 });
     // Deliberate: a real car cannot pivot, but a player who has spun on a
-    // phone has one thumb and no reverse gear worth using. Two seconds of
-    // stick gets them pointed the other way and going again.
-    drive(car, config, makeInput({ moveZ: -1 }), 60);
-    expect(Math.abs(Math.abs(car.heading) - Math.PI)).toBeLessThan(0.2);
-    expect(car.vz).toBeLessThan(-1);
+    // phone has one thumb and nowhere to go. Holding a steering axis gets
+    // them pointed the other way; unrecoverable is not a state to ship.
+    // A second of full lock is most of a half-turn at `steerRate`, which is
+    // the point: the way out of a spin is short enough that nobody gives up.
+    drive(car, config, makeInput({ moveX: 1 }), 30);
+    expect(car.heading).toBeGreaterThan(Math.PI * 0.9);
   });
 
   it('reverses on the brake pedal, capped well below the forward top speed', () => {
@@ -199,13 +239,13 @@ describe('surfaces, tyres and the limiter', () => {
     const onRoad = drive(
       makePlayer({ x: 0, z: -10, ...along }),
       config,
-      makeInput({ moveX: 1 }),
+      makeInput({ moveZ: 1 }),
       40,
     );
     const onGrass = drive(
       makePlayer({ x: 0, z: -18, ...along }),
       config,
-      makeInput({ moveX: 1 }),
+      makeInput({ moveZ: 1 }),
       40,
     );
     expect(isOnTrack(config, onRoad.x, onRoad.z)).toBe(true);

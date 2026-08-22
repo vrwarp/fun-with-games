@@ -346,6 +346,15 @@ What this means in practice:
   only in modes that use them — `usesPrimaryAction` in the mode metadata);
   `mergeIntents()` in `src/render/input.ts` combines devices, so a new
   control means adding a source, not branching on device type.
+- **There are two input models, and the mode picks one.** On foot the stick is
+  a _direction in the world_, rotated by the camera's yaw so "up" is always
+  "away from the camera" — correct for something you steer like a cursor, and
+  correct in every view. A car is not aimed, so with `vehicle.enabled` the two
+  axes are read raw as **steering (`moveX`) and throttle (`moveZ`) in the
+  car's own frame**. That is what makes driving identical in all five views
+  rather than depending on where the camera is, and it is why a chase camera's
+  own lag cannot feed back into the steering. `main.ts` chooses by passing the
+  camera yaw or not; the devices below it are unchanged.
 - **Both input paths must produce the same `InputIntent`.** Nothing below
   `src/render` knows or cares how the player moved — the simulation, the wire
   protocol and prediction are all device-agnostic. Keep it that way; do not

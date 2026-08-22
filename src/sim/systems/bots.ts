@@ -46,15 +46,18 @@ export function computeBotInput(ctx: StepContext, bot: PlayerState): PlayerInput
   if (ctx.config.platform.enabled && wantsToJump(ctx, bot, decision.target)) {
     buttons |= ctx.config.platform.jumpButton === 'secondary' ? BUTTON_SECONDARY : BUTTON_PRIMARY;
   }
-  if (decision.brake) buttons |= actionBit(ctx.config.vehicle.brakeButton);
   // Bots use the wing whenever the race hands it to them, so a solo player
   // sees DRS working from the other side of it too.
   if (hasEffect(bot, 'drsok', ctx.tick)) buttons |= actionBit(ctx.config.race.drsButton);
 
-  // The stick's magnitude is throttle to a car and speed to a runner; either
-  // way a decision that asks for less gets less.
-  const throttle = decision.throttle ?? 1;
+  // A car reads the two axes as steering and throttle in its own frame, so a
+  // bot has to drive rather than point (see `steerVehicle`). Everyone else
+  // reads them as a direction, scaled by how much of it the decision wants.
+  if (ctx.config.vehicle.enabled) {
+    return { seq: ctx.tick, ...driveAxes(bot, move, decision), sprint: decision.sprint, buttons };
+  }
 
+  const throttle = decision.throttle ?? 1;
   return {
     seq: ctx.tick,
     moveX: move.x * throttle,
@@ -62,6 +65,27 @@ export function computeBotInput(ctx: StepContext, bot: PlayerState): PlayerInput
     sprint: decision.sprint,
     buttons,
   };
+}
+
+/**
+ * How far the nose is off the direction a bot wants, before it is asking for
+ * full steering lock. About 29°, so a bot squares up briskly without sawing
+ * at the wheel down a straight.
+ */
+const FULL_LOCK_RADIANS = 0.5;
+
+/** Turns a wanted world direction into the axes a car actually understands. */
+function driveAxes(
+  bot: PlayerState,
+  direction: { x: number; z: number },
+  decision: Decision,
+): { moveX: number; moveZ: number } {
+  const pedal = decision.brake ? -1 : (decision.throttle ?? 1);
+  if (direction.x === 0 && direction.z === 0) return { moveX: 0, moveZ: pedal };
+
+  const wanted = Math.atan2(direction.x, direction.z);
+  const off = angleDelta(bot.heading, wanted);
+  return { moveX: clamp(off / FULL_LOCK_RADIANS, -1, 1), moveZ: pedal };
 }
 
 /** Bit for a configured button name; 0 when the action is unbound. */

@@ -1,10 +1,19 @@
 import { clamp } from '../shared/math.js';
 import { BUTTON_PRIMARY, BUTTON_SECONDARY } from '../sim/types.js';
 
+/**
+ * One frame of intent, before the simulation decides what it means.
+ *
+ * Devices produce the same two raw axes — right and forward — and `read()`
+ * rotates them by the camera's yaw so that "up" is "away from the camera".
+ * **A car is the exception:** its axes are steering and throttle in its own
+ * frame, so `main.ts` reads it with no yaw and leaves them raw. That is the
+ * whole difference, and it is what makes driving identical in every view.
+ */
 export interface InputIntent {
-  /** World-space movement on X, in [-1, 1]. */
+  /** Movement on world X, or steering with `vehicle.enabled`. In [-1, 1]. */
   moveX: number;
-  /** World-space movement on Z, in [-1, 1]. */
+  /** Movement on world Z, or throttle with `vehicle.enabled`. In [-1, 1]. */
   moveZ: number;
   sprint: boolean;
   /** Action buttons held, as a `BUTTON_*` bitfield (see `@/sim/types`). */

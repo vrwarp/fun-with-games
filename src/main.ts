@@ -20,6 +20,8 @@ import { loadManifest, loadModel } from './render/assets.js';
 import type { AssetManifest } from './shared/manifest.js';
 import { Announcer } from './ui/announcer.js';
 import { Credits } from './ui/credits.js';
+import { Settings } from './ui/settings.js';
+import { readPreferences, writePreferences } from './ui/preferences.js';
 import { Hud } from './ui/hud.js';
 import { Lobby, normalizeRoomId, randomRoomId } from './ui/lobby.js';
 
@@ -47,6 +49,7 @@ interface LaunchOptions {
    */
   view: ViewMode | undefined;
   sprites: boolean | undefined;
+  muted: boolean;
 }
 
 void bootstrap();
@@ -63,10 +66,16 @@ async function bootstrap(): Promise<void> {
   const modeId: GameModeId = isGameModeId(rawMode) ? rawMode : DEFAULT_MODE_ID;
   const transportKind = params.get('net') === 'broadcast' ? 'broadcast' : 'trystero';
   const botCount = clampBotCount(params.get('bots'));
+  // Presentation resolves URL first, then what this device remembers, then
+  // the mode's own default. A link someone was sent describes the game they
+  // were invited to; their settings fill in whatever the link did not say.
+  const stored = readPreferences();
   const rawView = params.get('view');
-  const view = isViewMode(rawView) ? rawView : undefined;
+  const view = isViewMode(rawView) ? rawView : stored.view;
   const spritesParam = params.get('sprites');
-  const sprites = spritesParam === null ? undefined : spritesParam === '1';
+  const sprites = spritesParam === null ? stored.sprites : spritesParam === '1';
+  const muteParam = params.get('mute');
+  const muted = muteParam === null ? (stored.muted ?? false) : muteParam === '1';
 
   // `?autojoin=1` skips the lobby. Used by the e2e tests, and handy when you
   // want a shareable link that drops straight into a room.
@@ -78,6 +87,7 @@ async function bootstrap(): Promise<void> {
       color: params.get('color') ?? '#4cc9f0',
       transportKind,
       botCount,
+      muted,
       view,
       sprites,
     });
@@ -90,7 +100,14 @@ async function bootstrap(): Promise<void> {
 
   // The URL still wins, so a shared link frames the game the way its sender
   // meant; the picker is what a player without one uses.
-  await launch(app, { ...choice, transportKind, botCount, view: view ?? choice.view, sprites });
+  await launch(app, {
+    ...choice,
+    transportKind,
+    botCount,
+    view: view ?? choice.view,
+    sprites,
+    muted,
+  });
 }
 
 async function launch(app: HTMLElement, options: LaunchOptions): Promise<void> {
@@ -145,15 +162,11 @@ async function launch(app: HTMLElement, options: LaunchOptions): Promise<void> {
     // the mode metadata.
     drives: config.vehicle.enabled,
     canOrbit: viewSpec(resolvedView).manualControl,
-    onAddBot: () => void session.addBot(),
-    onRemoveBot: () => void session.removeBot(),
   });
 
   // Procedural blips — no audio files, and `?mute=1` for quiet demos. The
   // announcer already knows what just happened, so it drives the sounds.
-  const audio = new GameAudio({
-    muted: new URLSearchParams(window.location.search).get('mute') === '1',
-  });
+  const audio = new GameAudio({ muted: options.muted });
   audio.attach();
   const announcer = new Announcer(app, session.selfId, {
     onCue: (cue) => {
@@ -201,6 +214,36 @@ async function launch(app: HTMLElement, options: LaunchOptions): Promise<void> {
       }
     },
   });
+  // Every presentation option in one place, changeable mid-game. These were
+  // all query parameters, which meant that changing your camera meant editing
+  // a URL — not something anyone does mid-race, and not something a phone
+  // player can reasonably do at all.
+  // Both corner buttons share one row, so neither can drift on top of the
+  // other — or onto the action buttons above them.
+  const utility = document.createElement('div');
+  utility.className = 'hud-utility';
+  app.append(utility);
+
+  const settings = new Settings(utility, {
+    initial: {
+      view: resolvedView,
+      sprites: options.sprites ?? mode.sprites ?? false,
+      muted: options.muted,
+    },
+    onChange: (values) => {
+      renderer?.setView(values.view);
+      renderer?.setSprites(values.sprites);
+      audio.setMuted(values.muted);
+      hud.setCanOrbit(viewSpec(values.view).manualControl);
+      writePreferences(values);
+      // Keep the address bar describing what is actually on screen, so that
+      // "Copy link" and a refresh both stay honest.
+      syncUrl({ ...options, view: values.view, sprites: values.sprites, muted: values.muted });
+    },
+    onAddBot: () => void session.addBot(),
+    onRemoveBot: () => void session.removeBot(),
+  });
+
   // Created once the manifest resolves, so it can list real licences.
   let credits: Credits | null = null;
   const input = new KeyboardInput(window);
@@ -234,7 +277,7 @@ async function launch(app: HTMLElement, options: LaunchOptions): Promise<void> {
   // optional, so this runs in the background and upgrades things if it lands.
   void loadManifest(import.meta.env.BASE_URL).then((manifest) => {
     void applyOptionalAssets(renderer, manifest);
-    credits = new Credits(app, manifest);
+    credits = new Credits(utility, manifest);
   });
 
   // A phone dims and locks after seconds of not being touched — including
@@ -293,6 +336,7 @@ async function launch(app: HTMLElement, options: LaunchOptions): Promise<void> {
       fps: renderer.engine.getFps(),
       pendingInputs: session.pendingInputCount,
     });
+    settings.setBotCount(session.botCount, session.isHost);
   });
 
   const teardown = (): void => {
@@ -305,13 +349,15 @@ async function launch(app: HTMLElement, options: LaunchOptions): Promise<void> {
     audio.dispose();
     announcer.dispose();
     credits?.dispose();
+    settings.dispose();
+    utility.remove();
     hud.dispose();
     renderer.dispose();
     void session.dispose();
   };
   window.addEventListener('pagehide', teardown, { once: true });
 
-  exposeTestHandle(session, renderer, options.modeId, resolvedView);
+  exposeTestHandle(session, renderer, options.modeId);
 }
 
 function createTransport(options: LaunchOptions): Transport {
@@ -367,6 +413,10 @@ function syncUrl(options: LaunchOptions): void {
   else url.searchParams.delete('mode');
   if (options.view) url.searchParams.set('view', options.view);
   if (options.sprites !== undefined) url.searchParams.set('sprites', options.sprites ? '1' : '0');
+  // Muting is off by default, so only say so when it is on: a link that reads
+  // `mute=0` is noise on every share.
+  if (options.muted) url.searchParams.set('mute', '1');
+  else url.searchParams.delete('mute');
   if (options.transportKind === 'broadcast') url.searchParams.set('net', 'broadcast');
   window.history.replaceState(null, '', url);
 }
@@ -399,12 +449,7 @@ function showFatalError(app: HTMLElement, message: string): void {
  * happened to update". Read-only on purpose: tests observe, they do not drive
  * the simulation from outside.
  */
-function exposeTestHandle(
-  session: NetSession,
-  renderer: Renderer,
-  modeId: GameModeId,
-  view: ViewMode,
-): void {
+function exposeTestHandle(session: NetSession, renderer: Renderer, modeId: GameModeId): void {
   Object.defineProperty(window, '__FWG__', {
     configurable: true,
     value: {
@@ -426,8 +471,9 @@ function exposeTestHandle(
       get mode() {
         return modeId;
       },
+      /** Live, not the view the page opened in: settings can change it. */
       get view() {
-        return view;
+        return renderer.view;
       },
       /** Orthographic in the 2D and 2.5D views, perspective in 3D. */
       get orthographic() {

@@ -70,8 +70,8 @@ export class EntityViews {
 
   #players = new Map<string, PlayerView>();
   #pickups = new Map<number, PickupView>();
-  readonly #sprites: boolean;
-  readonly #firstPerson: boolean;
+  #sprites: boolean;
+  #firstPerson: boolean;
   /**
    * Draw cars instead of bodies.
    *
@@ -142,10 +142,25 @@ export class EntityViews {
     this.#playerProto.isVisible = false;
     this.#playerProto.setEnabled(false);
     // Existing views still reference the old prototype's clones; rebuild them.
-    for (const [id, view] of this.#players) {
-      this.#disposePlayer(view);
-      this.#players.delete(id);
-    }
+    this.#rebuildPlayers();
+  }
+
+  /**
+   * Switches between sprite billboards and 3D bodies.
+   *
+   * What a player is made of is decided when their view is built, so this
+   * throws the views away rather than trying to mutate them; the next `sync`
+   * builds the other kind. There are never more than a handful.
+   */
+  setSprites(sprites: boolean): void {
+    if (sprites === this.#sprites) return;
+    this.#sprites = sprites;
+    this.#rebuildPlayers();
+  }
+
+  /** Whether the camera is inside the local player. See `EntityViewOptions`. */
+  setFirstPerson(firstPerson: boolean): void {
+    this.#firstPerson = firstPerson;
   }
 
   /** Projects one frame of state onto the scene. */
@@ -243,6 +258,13 @@ export class EntityViews {
   }
 
   // -------------------------------------------------------------- internals
+
+  #rebuildPlayers(): void {
+    for (const [id, view] of this.#players) {
+      this.#disposePlayer(view);
+      this.#players.delete(id);
+    }
+  }
 
   #syncPlayers(players: readonly RenderPlayer[]): void {
     const seen = new Set<string>();

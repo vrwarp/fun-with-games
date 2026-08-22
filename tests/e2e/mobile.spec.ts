@@ -319,6 +319,33 @@ test.describe('on a phone', () => {
     expect(Math.hypot(after!.x - before!.x, after!.z - before!.z)).toBeGreaterThan(3);
   });
 
+  test('every setting is reachable and thumb-sized', async ({ page }) => {
+    // These were all query parameters, which on a phone means typing one into
+    // a browser bar mid-game. The panel is the affordance that replaces that,
+    // so it has to be openable and operable with a thumb (CLAUDE.md §7).
+    await page.goto(`/?net=broadcast&autojoin=1&room=${ROOM}-set&mode=grandprix&name=Set`);
+    await expect(page.getByTestId('hud')).toBeVisible({ timeout: 30_000 });
+
+    const gear = page.getByTestId('settings-button');
+    const gearBox = await gear.boundingBox();
+    expect(gearBox?.height ?? 0).toBeGreaterThanOrEqual(44);
+    expect(gearBox?.width ?? 0).toBeGreaterThanOrEqual(44);
+
+    await gear.tap();
+    for (const id of ['settings-view', 'settings-sprites', 'settings-sound', 'settings-close']) {
+      const box = await page.getByTestId(id).boundingBox();
+      expect(box?.height ?? 0, id).toBeGreaterThanOrEqual(40);
+    }
+
+    // The dialog has to fit a phone rather than run off the side of it.
+    const dialog = await page.getByTestId('settings-dialog').boundingBox();
+    const viewport = page.viewportSize();
+    expect((dialog?.x ?? 0) + (dialog?.width ?? 0)).toBeLessThanOrEqual((viewport?.width ?? 0) + 1);
+
+    await page.getByTestId('settings-view').selectOption('first');
+    await expect.poll(() => page.evaluate(() => window.__FWG__.view)).toBe('first');
+  });
+
   test('the camera can be chosen without a keyboard', async ({ page }) => {
     // Views used to be URL-only, which on a phone means typing a query string
     // into a browser bar. The lobby offers them instead.

@@ -66,17 +66,71 @@ test('the lobby mode picker launches the chosen mode', async ({ page }) => {
   expect(page.url()).toContain('mode=tag');
 });
 
-test('the host can add a bot from the HUD', async ({ page }) => {
+test('the host can add a bot from settings', async ({ page }) => {
   await page.goto('/?net=broadcast&autojoin=1&room=e2e-hud-bot&mode=tag&name=Host');
   await waitForHud(page);
 
-  const addBot = page.getByTestId('add-bot');
+  await page.getByTestId('settings-button').click();
+  const addBot = page.getByTestId('settings-add-bot');
   await expect(addBot).toBeVisible();
   await addBot.click();
 
   await expect
     .poll(() => page.evaluate(() => window.__FWG__.botCount), { timeout: 10_000 })
     .toBe(1);
+  await expect(page.getByTestId('settings-bot-count')).toHaveText('1');
+});
+
+test('settings change the camera, the art and the sound without a reload', async ({ page }) => {
+  // The whole point of the panel: these were query parameters, so changing one
+  // meant editing a URL and dropping out of the room to reload it.
+  await page.goto('/?net=broadcast&autojoin=1&room=e2e-settings&mode=grandprix&name=Driver');
+  await waitForHud(page);
+  const tickBefore = await page.evaluate(() => window.__FWG__.tick);
+
+  await page.getByTestId('settings-button').click();
+  await page.getByTestId('settings-view').selectOption('topdown');
+  await expect.poll(() => page.evaluate(() => window.__FWG__.view)).toBe('topdown');
+  expect(await page.evaluate(() => window.__FWG__.orthographic)).toBe(true);
+
+  await page.getByTestId('settings-sprites').click();
+  await page.getByTestId('settings-sound').click();
+  await page.getByTestId('settings-close').click();
+
+  // Same session throughout: the simulation never restarted.
+  expect(await page.evaluate(() => window.__FWG__.tick)).toBeGreaterThan(tickBefore);
+  // And the address bar now describes what is actually on screen.
+  expect(page.url()).toContain('view=topdown');
+  expect(page.url()).toContain('sprites=1');
+});
+
+test('a camera chosen in settings survives a refresh', async ({ page }) => {
+  await page.goto('/?net=broadcast&autojoin=1&room=e2e-sticky&mode=tag&name=Sticky');
+  await waitForHud(page);
+
+  await page.getByTestId('settings-button').click();
+  await page.getByTestId('settings-view').selectOption('iso');
+  await expect.poll(() => page.evaluate(() => window.__FWG__.view)).toBe('iso');
+
+  // Back in without the parameter: the stored preference has to supply it,
+  // which is what makes this a setting rather than a link.
+  await page.goto('/?net=broadcast&autojoin=1&room=e2e-sticky2&mode=tag&name=Sticky');
+  await waitForHud(page);
+  expect(await page.evaluate(() => window.__FWG__.view)).toBe('iso');
+});
+
+test('a link still overrides what the device remembers', async ({ page }) => {
+  await page.goto('/?net=broadcast&autojoin=1&room=e2e-link&mode=tag&name=Linked');
+  await waitForHud(page);
+  await page.getByTestId('settings-button').click();
+  await page.getByTestId('settings-view').selectOption('side');
+  await expect.poll(() => page.evaluate(() => window.__FWG__.view)).toBe('side');
+
+  // Someone sends a link that names a view: the link describes the game they
+  // were invited to, so it wins over the preference.
+  await page.goto('/?net=broadcast&autojoin=1&room=e2e-link2&mode=tag&name=Linked&view=topdown');
+  await waitForHud(page);
+  expect(await page.evaluate(() => window.__FWG__.view)).toBe('topdown');
 });
 
 test('gather stays the untimed sandbox: no banner, no timer, no buttons', async ({ page }) => {

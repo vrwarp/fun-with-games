@@ -79,6 +79,7 @@ Where to add things so the diff stays inside one module:
 | Visual effect     | `src/render/` (`kitviews.ts` for kit state)  | render only                                        |
 | Input device      | `src/render/<device>.ts` + `mergeIntents`    | render only — see the mobile rule below            |
 | HUD element       | `src/ui/hud.ts`                              | ui only                                            |
+| Player setting    | `src/ui/settings.ts` + a setter on its owner | ui + one runtime setter — never a new query param  |
 | Announcement      | `src/ui/announcer.ts` (state diffing)        | ui only — never sim events (host-only)             |
 | Runtime credit    | `RUNTIME_CREDITS` in `src/ui/credits.ts`     | ui only — required for a new runtime dependency    |
 | Placeholder art   | `scripts/generate-assets.mjs`                | assets only                                        |

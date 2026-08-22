@@ -30,9 +30,6 @@ export interface HudOptions {
    * a camera that will not move is worse than saying nothing.
    */
   canOrbit?: boolean;
-  /** When provided (and this peer is host), shows the add/remove bot buttons. */
-  onAddBot?: () => void;
-  onRemoveBot?: () => void;
 }
 
 /**
@@ -76,7 +73,6 @@ export class Hud {
   #collapsed: boolean;
   #goal: HTMLElement;
   #vitals: HTMLElement;
-  #botRow: HTMLElement;
   #teamStrip: HTMLElement;
   #timer: HTMLElement;
   #race: HTMLElement;
@@ -94,6 +90,7 @@ export class Hud {
   #mode: GameModeInfo | undefined;
   #drives: boolean;
   #canOrbit: boolean;
+  #help: HTMLElement;
 
   constructor(parent: HTMLElement, options: HudOptions = {}) {
     this.#mode = options.mode;
@@ -161,23 +158,11 @@ export class Hud {
     this.#vitals.dataset['testid'] = 'vitals';
     this.#vitals.hidden = true;
 
-    this.#botRow = document.createElement('div');
-    this.#botRow.className = 'hud__bots';
-    this.#botRow.hidden = true;
-    if (options.onAddBot) {
-      const add = this.#createBotButton('+ Bot', 'add-bot', options.onAddBot);
-      this.#botRow.append(add);
-    }
-    if (options.onRemoveBot) {
-      const remove = this.#createBotButton('−', 'remove-bot', options.onRemoveBot);
-      this.#botRow.append(remove);
-    }
-
     this.#status = document.createElement('div');
     this.#status.className = 'hud__status';
     this.#status.dataset['testid'] = 'net-status';
 
-    panel.append(roomRow, this.#goal, this.#scoreboard, this.#vitals, this.#botRow, this.#status);
+    panel.append(roomRow, this.#goal, this.#scoreboard, this.#vitals, this.#status);
     this.#panel = panel;
     this.#applyCollapsed();
 
@@ -252,12 +237,24 @@ export class Hud {
     this.#bannerSubtitle.className = 'hud__banner-subtitle';
     this.#banner.append(this.#bannerTitle, this.#bannerSubtitle);
 
-    const help = document.createElement('div');
-    help.className = 'hud__help';
-    help.innerHTML = this.#helpText();
+    this.#help = document.createElement('div');
+    this.#help.className = 'hud__help';
+    this.#help.innerHTML = this.#helpText();
 
-    this.root.append(panel, top, this.#banner, help);
+    this.root.append(panel, top, this.#banner, this.#help);
     parent.append(this.root);
+  }
+
+  /**
+   * Whether the current view hands the camera to the player.
+   *
+   * The camera can change mid-game now, so the keyboard hint has to be able to
+   * change with it rather than describing whichever view the page opened in.
+   */
+  setCanOrbit(canOrbit: boolean): void {
+    if (canOrbit === this.#canOrbit) return;
+    this.#canOrbit = canOrbit;
+    this.#help.innerHTML = this.#helpText();
   }
 
   update(state: RenderState, status: HudStatus): void {
@@ -268,7 +265,6 @@ export class Hud {
     this.#renderRace(state, status);
     this.#renderBanner(state, status);
     this.#renderVitals(state, status);
-    this.#botRow.hidden = !status.isHost || this.#botRow.childElementCount === 0;
   }
 
   dispose(): void {
@@ -295,16 +291,6 @@ export class Hud {
     this.#panel.classList.toggle('is-collapsed', this.#collapsed);
     this.#toggle.setAttribute('aria-expanded', String(!this.#collapsed));
     this.#toggle.title = this.#collapsed ? 'Show room details' : 'Hide room details';
-  }
-
-  #createBotButton(label: string, testid: string, onClick: () => void): HTMLButtonElement {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'hud__bot-button';
-    button.dataset['testid'] = testid;
-    button.textContent = label;
-    button.addEventListener('click', onClick);
-    return button;
   }
 
   #renderScores(state: RenderState, status: HudStatus): void {

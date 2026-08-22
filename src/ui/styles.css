@@ -277,7 +277,6 @@ body {
 .hud__panel.is-collapsed .hud__goal,
 .hud__panel.is-collapsed .hud__copy,
 .hud__panel.is-collapsed .hud__vitals,
-.hud__panel.is-collapsed .hud__bots,
 .hud__panel.is-collapsed .hud__status {
   display: none;
 }
@@ -392,23 +391,6 @@ body {
   font-size: 0.95rem;
   color: #ff7b90;
   letter-spacing: 0.08em;
-}
-
-.hud__bots {
-  display: flex;
-  gap: 0.4rem;
-}
-
-.hud__bot-button {
-  min-height: var(--tap);
-  min-width: var(--tap);
-  padding: 0.3rem 0.6rem;
-  font-size: 0.78rem;
-  color: var(--text);
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid var(--panel-border);
-  border-radius: 8px;
-  cursor: pointer;
 }
 
 .hud__score-row.is-out {
@@ -732,14 +714,182 @@ body {
   background: rgba(76, 201, 240, 0.28);
 }
 
-/* --------------------------------------------------------------- credits */
+/* -------------------------------------------------------------- settings */
 
-/* Bottom-right, opposite the thumbstick, so neither is under the other thumb. */
-.credits__open {
+/* The utility bar: settings and credits, side by side along the bottom edge,
+   BELOW the action buttons (which sit at 5rem) and to the right of the
+   thumbstick. Sharing one row is what stops three separately-positioned
+   corner buttons from landing on top of each other. */
+.hud-utility {
   position: absolute;
   right: max(1.25rem, env(safe-area-inset-right));
   bottom: max(1.25rem, env(safe-area-inset-bottom));
   z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  pointer-events: auto;
+}
+
+.settings__open {
+  min-height: var(--tap);
+  min-width: var(--tap);
+  font-size: 1.15rem;
+  line-height: 1;
+  color: var(--text-dim);
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 999px;
+  backdrop-filter: blur(10px);
+  cursor: pointer;
+}
+
+.settings {
+  width: min(26rem, calc(100vw - 1.5rem));
+  max-height: 80dvh;
+  padding: 0;
+  color: var(--text);
+  background: #12151e;
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.settings::backdrop {
+  background: rgba(4, 6, 12, 0.65);
+}
+
+.settings__body {
+  max-height: 80dvh;
+  overflow-y: auto;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+.settings__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.settings__title {
+  margin: 0;
+  font-size: 1.15rem;
+}
+
+.settings__close {
+  min-height: var(--tap);
+  min-width: var(--tap);
+  padding: 0.4rem 0.85rem;
+  font-size: 0.85rem;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.settings__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding-top: 0.9rem;
+  border-top: 1px solid var(--panel-border);
+}
+
+.settings__text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.settings__label {
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.settings__hint {
+  font-size: 0.72rem;
+  line-height: 1.35;
+  color: var(--text-dim);
+}
+
+.settings__select {
+  flex: none;
+  max-width: 11rem;
+  min-height: var(--tap);
+  /* 16px minimum, or iOS zooms the page on focus and cannot zoom back. */
+  font-size: 1rem;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  padding: 0.4rem 0.5rem;
+}
+
+/* A switch rather than a checkbox: a native one is a 13px target. */
+.settings__toggle {
+  flex: none;
+  min-height: var(--tap);
+  min-width: 4.25rem;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--text-dim);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--panel-border);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.settings__toggle[data-on='true'] {
+  color: #06231b;
+  background: #06d6a0;
+  border-color: #06d6a0;
+}
+
+.settings__bots {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.settings__bot-button {
+  min-height: var(--tap);
+  min-width: var(--tap);
+  font-size: 1.1rem;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.settings__bot-count {
+  min-width: 1.5rem;
+  font-size: 1rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+/* A client can see the count but not change it — bots are simulation, and the
+   host owns that. Hidden rather than disabled: a control you may never use is
+   clutter, not information. */
+.settings__bot-count[data-host='false'] ~ .settings__bot-button,
+.settings__bots:has(.settings__bot-count[data-host='false']) .settings__bot-button {
+  display: none;
+}
+
+/* --------------------------------------------------------------- credits */
+
+/* Lives in the utility bar; see `.hud-utility`. */
+.credits__open {
   min-height: var(--tap);
   min-width: var(--tap);
   padding: 0.5rem 0.9rem;

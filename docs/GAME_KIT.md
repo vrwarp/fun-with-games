@@ -102,8 +102,9 @@ the fastest demo trick in the kit:
 ?mode=grandprix&view=first    # onboard, from the cockpit
 ```
 
-The lobby has a **Camera** picker covering the same ground, because a view you
-can only reach by typing a query string is a view a phone player does not have.
+The lobby has a **Camera** picker covering the same ground, and the in-game
+**Settings** panel changes it mid-match without a reload — a view you can only
+reach by typing a query string is a view a phone player does not have.
 
 Input stays correct in every view automatically: movement is rotated by
 `cameraYaw`, so "up" is always "away from the camera", and the fixed views

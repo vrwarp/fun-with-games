@@ -91,21 +91,40 @@ describe('zones: checkpoints', () => {
     expect(a.checkpoint).toBe(1);
   });
 
-  it('completes a lap, scores it and emits the event', () => {
+  it('completes a lap back at the line, not at the last gate', () => {
+    // Gate 0 is the start/finish line. A lap is not over when the car reaches
+    // the LAST gate — it still has the run from there back to the line to do,
+    // and counting it early takes that section off the lap counter, off every
+    // lap time, and off where the chequered flag falls.
     const world = worldWith({ zones: [...gates] });
     const lap = vi.fn();
     world.events.on('lapCompleted', lap);
     const a = world.addPlayer('a', profile);
 
+    // Crossing the line for the first time starts lap one; it does not end
+    // lap zero. The grid sits behind the line.
     Object.assign(a, { x: 10, z: 0, vx: 0, vz: 0 });
     world.step();
+    expect(a.lap).toBe(0);
+    expect(a.checkpoint).toBe(1);
+
+    // The far gate is the last of this two-gate circuit. Reaching it is not
+    // the lap.
     Object.assign(a, { x: -10, z: 0, vx: 0, vz: 0 });
     world.step();
+    expect(a.lap).toBe(0);
+    // Parked on the gate count rather than wrapped to zero, so "back at the
+    // line having done the lap" cannot be confused with "sat on the grid".
+    expect(a.checkpoint).toBe(gates.length);
+    expect(lap).not.toHaveBeenCalled();
 
+    // Back at the line: now it is.
+    Object.assign(a, { x: 10, z: 0, vx: 0, vz: 0 });
+    world.step();
     expect(a.lap).toBe(1);
-    expect(a.checkpoint).toBe(0); // wrapped for the next lap
+    expect(a.checkpoint).toBe(1);
     expect(a.score).toBe(world.config.zoneRules.lapScore);
-    expect(lap).toHaveBeenCalledWith({ playerId: 'a', lap: 1, lapTicks: 1, best: true });
+    expect(lap).toHaveBeenCalledWith({ playerId: 'a', lap: 1, lapTicks: 2, best: true });
   });
 
   it('times each lap from the start/finish line, and remembers the best', () => {
@@ -133,10 +152,12 @@ describe('zones: checkpoints', () => {
     expect(a.lapStartTick).toBe(started);
     expect(a.lap).toBe(0);
 
-    // Gate 1 is the last gate of this two-gate circuit, so crossing it is
-    // what completes the lap.
+    // Round the far gate and back to the line, which is what a lap is.
     idle(20);
     crossBack();
+    expect(a.lap).toBe(0);
+    idle(5);
+    crossLine();
     const firstEnd = world.tick - 1;
     expect(a.lap).toBe(1);
     expect(a.lastLapTicks).toBe(firstEnd - started);
@@ -146,9 +167,10 @@ describe('zones: checkpoints', () => {
     const firstLap = a.lastLapTicks;
 
     // A slower second lap leaves the best alone.
-    crossLine();
     idle(60);
     crossBack();
+    idle(5);
+    crossLine();
     expect(a.lap).toBe(2);
     expect(a.lastLapTicks).toBeGreaterThan(firstLap);
     expect(a.bestLapTicks).toBe(firstLap);

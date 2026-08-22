@@ -85,32 +85,49 @@ function updateCheckpoints(ctx: StepContext): void {
   for (const player of ctx.players) {
     if (isKnockedOut(player, ctx.tick)) continue;
 
-    const next = checkpoints.find((zone) => zone.order === player.checkpoint);
+    // `checkpoint` counts gates cleared this lap, so it runs 0 … circuit and
+    // the gate being looked for is that count wrapped. Landing back on 0 would
+    // be ambiguous — a car on the grid and a car that has just gone all the
+    // way round would look identical at the line — so a completed circuit
+    // parks on `circuit` instead, and only that value completes a lap.
+    const required = player.checkpoint % circuit;
+    const next = checkpoints.find((zone) => zone.order === required);
     if (!next) continue;
     if (distanceSq2(player.x, player.z, next.x, next.z) > next.radius * next.radius) continue;
 
-    const previous = player.checkpoint;
-    player.checkpoint += 1;
+    // A lap ends where it starts: at the line, which is gate 0 — `trackGates`
+    // puts it at track distance 0 for exactly this reason.
+    //
+    // Counting the wrap as the car LEAVES the last gate instead awards the lap
+    // a gate early, and it awards it everywhere the same way: the counter, the
+    // lap time and the chequered flag all fall short by one gate's worth of
+    // circuit. On a nine-gate lap that is the last ninth of the track, so the
+    // race ends while the winner is still a corner from the board.
+    // A full circuit's worth of gates behind it, and now back at the line.
+    const completesLap = player.checkpoint === circuit;
+    player.checkpoint = completesLap ? 1 : player.checkpoint + 1;
 
-    if (player.checkpoint >= circuit) {
-      player.checkpoint = 0;
-      player.lap += 1;
-      player.score += ctx.config.zoneRules.lapScore;
-
-      const lapTicks = ctx.tick - player.lapStartTick;
-      player.lastLapTicks = lapTicks;
-      const best = player.bestLapTicks === 0 || lapTicks < player.bestLapTicks;
-      if (best) player.bestLapTicks = lapTicks;
-      // The line that ends a lap starts the next one; no gap, no double count.
-      player.lapStartTick = ctx.tick;
-
-      ctx.out.push({ type: 'lapCompleted', playerId: player.id, lap: player.lap, lapTicks, best });
-    } else if (previous === 0 && player.lap === 0) {
-      // The very first crossing of the start/finish line. Timing from here
-      // rather than from tick 0 means a lap time measures a lap, not a lap
+    if (!completesLap) {
+      // The first crossing is the start of lap one, not the end of lap zero:
+      // the grid sits behind the line, so every car passes gate 0 seconds
+      // after the lights go out with nothing behind it. Timing from here
+      // rather than from tick zero means a lap time measures a lap, not a lap
       // plus however long the driver dawdled on the grid.
-      player.lapStartTick = ctx.tick;
+      if (player.checkpoint === 1) player.lapStartTick = ctx.tick;
+      continue;
     }
+
+    player.lap += 1;
+    player.score += ctx.config.zoneRules.lapScore;
+
+    const lapTicks = ctx.tick - player.lapStartTick;
+    player.lastLapTicks = lapTicks;
+    const best = player.bestLapTicks === 0 || lapTicks < player.bestLapTicks;
+    if (best) player.bestLapTicks = lapTicks;
+    // The line that ends a lap starts the next one; no gap, no double count.
+    player.lapStartTick = ctx.tick;
+
+    ctx.out.push({ type: 'lapCompleted', playerId: player.id, lap: player.lap, lapTicks, best });
   }
 }
 

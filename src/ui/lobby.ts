@@ -1,4 +1,12 @@
-import { DEFAULT_MODE_ID, GAME_MODES, isGameModeId, type GameModeId } from '../shared/modes.js';
+import {
+  DEFAULT_MODE_ID,
+  GAME_MODES,
+  VIEW_IDS,
+  VIEW_LABELS,
+  isGameModeId,
+  type GameModeId,
+  type ModeView,
+} from '../shared/modes.js';
 
 /** Player-chosen settings collected before joining a room. */
 export interface LobbyResult {
@@ -6,6 +14,14 @@ export interface LobbyResult {
   color: string;
   roomId: string;
   modeId: GameModeId;
+  /**
+   * Camera framing, or undefined to take whatever the mode prefers.
+   *
+   * Presentation only, so it never reaches the room name — but it does need
+   * to be reachable without editing a URL, which on the primary target means
+   * a phone keyboard.
+   */
+  view: ModeView | undefined;
 }
 
 const PALETTE = [
@@ -38,8 +54,12 @@ export class Lobby {
   #colorInput: HTMLInputElement;
   #modeSelect: HTMLSelectElement;
   #modeTagline: HTMLElement;
+  #viewSelect: HTMLSelectElement;
 
-  constructor(parent: HTMLElement, defaults: { roomId: string; modeId?: GameModeId }) {
+  constructor(
+    parent: HTMLElement,
+    defaults: { roomId: string; modeId?: GameModeId; view?: ModeView },
+  ) {
     this.root = document.createElement('div');
     this.root.className = 'lobby';
     this.root.dataset['testid'] = 'lobby';
@@ -96,6 +116,27 @@ export class Lobby {
     this.#modeTagline.dataset['testid'] = 'mode-tagline';
     this.#modeSelect.addEventListener('change', () => this.#refreshTagline());
     modeField.append(modeLabel, this.#modeSelect, this.#modeTagline);
+
+    const viewField = document.createElement('label');
+    viewField.className = 'lobby__field';
+    const viewLabel = document.createElement('span');
+    viewLabel.className = 'lobby__label';
+    viewLabel.textContent = 'Camera';
+    this.#viewSelect = document.createElement('select');
+    this.#viewSelect.className = 'lobby__input lobby__select';
+    this.#viewSelect.dataset['testid'] = 'view-select';
+    const auto = document.createElement('option');
+    auto.value = '';
+    auto.textContent = 'Mode default';
+    this.#viewSelect.append(auto);
+    for (const id of VIEW_IDS) {
+      const option = document.createElement('option');
+      option.value = id;
+      option.textContent = VIEW_LABELS[id];
+      this.#viewSelect.append(option);
+    }
+    this.#viewSelect.value = defaults.view ?? '';
+    viewField.append(viewLabel, this.#viewSelect);
     this.#refreshTagline();
 
     this.#colorInput = document.createElement('input');
@@ -122,6 +163,7 @@ export class Lobby {
       this.#nameInput.parentElement ?? this.#nameInput,
       this.#roomInput.parentElement ?? this.#roomInput,
       modeField,
+      viewField,
       swatches,
       this.#colorInput,
       join,
@@ -186,11 +228,14 @@ export class Lobby {
     const roomId = normalizeRoomId(this.#roomInput.value);
     const color = this.#colorInput.value;
     const modeId = isGameModeId(this.#modeSelect.value) ? this.#modeSelect.value : DEFAULT_MODE_ID;
+    const chosenView = VIEW_IDS.find((id) => id === this.#viewSelect.value);
 
     writeStored(NAME_STORAGE_KEY, name);
     writeStored(COLOR_STORAGE_KEY, color);
 
-    this.#resolve?.({ name, color, roomId, modeId });
+    // Conditional spread: `exactOptionalPropertyTypes` will not take an
+    // explicit undefined for an optional field.
+    this.#resolve?.({ name, color, roomId, modeId, view: chosenView });
     this.#resolve = null;
   }
 }

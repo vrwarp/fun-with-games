@@ -71,9 +71,23 @@ Three independent knobs decide what a game looks like:
 | `view`    | Reads as         | Camera                                    |
 | --------- | ---------------- | ----------------------------------------- |
 | `follow`  | 3D third-person  | perspective, swings behind you, drag-able |
+| `first`   | first person     | perspective, in the player's own head     |
 | `iso`     | 2.5D isometric   | orthographic, fixed 45° diagonal          |
 | `topdown` | flat 2D          | orthographic, almost straight down        |
 | `side`    | 2D side-scroller | orthographic, level with the z = 0 lane   |
+
+`first` is the one view built differently. `ArcRotateCamera` orbits a target
+rather than looking forward from a point, so a cockpit is made by aiming the
+target down the road and orbiting from exactly that far back — which lands the
+camera on the player's head (`ViewSpec.eye`, and `radius` must equal
+`lookahead - forward` or the eye slides out of the car). Nothing about it is
+smoothed: a head is bolted to its chassis, and the easing that makes a chase
+camera feel operated makes a first-person one feel seasick. The eye sits just
+behind the cockpit, where a broadcast puts its onboard camera and for the same
+reason — from the driver's actual eyeline the car is a slab across the bottom
+of the frame. The local player's name label is hidden (a billboard at zero
+distance fills the screen) and so is their body, unless it is a car, because
+the nose and front wheels ahead of you are the whole appeal.
 
 View is **presentation only**: it never reaches the simulation and is not part
 of the room name, so `?view=topdown` on any mode is always safe — two players
@@ -85,7 +99,11 @@ the fastest demo trick in the kit:
 ?mode=arena&view=iso          # the shooter as 2.5D isometric
 ?mode=tag&view=side           # tag on a single lane
 ?mode=platformer&view=follow  # the platformer in 3D, for contrast
+?mode=grandprix&view=first    # onboard, from the cockpit
 ```
+
+The lobby has a **Camera** picker covering the same ground, because a view you
+can only reach by typing a query string is a view a phone player does not have.
 
 Input stays correct in every view automatically: movement is rotated by
 `cameraYaw`, so "up" is always "away from the camera", and the fixed views

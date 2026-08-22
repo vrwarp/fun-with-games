@@ -102,7 +102,10 @@ Useful query parameters: `room`, `mode`, `bots`, `view`, `sprites`, `name`,
 `color`, `net=broadcast`, `autojoin=1`, `mute=1`, `log=debug`. The mode is part
 of the transport room name, so peers running different rules never meet;
 `view` and `sprites` are presentation-only and deliberately are NOT, so one
-player can watch a match top-down while another plays it in 3D.
+player can watch a match top-down while another plays it in 3D. Views are
+`follow`, `first` (cockpit), `iso`, `topdown` and `side`; the lobby's
+**Camera** picker offers the same choice, since a URL parameter is not a
+control a phone player has.
 
 ---
 

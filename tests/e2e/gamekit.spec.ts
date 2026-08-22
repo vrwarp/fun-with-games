@@ -138,6 +138,56 @@ test.describe('2D and 2.5D views', () => {
     expect(await page.evaluate(() => window.__FWG__.orthographic)).toBe(true);
   });
 
+  test('first person puts the camera in the driver\u2019s head', async ({ page }) => {
+    const errors: string[] = [];
+    page.on('pageerror', (error) => errors.push(error.message));
+
+    await page.goto(
+      '/?net=broadcast&autojoin=1&room=e2e-fp&mode=grandprix&bots=2&name=Driver&view=first',
+    );
+    await waitForHud(page);
+    await expect
+      .poll(() => page.evaluate(() => window.__FWG__.tick), { timeout: 30_000 })
+      .toBeGreaterThan(30);
+
+    expect(await page.evaluate(() => window.__FWG__.view)).toBe('first');
+    // A cockpit is perspective, level with the horizon, and pinned: the orbit
+    // is one arrangement rather than a range the player can drift out of.
+    expect(await page.evaluate(() => window.__FWG__.orthographic)).toBe(false);
+    expect(await page.evaluate(() => window.__FWG__.cameraBeta)).toBeCloseTo(Math.PI / 2, 3);
+
+    // It also has to sit closer than the chase camera, or it is not a cockpit.
+    const cockpit = await page.evaluate(() => window.__FWG__.cameraRadius);
+    await page.goto('/?net=broadcast&autojoin=1&room=e2e-fp2&mode=grandprix&name=Driver');
+    await waitForHud(page);
+    expect(cockpit).toBeLessThan(await page.evaluate(() => window.__FWG__.cameraRadius));
+
+    expect(errors).toEqual([]);
+  });
+
+  test('the camera turns with the car, not with where it is going', async ({ page }) => {
+    // A head is bolted to the chassis. The chase camera deliberately only
+    // swings while the player is moving; doing that in a cockpit would leave
+    // the view pointing at the scenery every time a driver turned on the spot.
+    await page.goto(
+      '/?net=broadcast&autojoin=1&room=e2e-fp3&mode=grandprix&name=Driver&view=first',
+    );
+    await waitForHud(page);
+    await expect
+      .poll(() => page.evaluate(() => window.__FWG__.tick), { timeout: 30_000 })
+      .toBeGreaterThan(60);
+
+    const before = await page.evaluate(() => window.__FWG__.cameraAlpha);
+    await page.keyboard.down('KeyA');
+    await page.waitForTimeout(1200);
+    await page.keyboard.up('KeyA');
+
+    const after = await page.evaluate(() => window.__FWG__.cameraAlpha);
+    let turned = Math.abs(after - before) % (Math.PI * 2);
+    if (turned > Math.PI) turned = Math.PI * 2 - turned;
+    expect(turned).toBeGreaterThan(0.3);
+  });
+
   test('the 3D follow camera stays perspective', async ({ page }) => {
     await page.goto('/?net=broadcast&autojoin=1&room=e2e-3d&name=Classic');
     await waitForHud(page);

@@ -12,7 +12,7 @@ interface FwgTestHandle {
   readonly peerCount: number;
   readonly tick: number;
   readonly mode: string;
-  readonly view: 'follow' | 'iso' | 'topdown' | 'side';
+  readonly view: 'follow' | 'first' | 'iso' | 'topdown' | 'side';
   readonly orthographic: boolean;
   readonly phase: 'lobby' | 'countdown' | 'playing' | 'ended';
   readonly botCount: number;

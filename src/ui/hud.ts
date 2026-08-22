@@ -23,6 +23,13 @@ export interface HudOptions {
    * truth for the question. It only changes what the keyboard hint says.
    */
   drives?: boolean;
+  /**
+   * Whether this view hands the camera to the player.
+   *
+   * The fixed projections and the cockpit do not, and telling someone to drag
+   * a camera that will not move is worse than saying nothing.
+   */
+  canOrbit?: boolean;
   /** When provided (and this peer is host), shows the add/remove bot buttons. */
   onAddBot?: () => void;
   onRemoveBot?: () => void;
@@ -86,10 +93,12 @@ export class Hud {
   #copyResetTimer: ReturnType<typeof setTimeout> | null = null;
   #mode: GameModeInfo | undefined;
   #drives: boolean;
+  #canOrbit: boolean;
 
   constructor(parent: HTMLElement, options: HudOptions = {}) {
     this.#mode = options.mode;
     this.#drives = options.drives ?? false;
+    this.#canOrbit = options.canOrbit ?? true;
 
     this.root = document.createElement('div');
     this.root.className = 'hud';
@@ -473,7 +482,7 @@ export class Hud {
     if (this.#mode?.usesSecondaryAction) {
       parts.push(`<kbd>K</kbd> ${this.#mode.secondaryLabel ?? 'action'}`);
     }
-    parts.push('drag to orbit');
+    if (this.#canOrbit) parts.push('drag to orbit');
     return parts.join(' &nbsp;·&nbsp; ');
   }
 

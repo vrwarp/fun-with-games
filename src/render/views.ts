@@ -1,6 +1,8 @@
 import { Camera } from '@babylonjs/core/Cameras/camera.js';
 import type { ArcRotateCamera } from '@babylonjs/core/Cameras/arcRotateCamera.js';
 
+import { VIEW_IDS, type ModeView } from '../shared/modes.js';
+
 /**
  * How the world is framed. This is the whole difference between a 3D game, a
  * 2.5D game and a 2D game in this kit — the simulation is identical for all
@@ -9,6 +11,7 @@ import type { ArcRotateCamera } from '@babylonjs/core/Cameras/arcRotateCamera.js
  * | id       | look                                    | camera            |
  * | -------- | --------------------------------------- | ----------------- |
  * | `follow` | third-person 3D, swings behind you      | perspective       |
+ * | `first`  | first person, from the driver's head    | perspective       |
  * | `iso`    | 2.5D isometric, fixed diagonal          | orthographic      |
  * | `topdown`| flat 2D from directly overhead          | orthographic      |
  * | `side`   | 2D side-scroller, one lane deep         | orthographic      |
@@ -16,10 +19,13 @@ import type { ArcRotateCamera } from '@babylonjs/core/Cameras/arcRotateCamera.js
  * View is **presentation only**: it never reaches the simulation, is not part
  * of the room's config, and two players in the same room may legitimately be
  * looking at the same match in different projections.
+ *
+ * The union itself lives in `src/shared/modes.ts` so that the lobby can offer
+ * the choice; this file owns what each one means to a camera.
  */
-export type ViewMode = 'follow' | 'iso' | 'topdown' | 'side';
+export type ViewMode = ModeView;
 
-export const VIEW_MODES: readonly ViewMode[] = ['follow', 'iso', 'topdown', 'side'];
+export const VIEW_MODES = VIEW_IDS;
 
 export function isViewMode(value: string | null | undefined): value is ViewMode {
   return VIEW_MODES.includes(value as ViewMode);
@@ -27,6 +33,36 @@ export function isViewMode(value: string | null | undefined): value is ViewMode 
 
 /** Arena wall sides, named by the axis they sit on. */
 export type WallSide = 'northZ' | 'southZ' | 'eastX' | 'westX';
+
+/**
+ * Where a first-person camera's eye sits, relative to the player.
+ *
+ * `ArcRotateCamera` has no notion of "look forward from here" — it orbits a
+ * target. A cockpit is therefore built by aiming the target down the road and
+ * orbiting from exactly that far back, which lands the camera on the driver's
+ * head. `radius` in the spec must equal `lookahead - forward` for that to come
+ * out right.
+ */
+export interface EyeSpec {
+  /**
+   * Eye height above the player's feet.
+   *
+   * Has to clear a car's airbox, or the camera spends the race inside its own
+   * bodywork looking at the underside of it.
+   */
+  readonly height: number;
+  /**
+   * How far forward of the player's centre the eye sits; negative is behind.
+   *
+   * Set behind the cockpit, which is where a racing broadcast puts its onboard
+   * camera and for the same reason: from the driver's actual eyeline the car
+   * is a slab filling the bottom of the frame, while from just behind it the
+   * nose narrows away and you can see what it is pointed at.
+   */
+  readonly forward: number;
+  /** How far down the road the camera looks. */
+  readonly lookahead: number;
+}
 
 export interface ViewSpec {
   /** Orbit angle around Y. Fixed for every view except `follow`. */
@@ -53,6 +89,8 @@ export interface ViewSpec {
    * stops being drawn from the one angle where it would hide everything.
    */
   readonly hiddenWalls: readonly WallSide[];
+  /** Present only on a first-person view; see `EyeSpec`. */
+  readonly eye?: EyeSpec;
 }
 
 /**
@@ -71,6 +109,21 @@ const SPECS: Record<ViewMode, ViewSpec> = {
     targetHeight: 1,
     // The follow camera orbits, so no wall is reliably "the near one".
     hiddenWalls: [],
+  },
+  first: {
+    alpha: -Math.PI / 2,
+    // Exactly level: any other beta puts the camera above or below the point
+    // it is aiming at, which reads as a head tilted at the road.
+    beta: Math.PI / 2,
+    // lookahead - forward. Getting this wrong slides the eye out of the car.
+    radius: 12.7,
+    autoFollow: true,
+    // A cockpit that can be dragged off its axis is a passenger seat. There is
+    // also no spare thumb on a phone, which is the primary target.
+    manualControl: false,
+    targetHeight: 1.15,
+    hiddenWalls: [],
+    eye: { height: 1.35, forward: -0.7, lookahead: 12 },
   },
   iso: {
     // A true isometric-ish diagonal: 45° around, ~35° down.
@@ -145,7 +198,9 @@ export function applyView(
   framingScale = 1,
 ): void {
   const spec = SPECS[view];
-  const scale = Math.max(1, framingScale);
+  // A cockpit is a cockpit at any speed: pulling the eye back out of the car
+  // to "see more road" would just put the camera behind its own bodywork.
+  const scale = spec.eye ? 1 : Math.max(1, framingScale);
 
   camera.alpha = spec.alpha;
   camera.beta = spec.beta;

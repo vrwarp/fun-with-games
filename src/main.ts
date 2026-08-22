@@ -10,7 +10,7 @@ import { createBroadcastTransport } from './net/transports/broadcast.js';
 import { createTrysteroTransport } from './net/transports/trystero.js';
 import { Mesh } from '@babylonjs/core/Meshes/mesh.js';
 import { Renderer } from './render/renderer.js';
-import { isViewMode, type ViewMode } from './render/views.js';
+import { isViewMode, viewSpec, type ViewMode } from './render/views.js';
 import { KeyboardInput, mergeIntents } from './render/input.js';
 import { TouchInput } from './render/touch.js';
 import { TouchButtons } from './render/buttons.js';
@@ -84,11 +84,13 @@ async function bootstrap(): Promise<void> {
     return;
   }
 
-  const lobby = new Lobby(app, { roomId, modeId });
+  const lobby = new Lobby(app, { roomId, modeId, ...(view !== undefined ? { view } : {}) });
   const choice = await lobby.waitForJoin();
   lobby.dispose();
 
-  await launch(app, { ...choice, transportKind, botCount, view, sprites });
+  // The URL still wins, so a shared link frames the game the way its sender
+  // meant; the picker is what a player without one uses.
+  await launch(app, { ...choice, transportKind, botCount, view: view ?? choice.view, sprites });
 }
 
 async function launch(app: HTMLElement, options: LaunchOptions): Promise<void> {
@@ -115,14 +117,16 @@ async function launch(app: HTMLElement, options: LaunchOptions): Promise<void> {
     config,
   });
 
+  // URL wins over the mode's default, so any game can be demoed in any
+  // projection without touching its rules.
+  const resolvedView: ViewMode = options.view ?? mode.view ?? 'follow';
+
   try {
     renderer = new Renderer({
       canvas,
       config,
       obstacles: session.world.obstacles,
-      // URL wins over the mode's default, so any game can be demoed in any
-      // projection without touching its rules.
-      view: options.view ?? mode.view ?? 'follow',
+      view: resolvedView,
       sprites: options.sprites ?? mode.sprites ?? false,
     });
   } catch (error) {
@@ -140,6 +144,7 @@ async function launch(app: HTMLElement, options: LaunchOptions): Promise<void> {
     // the one fact it needs from there rather than duplicating the answer in
     // the mode metadata.
     drives: config.vehicle.enabled,
+    canOrbit: viewSpec(resolvedView).manualControl,
     onAddBot: () => void session.addBot(),
     onRemoveBot: () => void session.removeBot(),
   });
@@ -306,7 +311,7 @@ async function launch(app: HTMLElement, options: LaunchOptions): Promise<void> {
   };
   window.addEventListener('pagehide', teardown, { once: true });
 
-  exposeTestHandle(session, renderer, options.modeId, options.view ?? mode.view ?? 'follow');
+  exposeTestHandle(session, renderer, options.modeId, resolvedView);
 }
 
 function createTransport(options: LaunchOptions): Transport {

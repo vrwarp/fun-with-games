@@ -319,6 +319,23 @@ test.describe('on a phone', () => {
     expect(Math.hypot(after!.x - before!.x, after!.z - before!.z)).toBeGreaterThan(3);
   });
 
+  test('the camera can be chosen without a keyboard', async ({ page }) => {
+    // Views used to be URL-only, which on a phone means typing a query string
+    // into a browser bar. The lobby offers them instead.
+    await page.goto('/?net=broadcast&room=mobile-view&mode=grandprix');
+
+    const picker = page.getByTestId('view-select');
+    await expect(picker).toBeVisible();
+    const box = await picker.boundingBox();
+    expect(box?.height ?? 0).toBeGreaterThanOrEqual(40);
+
+    await picker.selectOption('first');
+    await page.getByTestId('join-button').tap();
+    await expect(page.getByTestId('hud')).toBeVisible({ timeout: 30_000 });
+
+    expect(await page.evaluate(() => window.__FWG__.view)).toBe('first');
+  });
+
   test('the 2D platformer is playable with a thumb', async ({ page }) => {
     // The whole 2D story has to survive the primary target. Jumping is the
     // one interaction a side-scroller cannot do without, so it needs a real

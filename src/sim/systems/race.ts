@@ -1,4 +1,4 @@
-import { distanceSq2 } from '../../shared/math.js';
+import { angleDelta, distanceSq2 } from '../../shared/math.js';
 import type { SimConfig } from '../config.js';
 import type { StepContext } from '../step.js';
 import { hasTrack, sampleTrack, trackLength } from '../track.js';
@@ -197,8 +197,17 @@ export function updateRace(ctx: StepContext): void {
     // --- Slipstream ------------------------------------------------------
     // Refreshed two ticks at a time rather than granted for a duration, so it
     // ends the moment the driver falls out of the tow instead of lingering.
+    //
+    // Close enough is not sufficient on its own. A wake sits directly behind a
+    // car, so you are only in it while you are pointed the same way it is —
+    // which is true down a straight and false through a corner, where the two
+    // cars are at an angle and the following one is off to the inside or the
+    // outside of the wake rather than in it. Without the alignment test the
+    // tow is simply on for half the lap, and a tow that is always on is not a
+    // tow, it is everyone's top speed.
     if (rules.slipstreamRange > 0 && ahead.distance <= rules.slipstreamRange) {
-      addEffect(player, 'tow', ctx.tick + 2);
+      const alignment = Math.cos(angleDelta(player.heading, ahead.other.heading));
+      if (alignment >= rules.slipstreamAlignment) addEffect(player, 'tow', ctx.tick + 2);
     }
 
     // --- DRS -------------------------------------------------------------

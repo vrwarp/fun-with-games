@@ -182,6 +182,59 @@ phase → bot inputs → movement → player collisions → combat(respawns) →
       → projectiles → ball → items → zones → race → pickups → effect pruning
 ```
 
+### Racecraft — `systems/race.ts`, `systems/zones.ts`, `systems/bots.ts`
+
+Four things that decide whether a race reads as a race, each of them a number
+you can measure rather than an opinion.
+
+**A lap ends at the line.** `trackGates` puts gate 0 at track distance 0 for
+exactly that reason, and `checkpoint` counts gates cleared this lap — running
+0 … _circuit_ rather than wrapping, so "back at the line having done the lap"
+cannot be confused with "sat on the grid". Counting the wrap as the car leaves
+the _last_ gate instead takes that final section off the lap counter, off every
+lap time, and off where the chequered flag falls; on a nine-gate circuit that
+is a ninth of the race.
+
+**The slipstream has to be earned.** Being near a car is not being in its tow:
+a wake sits directly behind, so `race.slipstreamAlignment` requires the pair to
+be pointed the same way — true down a straight, false through a corner, where
+the follower is beside the wake rather than in it. Without it the tow is simply
+on for most of a lap, and a tow that is always on is everyone's top speed.
+
+**Bots have styles.** `botStyle()` hashes the bot's id into a corner
+confidence, a lift margin and a tyre life at which that driver starts looking
+for the pit entry. Hashed rather than drawn from the RNG, deliberately: the
+shared random stream is simulation state, and a bot consuming from it would
+make every other outcome depend on how many bots happened to be in the room.
+The confidence is spread _around_ the traction limit rather than under it, so
+some drivers do run wide — a field where nobody makes a mistake is a field
+nobody can catch.
+
+**Bots can also rejoin and pit**, which sounds minor and is not. A bot aims a
+lookahead distance up the centreline; off the road, that aim point is also off
+the road, so a stranded car drives happily parallel to the tarmac for the rest
+of the race. Off-track it therefore aims at the road itself, at a fixed short
+distance and a steady throttle — the cornering model must not be asked to do
+the steering there, because it reads the bend over the aim distance and an aim
+distance that short reads as a hairpin whatever the road is doing.
+
+**Tyre wear is a gradient, not a cliff.** Wear is a function of time, so a
+stint the race can outlast leaves cars on dead rubber — and a car on dead
+rubber cannot corner, leaves the road, and cannot get back. `grandprix` sets a
+stint a little longer than the race for that reason: the car is about a third
+worse at the flag than at the lights, and nobody is ever driving on nothing.
+Measured across three seeds, a stint the race outlasts puts the field in the
+scenery 32% of the time; one that outlasts the race puts it there 5%, which is
+what it is with no wear at all.
+
+> **Still open.** A _mandatory_ pit stop is not there yet, and cannot be until
+> the pit AI is better than it is: bots find the entry by proximity, so whether
+> one makes it in is partly luck. Wear that bites hard enough to force a stop
+> therefore strands the field. The natural next step is wear that depends on
+> how hard the car is driven rather than on the clock, so that an aggressive
+> driver needs a stop and a smooth one does not — which is the strategy layer,
+> and is its own piece of work.
+
 ### Engine sound — `src/render/enginesound.ts`
 
 Synthesised, like every other sound here — no samples, no network. An engine
@@ -416,7 +469,20 @@ make:
 | `selfAlign`      | How fast the caster pulls a sliding car straight, in proportion to slip angle. Makes a slide catchable rather than terminal.                                                           |
 
 Whatever the tyres cannot erase survives as sideways velocity — that surplus
-**is** the drift, and it unwinds through `selfAlign`. Grass and worn rubber
+**is** the drift, and it unwinds through `selfAlign`, which scales with how
+fast the car is _rolling_: the aligning moment comes from the tyres turning, so
+a car barely moving has none.
+
+Two details there are load-bearing, and getting either wrong makes the car
+undrivable rather than merely wrong. Engine braking and drag are scaled by how
+much of the car's motion is along its own nose, because a car travelling
+sideways is not rolling and there is nothing for them to work against. And the
+aligning rotation is clamped to the slip angle it is correcting. Without the
+first, engine braking pins the forward component at zero every tick, which
+holds the slip angle at a right angle — the largest input the aligning moment
+can be given — and the car then turns at 4.7 rad/s indefinitely against a
+`steerRate` of 3.1, so the driver cannot steer out of it. It reads as the
+steering being stuck. Grass and worn rubber
 scale the limit down, so both let go sooner. Steering stays live whatever the
 throttle is doing, so a spun car can be turned around and driven away.
 

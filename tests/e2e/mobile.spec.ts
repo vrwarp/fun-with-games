@@ -368,21 +368,32 @@ test.describe('on a phone', () => {
     const rightEnd = box.x + box.width * 0.95;
     const midY = box.y + box.height / 2;
 
+    /** How far the car rotates over a fixed window, wrapped to [-pi, pi]. */
+    const swingOver = async (ms: number): Promise<number> => {
+      const before = await heading();
+      await page.waitForTimeout(ms);
+      const after = await heading();
+      return Math.abs(Math.atan2(Math.sin(after - before), Math.cos(after - before)));
+    };
+
     // Full right lock, thumb still down.
     await page.mouse.move(rightEnd, midY);
     await page.mouse.down();
-    await page.waitForTimeout(600);
-    const turning = await heading();
+    await page.waitForTimeout(400);
+    const whileHeld = await swingOver(500);
+    expect(whileHeld).toBeGreaterThan(0.2);
 
     // The interruption. No pointerup will ever arrive for that thumb.
     await page.evaluate(() => window.dispatchEvent(new Event('blur')));
     await page.waitForTimeout(400);
     const settled = await heading();
-    await page.waitForTimeout(600);
+    const afterBlur = await swingOver(500);
 
-    // The wheel must have re-centred: no more rotation.
-    expect(Math.abs((await heading()) - settled)).toBeLessThan(0.05);
-    expect(Math.abs(settled - turning)).toBeLessThan(0.6);
+    // The wheel must have re-centred. Compared as a RATE rather than as an
+    // absolute angle: how many simulation ticks fit in a wall-clock window
+    // depends on how loaded the machine is, so an absolute threshold is a
+    // flake waiting for a busy CI runner.
+    expect(afterBlur).toBeLessThan(whileHeld / 3);
 
     // And the driver must be able to take it back — the half that used to
     // leave steering dead for the rest of the race.

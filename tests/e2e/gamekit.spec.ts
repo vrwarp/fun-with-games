@@ -342,7 +342,7 @@ test.describe('racing', () => {
     // The pit board only exists in modes with laps, so its presence is the
     // check that the race view model reached the DOM at all.
     await expect(page.getByTestId('race-board')).toBeVisible();
-    await expect(page.getByTestId('race-lap')).toContainText('/3');
+    await expect(page.getByTestId('race-lap')).toContainText('/6');
     await expect(page.getByTestId('race-position')).toContainText('P');
 
     // A car is steered, so both buttons are on offer — a keyboard-only brake

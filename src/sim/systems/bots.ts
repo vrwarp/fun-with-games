@@ -14,7 +14,7 @@ import {
 import { isBlocked } from './arena.js';
 import { hasEffect, isKnockedOut, isProtected } from './effects.js';
 import { isMovementLocked, isRoundActive } from './phase.js';
-import { vehicleTraction } from './vehicle.js';
+import { tyreLife, vehicleTraction } from './vehicle.js';
 
 /**
  * Deterministic bots, simulated inside the world.
@@ -78,6 +78,85 @@ const FULL_LOCK_RADIANS = 0.5;
 const CORNER_STRAIGHT_RADIUS = 1e4;
 /** Fraction of the corner speed a bot will accelerate up to before coasting. */
 const BOT_CORNER_MARGIN = 0.9;
+/** How far ahead a bot will spot a pit entry and commit to it. */
+const PIT_LOOKAHEAD = 42;
+/** Tyre life below which a bot stops driving on the ragged edge. */
+const WORN_CAUTION = 0.3;
+/** Aim distance while off the road: short, so the nose turns back toward it. */
+const REJOIN_LOOKAHEAD = 4;
+
+/**
+ * What tells one bot from another.
+ *
+ * Without this a field is one driver copied N times: identical corner speeds,
+ * identical braking points, and a race that is decided entirely by grid slot.
+ * They also run nose to tail all afternoon, which quietly breaks everything
+ * downstream that asks "is anyone close?" — the slipstream ends up switched on
+ * for most of a lap because the field never spreads out.
+ *
+ * The numbers are hashed from the bot's id rather than drawn from the RNG,
+ * which matters: the shared random stream is part of the simulation's state,
+ * and a bot that consumed from it would make every other outcome depend on how
+ * many bots happened to be in the room.
+ */
+interface BotStyle {
+  /** Confidence in a corner, as a multiple of what the tyres can hold. */
+  readonly corner: number;
+  /** How much margin the driver leaves before lifting. */
+  readonly margin: number;
+  /** Tyre life at which this driver starts looking for the pit entry. */
+  readonly pitAt: number;
+}
+
+/**
+ * One bot's style, derived from its id.
+ *
+ * Deliberately spread around 1 rather than only below it: a driver who
+ * occasionally asks for slightly more than the tyres have is a driver who
+ * occasionally runs wide, and a field where nobody ever makes a mistake is a
+ * field nobody can catch.
+ */
+function botStyle(id: string): BotStyle {
+  const seed = hashStringToSeed(`${id}:style`);
+  const a = (seed & 0xffff) / 0x10000;
+  const b = ((seed >>> 16) & 0xffff) / 0x10000;
+  return {
+    corner: 0.86 + a * 0.22,
+    margin: BOT_CORNER_MARGIN - 0.06 + b * 0.12,
+    // Spread so the field does not all queue in the pit lane on the same lap,
+    // which is what makes a stop a strategy rather than a scheduled event.
+    //
+    // Well clear of nothing left, too: a driver who waits until the rubber is
+    // gone has to reach the entry on tyres that can no longer be steered with,
+    // and mostly ends up in the run-off instead of the pit lane.
+    pitAt: 0.3 + a * 0.22,
+  };
+}
+
+/**
+ * The pit entry to aim at, or nothing.
+ *
+ * Only ever a box that is both close and genuinely ahead: a pit lane sits off
+ * the racing line, so a car that turned toward one behind it would drive back
+ * up the circuit. Everything else about stopping falls out of the existing
+ * rules — the limiter is a zone, and fresh rubber is granted for being in one.
+ */
+function pitEntry(ctx: StepContext, bot: PlayerState): { x: number; z: number } | null {
+  let best: { x: number; z: number; distance: number } | null = null;
+
+  for (const zone of ctx.config.zones) {
+    if (zone.kind !== 'pit') continue;
+    const dx = zone.x - bot.x;
+    const dz = zone.z - bot.z;
+    const distance = Math.hypot(dx, dz);
+    if (distance > PIT_LOOKAHEAD) continue;
+    // In front, not behind: the dot of the offset with where the nose points.
+    if (Math.sin(bot.heading) * dx + Math.cos(bot.heading) * dz <= 0) continue;
+    if (!best || distance < best.distance) best = { x: zone.x, z: zone.z, distance };
+  }
+
+  return best ? { x: best.x, z: best.z } : null;
+}
 
 /** Turns a wanted world direction into the axes a car actually understands. */
 function driveAxes(
@@ -278,11 +357,35 @@ function decide(ctx: StepContext, bot: PlayerState): Decision {
 function drive(ctx: StepContext, bot: PlayerState): Decision {
   const path = ctx.config.trackPath;
   const speed = Math.hypot(bot.vx, bot.vz);
+  const here = sampleTrack(path, bot.x, bot.z);
+
   // Look further ahead the faster you are going: the distance that matters is
   // the one you cannot stop inside.
-  const lookahead = Math.max(7, speed * 0.85);
+  //
+  // Unless the car is not on the road at all, in which case the opposite is
+  // wanted. A long lookahead points ALONG the circuit, so a car that has ended
+  // up on the infield aims at a aim point that is also on the infield and
+  // drives happily parallel to the tarmac for the rest of the race. Pulling
+  // the aim point right in turns the nose back toward the road, which is what
+  // rejoining is.
+  const strayed = here.lateral > ctx.config.track.halfWidth;
+  const lookahead = strayed ? REJOIN_LOOKAHEAD : Math.max(7, speed * 0.85);
+  const rejoinTarget = strayed ? trackPoseAt(path, here.progress + REJOIN_LOOKAHEAD) : null;
 
-  const here = sampleTrack(path, bot.x, bot.z);
+  if (rejoinTarget) {
+    // Rejoining is its own job, and the cornering model must not be asked to
+    // do it: that model reads the bend over the aim distance, and an aim
+    // distance this short reads as a hairpin whatever the road is doing. A
+    // stranded car would then creep back at walking pace and spend the rest of
+    // the race doing it. A steady half-throttle back toward the tarmac is both
+    // simpler and what a driver does.
+    return {
+      target: { x: rejoinTarget.x, z: rejoinTarget.z },
+      sprint: false,
+      fire: false,
+      throttle: 0.7,
+    };
+  }
   const aim = trackPoseAt(path, here.progress + lookahead);
   const beyond = trackPoseAt(path, here.progress + lookahead * 2);
 
@@ -290,7 +393,9 @@ function drive(ctx: StepContext, bot: PlayerState): Decision {
   const onward = Math.atan2(beyond.x - aim.x, beyond.z - aim.z);
   const bend = Math.abs(angleDelta(toAim, onward));
 
-  const traction = vehicleTraction(bot, ctx.config, ctx.tick, isOnTrack(ctx.config, bot.x, bot.z));
+  const onTrack = isOnTrack(ctx.config, bot.x, bot.z);
+  const traction = vehicleTraction(bot, ctx.config, ctx.tick, onTrack);
+  const life = tyreLife(bot, ctx.config, ctx.tick);
 
   if (traction > 0) {
     // Drive to the tyres rather than to a hand-picked constant.
@@ -302,7 +407,27 @@ function drive(ctx: StepContext, bot: PlayerState): Decision {
     // means the bots re-learn the circuit for free whenever the grip changes,
     // on worn rubber, and on the grass.
     const radius = bend > 1e-3 ? lookahead / bend : CORNER_STRAIGHT_RADIUS;
-    const corner = Math.sqrt(traction * Math.min(radius, CORNER_STRAIGHT_RADIUS));
+    // Style is what makes this a field rather than one driver five times over:
+    // the brave carry more speed in and sometimes run wide, the cautious brake
+    // early and lose a tenth doing it.
+    const style = botStyle(bot.id);
+    // Bravado is for a car that is working. Off the tarmac, or on rubber that
+    // has gone, the grip is already marginal and asking for more than it has
+    // is how a bot ends up in the scenery for the rest of the afternoon: once
+    // off, the surface multiplier makes the slide self-sustaining and nothing
+    // it does gets it back. A driver who can feel the car going backs off, so
+    // this one does too.
+    const composed = onTrack && life > WORN_CAUTION;
+    const bravado = composed ? style.corner : Math.min(style.corner, 0.9);
+    const corner = Math.sqrt(traction * Math.min(radius, CORNER_STRAIGHT_RADIUS)) * bravado;
+
+    // Worn out and the entry is coming up: peel off. Without this the tyre
+    // rules exist but nothing ever uses them, and a race long enough to need a
+    // stop just leaves the whole field crawling to the flag.
+    if (life < style.pitAt) {
+      const pit = pitEntry(ctx, bot);
+      if (pit) return { target: pit, sprint: true, fire: false, throttle: 1 };
+    }
 
     return {
       target: { x: aim.x, z: aim.z },
@@ -312,7 +437,7 @@ function drive(ctx: StepContext, bot: PlayerState): Decision {
       // on the pedal once the corner is genuinely too fast to make. The band
       // matters: braking the instant you are one unit over turns every sweeper
       // into a stutter.
-      throttle: speed < corner * BOT_CORNER_MARGIN ? 1 : 0,
+      throttle: speed < corner * style.margin ? 1 : 0,
       brake: speed > corner,
     };
   }

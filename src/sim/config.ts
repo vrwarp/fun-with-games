@@ -340,6 +340,16 @@ export interface RaceConfig {
   /** Top-speed multiplier while in another car's dirty air. */
   readonly slipstreamMultiplier: number;
   /**
+   * How closely the two cars must be pointed the same way, as a cosine.
+   *
+   * A wake sits directly behind a car, so being near one is not the same as
+   * being in its tow: through a corner the pair are at an angle and the
+   * follower is off to one side of the wake rather than in it. 0 accepts any
+   * alignment (the old behaviour, and it leaves the tow switched on for half
+   * a lap); around 0.9 is a little over 25 degrees, which is a straight.
+   */
+  readonly slipstreamAlignment: number;
+  /**
    * Gap to the car ahead, in seconds, that arms the wing. 0 disables DRS.
    * Measured along the centreline, so it is a real racing gap, not a radius.
    */
@@ -531,6 +541,7 @@ export const DEFAULT_SIM_CONFIG: SimConfig = {
     enabled: false,
     slipstreamRange: 9,
     slipstreamMultiplier: 1.12,
+    slipstreamAlignment: 0,
     drsGapSeconds: 1,
     drsMultiplier: 1.22,
     drsTicks: 60,

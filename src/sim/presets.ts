@@ -373,15 +373,30 @@ const PRESETS: Record<GameModeId, SimConfigOverrides> = {
     trackPath: AUTODROME,
     race: {
       enabled: true,
-      slipstreamRange: 10,
+      // About four car lengths, which is close enough to be on his gearbox
+      // and not so far that the whole field is towing the whole time.
+      slipstreamRange: 5,
       slipstreamMultiplier: 1.12,
+      // A straight, near enough: past about 16 degrees of angle between the
+      // two cars you are alongside the wake rather than in it.
+      slipstreamAlignment: 0.96,
       drsGapSeconds: 1,
       drsMultiplier: 1.24,
       drsTicks: seconds(2),
       drsButton: 'primary',
-      // A stint is about four laps of this circuit, so a three-lap race is
-      // winnable on one set — and a driver who runs wide often enough is not.
-      tyreStintTicks: seconds(70),
+      // A little longer than the race, and that is a deliberate ceiling rather
+      // than a target.
+      //
+      // Six laps is about eighty seconds, so a set lasting two minutes has
+      // gone off by roughly a third at the flag: the car is measurably worse
+      // at the end than at the start, which is what makes a long run a thing
+      // you manage. Shorter stints were tried and are worse, because wear here
+      // is purely a function of time — so a stint the race can outlast means
+      // cars sitting on dead rubber, and a car on dead rubber cannot corner,
+      // leaves the road, and cannot get back. Measured across three seeds,
+      // a forty-six second stint puts the field in the scenery 32% of the
+      // time; this puts it there 5%, which is what it is with no wear at all.
+      tyreStintTicks: seconds(120),
       tyreWornGrip: 0.62,
       tyreWornSpeed: 0.87,
       pitSpeedLimit: 9,
@@ -413,7 +428,7 @@ const PRESETS: Record<GameModeId, SimConfigOverrides> = {
       // Long enough that a three-lap race always finishes; the lap count is
       // what actually ends it.
       playTicks: seconds(300),
-      targetScore: 3,
+      targetScore: 6,
       countdownTicks: seconds(4),
     },
     playerMaxSpeed: 27,
@@ -462,8 +477,9 @@ const PRESETS: Record<GameModeId, SimConfigOverrides> = {
     trackPath: STREET,
     race: {
       enabled: true,
-      slipstreamRange: 8,
+      slipstreamRange: 4,
       slipstreamMultiplier: 1.1,
+      slipstreamAlignment: 0.96,
       // No straight here is long enough to deserve a wing.
       drsGapSeconds: 0,
       drsButton: 'none',

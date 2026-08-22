@@ -169,6 +169,16 @@ async function launch(app: HTMLElement, options: LaunchOptions): Promise<void> {
   // announcer already knows what just happened, so it drives the sounds.
   const audio = new GameAudio({ muted: options.muted });
   audio.attach();
+  // Engines are a continuous layer rather than a cue, and only a mode with
+  // cars has any. The numbers come from the mode because the note is a
+  // fraction of top speed and the load is measured against what the engine
+  // can actually pull.
+  if (config.vehicle.enabled) {
+    audio.enableEngines({
+      topSpeed: config.playerMaxSpeed,
+      engineAccel: config.vehicle.engineAccel,
+    });
+  }
   const announcer = new Announcer(app, session.selfId, {
     onCue: (cue) => {
       switch (cue) {
@@ -328,6 +338,29 @@ async function launch(app: HTMLElement, options: LaunchOptions): Promise<void> {
 
     const state = session.sample(now);
     renderer.renderFrame(state, deltaSeconds);
+
+    if (config.vehicle.enabled) {
+      // The ears go on the car, not on the camera. An isometric camera sits
+      // 34 units back, and hearing the race from up there would put a rival
+      // alongside you a bus-length away. Orientation still comes from the
+      // camera, because left and right have to match what is on screen.
+      const local = state.players.find((player) => player.isLocal);
+      if (local) {
+        audio.updateEngines(
+          state.players,
+          {
+            x: local.x,
+            y: local.y,
+            z: local.z,
+            vx: local.vx,
+            vz: local.vz,
+            forwardX: Math.sin(yaw),
+            forwardZ: Math.cos(yaw),
+          },
+          deltaSeconds,
+        );
+      }
+    }
     // The announcer diffs rendered states, so feedback (toasts, sounds,
     // haptics via the cue callback above) is identical on host and clients.
     announcer.update(state);
@@ -516,6 +549,7 @@ function exposeTestHandle(session: NetSession, renderer: Renderer, modeId: GameM
           x: player.x,
           z: player.z,
           y: player.y,
+          heading: player.heading,
           score: player.score,
         }));
       },

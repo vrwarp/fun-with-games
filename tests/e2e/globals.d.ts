@@ -23,6 +23,8 @@ interface FwgTestHandle {
     x: number;
     z: number;
     y: number;
+    /** Where the body points, which for a car is not where it is going. */
+    heading: number;
     score: number;
   }>;
   readonly fps: number;

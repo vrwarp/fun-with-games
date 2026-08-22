@@ -115,7 +115,10 @@ export class TouchDriving {
     this.#track.addEventListener('pointermove', this.#onPointerMove);
     this.#track.addEventListener('pointerup', this.#onPointerEnd);
     this.#track.addEventListener('pointercancel', this.#onPointerEnd);
+    this.#track.addEventListener('lostpointercapture', this.#onLostCapture);
     window.addEventListener('resize', this.#onResize);
+    window.addEventListener('blur', this.#onInterrupted);
+    document.addEventListener('visibilitychange', this.#onVisibility);
 
     // Same reveal rule as the thumbstick: coarse pointer is the honest signal,
     // and a hybrid laptop reports fine until someone actually touches it.
@@ -131,7 +134,10 @@ export class TouchDriving {
     this.#track.removeEventListener('pointermove', this.#onPointerMove);
     this.#track.removeEventListener('pointerup', this.#onPointerEnd);
     this.#track.removeEventListener('pointercancel', this.#onPointerEnd);
+    this.#track.removeEventListener('lostpointercapture', this.#onLostCapture);
     window.removeEventListener('resize', this.#onResize);
+    window.removeEventListener('blur', this.#onInterrupted);
+    document.removeEventListener('visibilitychange', this.#onVisibility);
     window.removeEventListener('touchstart', this.#onFirstTouch);
     this.#reset();
   }
@@ -182,9 +188,11 @@ export class TouchDriving {
     pedal.addEventListener('pointerdown', press);
     pedal.addEventListener('pointerup', release);
     pedal.addEventListener('pointercancel', release);
-    // A pedal is hold state, so a thumb that slides off it has to let go —
-    // otherwise the throttle sticks on with nothing holding it down.
-    pedal.addEventListener('pointerleave', release);
+    // Not `pointerleave`: boundary events are suppressed at a captured
+    // element, so it would never fire for the case it looks like it covers. A
+    // capture lost without a `pointerup` is the real way a held pedal gets
+    // stranded, and this is the event for it.
+    pedal.addEventListener('lostpointercapture', release);
     return pedal;
   }
 
@@ -217,7 +225,15 @@ export class TouchDriving {
   }
 
   #onPointerDown = (event: PointerEvent): void => {
-    if (this.#pointerId !== null) return;
+    // Deliberately NOT `if (busy) return`. Refusing a second pointer means one
+    // missed `pointerup` — a capture torn away, the app backgrounded with a
+    // thumb down, an OS gesture cutting in — strands the old id forever: the
+    // last steering angle sticks, so the car turns for ever, and every later
+    // touch is ignored, so the driver cannot take it back. Last touch wins
+    // instead, which is both self-healing and what a driver expects.
+    if (this.#pointerId !== null && this.#pointerId !== event.pointerId) {
+      this.#releaseTrack(this.#pointerId);
+    }
     this.#pointerId = event.pointerId;
     // Capture so a thumb pushed past the end of the track keeps steering
     // rather than silently letting go at full lock.
@@ -235,12 +251,48 @@ export class TouchDriving {
 
   #onPointerEnd = (event: PointerEvent): void => {
     if (event.pointerId !== this.#pointerId) return;
-    if (this.#track.hasPointerCapture(event.pointerId)) {
-      this.#track.releasePointerCapture(event.pointerId);
-    }
+    this.#releaseTrack(event.pointerId);
     this.#reset();
     event.preventDefault();
   };
+
+  /**
+   * Capture taken away without a `pointerup`.
+   *
+   * The browser does this on its own — a gesture escalated, an element
+   * removed, a device disconnected — and it is the failure that used to leave
+   * the wheel stuck at whatever angle it was last at.
+   */
+  #onLostCapture = (event: PointerEvent): void => {
+    if (event.pointerId !== this.#pointerId) return;
+    this.#reset();
+  };
+
+  /**
+   * Anything that means the player's hands are no longer on the controls.
+   *
+   * A phone that backgrounds the tab mid-corner never delivers the `pointerup`
+   * for the thumb that was steering, so without this the car would still be
+   * turning — and still be refusing new input — when the player came back.
+   */
+  #onInterrupted = (): void => {
+    this.#reset();
+  };
+
+  #onVisibility = (): void => {
+    if (document.visibilityState === 'hidden') this.#reset();
+  };
+
+  #releaseTrack(pointerId: number): void {
+    try {
+      if (this.#track.hasPointerCapture(pointerId)) {
+        this.#track.releasePointerCapture(pointerId);
+      }
+    } catch {
+      // Releasing a capture the browser has already taken back throws; the
+      // reset that follows is the part that matters.
+    }
+  }
 
   #update(event: PointerEvent): void {
     // Horizontal only. A thumb pivots around its knuckle and so travels in an

@@ -225,6 +225,8 @@ export class ClientView {
         z: previous ? lerp(previous.z, target.z, alpha) : target.z,
         y: previous ? lerp(previous.y, target.y, alpha) : target.y,
         heading: previous ? lerpAngle(previous.heading, target.heading, alpha) : target.heading,
+        vx: previous ? lerp(previous.vx, target.vx, alpha) : target.vx,
+        vz: previous ? lerp(previous.vz, target.vz, alpha) : target.vz,
         grounded: target.grounded,
         score: target.score,
         team: target.team,
@@ -388,6 +390,11 @@ export class ClientView {
       z: z + this.#errorZ * blend,
       y,
       heading,
+      // Straight from the prediction rather than interpolated: this is the
+      // local car, and its own engine note should answer the throttle on the
+      // frame the player presses it, not a tick later.
+      vx: predicted.vx,
+      vz: predicted.vz,
       grounded: predicted.grounded,
       score: predicted.score,
       team: predicted.team,

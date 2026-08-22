@@ -124,6 +124,11 @@ players, pickups, projectiles and carried items, plus jump bookkeeping
 not gravity is enabled — a couple of floats per entity, in exchange for one
 code path instead of two.
 
+Protocol **v4** adds racing: three per-player lap-timing fields (when the
+current lap started, the last lap, the best lap). Nothing else about the
+racing needed a version — the slipstream, the wing and the tyres are all
+timed effects, and the effects map has always travelled whole.
+
 New abilities that only need a button do **not** bump the version: both
 button bits already travel. Camera view and sprite style never touch the wire
 at all, which is precisely why two players can watch the same match in

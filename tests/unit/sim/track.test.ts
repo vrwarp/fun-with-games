@@ -9,6 +9,7 @@ import {
   trackLength,
   trackPoseAt,
   trackProgress,
+  smoothTrack,
 } from '@/sim/track.js';
 import { spawnHeading, spawnPosition } from '@/sim/systems/arena.js';
 
@@ -164,6 +165,45 @@ describe('starting grid', () => {
   });
 });
 
+describe('smoothing a circuit', () => {
+  it('rounds corners while leaving straights alone', () => {
+    const square: readonly TrackPoint[] = [
+      { x: 0, z: -10 },
+      { x: 10, z: -10 },
+      { x: 10, z: 10 },
+      { x: -10, z: 10 },
+      { x: -10, z: -10 },
+    ];
+    const smooth = smoothTrack(square, 2);
+
+    expect(smooth.length).toBe(square.length * 4);
+    // Corner-cutting only ever moves points inwards, so the lap gets shorter
+    // and the shape never grows past what was authored.
+    expect(trackLength(smooth)).toBeLessThan(trackLength(square));
+    for (const point of smooth) {
+      expect(Math.abs(point.x)).toBeLessThanOrEqual(10.001);
+      expect(Math.abs(point.z)).toBeLessThanOrEqual(10.001);
+    }
+  });
+
+  it('keeps the start/finish line where it was authored', () => {
+    // Corner-cutting slides every point along the road, which would drag the
+    // line — and the grid, and every lap time — down the straight with it.
+    const path = smoothTrack(RECTANGLE, 2);
+    const start = path[0]!;
+    expect(Math.hypot(start.x - 0, start.z - -10)).toBeLessThan(1);
+  });
+
+  it('leaves paths it cannot round alone', () => {
+    const pair: readonly TrackPoint[] = [
+      { x: 0, z: 0 },
+      { x: 1, z: 1 },
+    ];
+    expect(smoothTrack(pair, 2)).toEqual([...pair]);
+    expect(smoothTrack(RECTANGLE, 0)).toEqual([...RECTANGLE]);
+  });
+});
+
 /**
  * A corner cannot be tighter than the road is wide.
  *
@@ -172,6 +212,10 @@ describe('starting grid', () => {
  * folds a wedge of kerb across it. Neither is recoverable at draw time, so it
  * has to be caught in the level, which is what this checks — the racing
  * equivalent of the platformer's jump-height guard.
+ *
+ * Measured on `config.trackPath`, the smoothed centreline both layers actually
+ * use, rather than on the control points an author writes: rounding is exactly
+ * what decides how tight the corner ends up.
  *
  * The local radius at a vertex is `min(segment) / 2 / tan(turn / 2)`, the
  * largest circle that fits inside the turn.

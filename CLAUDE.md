@@ -7,14 +7,19 @@ thousand commits cheap: keep the seams clean, keep the tests fast, and keep the
 rules below intact even when a shortcut would be quicker.
 
 > **Asked to "make a game"? Read [`docs/RECIPES.md`](./docs/RECIPES.md) first.**
-> Fourteen playable modes already exist behind `?mode=` (tag, infection,
+> Sixteen playable modes already exist behind `?mode=` (tag, infection,
 > arena, knockout, soccer, ctf, hill, race, crown, rush, gather, platformer,
-> skirmish, dungeon), and a library of config-driven systems — phases/rounds,
-> teams, hp/combat, projectiles, tag roles, a ball with goals, zones,
-> carryable flags/crowns, timed status effects, power-ups, gravity/jumping
-> and bots — means most new games are **a preset, not new code**. The
-> reference is [`docs/GAME_KIT.md`](./docs/GAME_KIT.md). Do not rebuild any
-> of this.
+> skirmish, dungeon, grandprix, street), and a library of config-driven
+> systems — phases/rounds, teams, hp/combat, projectiles, tag roles, a ball
+> with goals, zones, carryable flags/crowns, timed status effects, power-ups,
+> gravity/jumping, car handling with circuits, and bots — means most new games
+> are **a preset, not new code**. The reference is
+> [`docs/GAME_KIT.md`](./docs/GAME_KIT.md). Do not rebuild any of this.
+>
+> **Racing is covered too.** `?mode=grandprix` is a full Formula-style race —
+> grid start, three laps, slipstream, DRS, tyre wear and a pit lane — and
+> `?mode=street` is a shorter one seen from above. A circuit is a list of
+> control points; see the "authoring a circuit" recipe before writing any.
 >
 > **2D and 2.5D are already covered.** `src/sim` is a _plane_ — it has no
 > camera and no perspective — so 2D is the native model, not a port. Add
@@ -26,8 +31,8 @@ rules below intact even when a shortcut would be quicker.
 ## 1. Orientation
 
 A peer-to-peer arena engine with a library of composable game systems, playable
-in 3D, 2.5D or 2D. The default mode is a shard-collecting sandbox; thirteen
-more modes ship with it.
+in 3D, 2.5D or 2D, on foot or in a car. The default mode is a shard-collecting
+sandbox; fifteen more modes ship with it.
 
 | Concern    | Choice                                                                                      |
 | ---------- | ------------------------------------------------------------------------------------------- |
@@ -86,6 +91,12 @@ http://localhost:5173/?net=broadcast&room=test&mode=tag
 Drop `?net=broadcast` to use real WebRTC over the public relay network.
 `?bots=3` (or the host's **+ Bot** HUD button) fills the room with in-sim
 bots, so every mode is demoable with one human.
+
+Racing needs a circuit, so it is worth seeing first:
+
+```
+http://localhost:5173/?net=broadcast&room=gp&mode=grandprix&bots=3
+```
 
 Useful query parameters: `room`, `mode`, `bots`, `view`, `sprites`, `name`,
 `color`, `net=broadcast`, `autojoin=1`, `mute=1`, `log=debug`. The mode is part
@@ -225,6 +236,7 @@ other. Full protocol in `docs/PARALLEL_AGENTS.md`; the essentials:
   - `src/sim/world.ts` (the `step()` pipeline is explicitly ordered on purpose
     — determinism requires a fixed order, so do not convert it to a registry)
   - `src/sim/presets.ts`, `src/shared/modes.ts` (one entry per mode — append)
+  - `src/sim/track.ts` (circuit geometry — read by sim, presets and render)
   - `src/net/protocol.ts`
   - `public/assets/manifest.json` (regenerate; never hand-edit)
 - **Never renumber or reuse `PROTOCOL_VERSION`.** If two agents both need a

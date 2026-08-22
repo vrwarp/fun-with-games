@@ -51,6 +51,62 @@ const EMPTY_SAMPLE: TrackSample = Object.freeze({
   length: 0,
 });
 
+/**
+ * Rounds a hand-authored circuit into the centreline the game actually uses.
+ *
+ * Corner-cutting (Chaikin): each pass replaces every point with two, a quarter
+ * and three quarters of the way along each edge. Corners become arcs, straights
+ * stay straight, and the result converges on a quadratic B-spline through the
+ * authored points — so the list in `presets.ts` reads as **control points**,
+ * not as the road's own vertices.
+ *
+ * This matters to both layers, which is why it happens here rather than in the
+ * renderer. A raw polyline corner is a single vertex where the road's direction
+ * changes all at once: the simulation leaves an unreachable pinch on the inside
+ * of it, and anything offset from it by half the road width — the tarmac's own
+ * edge — folds back across itself. Rounding the line once, before either layer
+ * sees it, fixes both and keeps them describing the same road.
+ *
+ * The result is rotated back to the authored first point, and that point is
+ * restored exactly, because point 0 is the start/finish line: the grid, the
+ * gates and every lap time are measured from it, and corner-cutting would
+ * otherwise slide it down the road. Pinning one point on a straight costs
+ * nothing — which is the reason to draw the line on a straight.
+ */
+export function smoothTrack(points: readonly TrackPoint[], passes = 2): TrackPoint[] {
+  if (points.length < 3 || passes <= 0) return [...points];
+
+  let current: TrackPoint[] = [...points];
+  for (let pass = 0; pass < passes; pass++) {
+    const next: TrackPoint[] = [];
+    for (let i = 0; i < current.length; i++) {
+      const a = current[i];
+      const b = current[(i + 1) % current.length];
+      if (!a || !b) continue;
+      next.push({ x: a.x + (b.x - a.x) * 0.25, z: a.z + (b.z - a.z) * 0.25 });
+      next.push({ x: a.x + (b.x - a.x) * 0.75, z: a.z + (b.z - a.z) * 0.75 });
+    }
+    current = next;
+  }
+
+  const origin = points[0];
+  if (!origin) return current;
+
+  let startIndex = 0;
+  let closest = Number.POSITIVE_INFINITY;
+  current.forEach((point, index) => {
+    const distance = Math.hypot(point.x - origin.x, point.z - origin.z);
+    if (distance < closest) {
+      closest = distance;
+      startIndex = index;
+    }
+  });
+
+  const rotated = [...current.slice(startIndex), ...current.slice(0, startIndex)];
+  rotated[0] = { x: origin.x, z: origin.z };
+  return rotated;
+}
+
 /** Total length of the closed centreline, in world units. */
 export function trackLength(points: readonly TrackPoint[]): number {
   if (points.length < 2) return 0;

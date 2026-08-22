@@ -7,7 +7,7 @@ import {
   type TrackPoint,
   type ZoneSpec,
 } from './config.js';
-import { trackLength, trackPoseAt } from './track.js';
+import { smoothTrack, trackLength, trackPoseAt } from './track.js';
 
 /**
  * Named game modes: one `SimConfig` per `GameModeId`.
@@ -85,20 +85,27 @@ function trackGates(path: readonly TrackPoint[], count: number, radius: number):
 }
 
 /**
- * A permanent road course, in the order it is driven.
+ * A permanent road course, as control points in the order it is driven.
+ *
+ * `smoothTrack` rounds these into the centreline the game uses, so what is
+ * written here is the *shape* of the lap rather than the road's own vertices.
+ * Read it as a lap: a long main straight, a fast right onto the back straight,
+ * a long left sweeper, a chicane that has to be braked for, a hairpin at the
+ * far end, and a final corner that spits the car back onto the straight — so
+ * the driver arrives at the line with the tow.
  *
  * Point 0 is the start/finish line, which is what makes the grid, the gates
  * and every lap time fall out of the list without another number being
- * written down. Read it as a lap: a long main straight, a fast right onto the
- * back straight, a long left sweeper, a chicane that has to be braked for, a
- * hairpin at the far end, and a final corner that spits the car back onto the
- * straight — so the driver arrives at the line with the tow.
+ * written down. It is drawn well down the main straight rather than at a
+ * corner exit, because everything behind it is grid.
  *
- * The line is drawn well down the main straight rather than at the corner
- * exit, because everything behind it is grid: a pole slot on a corner is a
- * pole slot nobody wants.
+ * **Two rules when editing.** Keep each turn at or under about 40° with
+ * segments of nine units or more: past that the rounded corner ends up tighter
+ * than the road is wide, which is a corner nobody can drive and nothing can
+ * draw. And keep the whole circuit inside its arena with a road's width to
+ * spare. `tests/unit/sim/track.test.ts` checks both.
  */
-const AUTODROME: readonly TrackPoint[] = [
+const AUTODROME_CONTROL: readonly TrackPoint[] = [
   // Main straight, running +X.
   { x: -14, z: -31 }, // start/finish
   { x: 0, z: -31 },
@@ -114,16 +121,16 @@ const AUTODROME: readonly TrackPoint[] = [
   { x: 49, z: 8 },
   // The long left sweeper across the top of the circuit.
   { x: 46, z: 17 },
-  { x: 40, z: 24 },
-  { x: 32, z: 28 },
-  // Chicane: right, then a hard left back out. The legs are long on purpose —
-  // a 90° flick needs room, or the inside of the corner is tighter than the
-  // road is wide and there is no way to draw (or drive) it.
+  { x: 41, z: 23 },
+  { x: 34, z: 27 },
+  // Chicane: right, then left, then straight again. Four 40° steps rather
+  // than one 90° flick — see the note above the list.
   { x: 24, z: 29 },
-  { x: 13, z: 18 },
-  { x: 2, z: 29 },
-  { x: -10, z: 29 },
-  { x: -21, z: 28 },
+  { x: 16, z: 22.5 },
+  { x: 9, z: 16 },
+  { x: -1, z: 16 },
+  { x: -9, z: 22.5 },
+  { x: -19, z: 22.5 },
   // Hairpin at the far end: the slowest corner on the circuit.
   { x: -31, z: 27 },
   { x: -41, z: 22 },
@@ -139,13 +146,8 @@ const AUTODROME: readonly TrackPoint[] = [
   { x: -23, z: -31 },
 ];
 
-/**
- * A tight city lap: short straights, square corners, no room to hide.
- *
- * Same authoring rules as the autodrome — point 0 is the line, and corners get
- * several points each so the road bends rather than kinks.
- */
-const STREET: readonly TrackPoint[] = [
+/** A tight city lap: short straights, square corners, no room to hide. */
+const STREET_CONTROL: readonly TrackPoint[] = [
   { x: -14, z: -18 }, // start/finish
   { x: 0, z: -18 },
   { x: 10, z: -18 },
@@ -168,6 +170,9 @@ const STREET: readonly TrackPoint[] = [
   { x: -25, z: -16 },
   { x: -20, z: -18 },
 ];
+
+const AUTODROME = smoothTrack(AUTODROME_CONTROL);
+const STREET = smoothTrack(STREET_CONTROL);
 
 const PRESETS: Record<GameModeId, SimConfigOverrides> = {
   /** The untouched sandbox: endless shard collecting. */

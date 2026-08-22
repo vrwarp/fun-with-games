@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { modeConfig } from '@/sim/presets.js';
 import { World } from '@/sim/world.js';
-import { isOnTrack, sampleTrack, trackLength } from '@/sim/track.js';
+import { isOnTrack, sampleTrack, trackLength, trackPoseAt } from '@/sim/track.js';
 import { hasEffect } from '@/sim/systems/effects.js';
 import { tyreLife } from '@/sim/systems/vehicle.js';
 import type { SimConfig } from '@/sim/config.js';
@@ -123,13 +123,50 @@ describe('the slipstream is earned', () => {
   });
 
   it('needs the two cars pointed the same way, not merely close', () => {
-    // A wake sits behind a car, so a follower at an angle through a corner is
-    // beside it rather than in it. Removing the alignment test has to make a
-    // measurable difference, or the test is decoration.
-    const base = modeConfig('grandprix');
-    const anyAngle: SimConfig = { ...base, race: { ...base.race, slipstreamAlignment: 0 } };
+    // Exercised directly on two placed cars rather than across a field. A
+    // population measurement was tried and is nearly blind here: once cars
+    // stopped spinning, a field of bots is almost always aligned anyway, so
+    // the aggregate barely moves whether the rule is on or off. What the rule
+    // is actually for is the case below — alongside through a corner, where a
+    // follower is beside the wake rather than in it.
+    const config = modeConfig('grandprix');
+    const gap = config.race.slipstreamRange * 0.6;
 
-    expect(race(base, 90).towShare).toBeLessThan(race(anyAngle, 90).towShare);
+    const towFor = (followerHeading: (roadHeading: number) => number): boolean => {
+      const world = new World({ config, seed: 3 });
+      const leader = world.addPlayer('a-leader', { name: 'lead', color: '#fff' });
+      const follower = world.addPlayer('b-follower', { name: 'chase', color: '#fff' });
+      // The tow is only granted while the round is running, so let the lights
+      // go out before placing anybody.
+      for (let i = 0; i < config.tickRate * 12; i++) world.step();
+
+      // Both on the racing line, the follower a short way back down it.
+      const ahead = trackPoseAt(config.trackPath, 40);
+      const behind = trackPoseAt(config.trackPath, 40 - gap);
+      const road = Math.atan2(ahead.dirX, ahead.dirZ);
+
+      // Held for several ticks. A tow is granted two ticks at a time, so a
+      // single step would still be reading the one the pair picked up sitting
+      // on the grid together rather than anything this geometry earned.
+      for (let i = 0; i < 4; i++) {
+        Object.assign(leader, { x: ahead.x, z: ahead.z, heading: road, vx: 0, vz: 0 });
+        Object.assign(follower, {
+          x: behind.x,
+          z: behind.z,
+          heading: followerHeading(road),
+          vx: 0,
+          vz: 0,
+        });
+        world.step();
+      }
+
+      return hasEffect(world.getPlayer('b-follower')!, 'tow', world.tick - 1);
+    };
+
+    // Nose to tail down the road: in the wake.
+    expect(towFor((road) => road)).toBe(true);
+    // Same gap, but square across it: alongside the wake, not in it.
+    expect(towFor((road) => road + Math.PI / 2)).toBe(false);
   });
 });
 

@@ -63,6 +63,14 @@ const INPUT_DEADZONE = 0.05;
 const REST_SPEED = 0.02;
 /** Below this speed the front tyres have nothing to lose, so the yaw cap lifts. */
 const YAW_CAP_SPEED = 1;
+/**
+ * Speed at which the self-aligning moment reaches full strength.
+ *
+ * Below it the term fades away with the car, which is both what a real
+ * steering rack does and what stops a barely-moving car being spun by its own
+ * tyres.
+ */
+const SELF_ALIGN_FULL_SPEED = 12;
 
 /** Bit for a configured button name; 0 when the action is unbound. */
 function buttonBit(name: 'primary' | 'secondary' | 'none'): number {
@@ -282,6 +290,20 @@ export function steerVehicle(
   // ever reads.
   let longitudinalLoad: number;
 
+  // How much of the car's motion is along its own nose.
+  //
+  // Engine braking and drag act on a car that is ROLLING, and a car travelling
+  // sideways is not: at ninety degrees of slip there is nothing for them to
+  // work against. Applying them at full strength anyway pins `forward` at zero
+  // every single tick — the decel is far larger than the speed the tyres put
+  // back — which holds the slip angle at a right angle, and a right angle is
+  // the largest input the self-aligning moment can be handed. The car then
+  // turns at more than `steerRate` for ever and the driver cannot steer out of
+  // it, which is a car that has simply stopped being drivable.
+  const travelSpeed = Math.sqrt(forward * forward + lateral * lateral);
+  const rollingShare = travelSpeed > REST_SPEED ? Math.abs(forward) / travelSpeed : 1;
+  const coastDecel = car.coastDecel * rollingShare;
+
   if (braking) {
     if (forward > 0) {
       longitudinalLoad = car.brakeDecel;
@@ -301,16 +323,14 @@ export function steerVehicle(
       // Above the current ceiling: DRS just closed, the tow ran out, or all
       // four wheels found the grass. Bleed it off rather than clamping, so
       // losing a boost coasts down instead of hitting a wall of air.
-      longitudinalLoad = car.coastDecel;
-      forward = Math.max(target, forward - car.coastDecel * dt);
+      longitudinalLoad = coastDecel;
+      forward = Math.max(target, forward - coastDecel * dt);
     }
   } else {
     // Hands off: engine braking, toward a standstill from either direction.
-    longitudinalLoad = car.coastDecel;
+    longitudinalLoad = coastDecel;
     forward =
-      forward > 0
-        ? Math.max(0, forward - car.coastDecel * dt)
-        : Math.min(0, forward + car.coastDecel * dt);
+      forward > 0 ? Math.max(0, forward - coastDecel * dt) : Math.min(0, forward + coastDecel * dt);
   }
 
   // --- Tyres ----------------------------------------------------------------
@@ -351,7 +371,23 @@ export function steerVehicle(
       // its momentum around with it, which leaves the slip angle exactly where
       // it started and spins the car on the spot for ever.
       if (car.selfAlign > 0) {
-        const align = slip * car.selfAlign * dt;
+        // Scaled by how fast the car is actually travelling, because the
+        // aligning moment comes from the tyres ROLLING: a car barely moving
+        // has none, and a parked one certainly has none.
+        //
+        // Without that scaling a car nudged sideways at walking pace is
+        // rotated several radians a second for ever. Engine braking zeroes the
+        // forward component every tick — it is far larger than the speed the
+        // rotation puts back — so the slip angle is pinned at a right angle,
+        // which is the largest input this term can be given, and it acts on it
+        // happily. The result spins faster than `steerRate`, so the driver
+        // cannot steer out of it: the car simply turns one way until the round
+        // ends.
+        const speed = Math.sqrt(forward * forward + lateral * lateral);
+        const rolling = Math.min(1, speed / SELF_ALIGN_FULL_SPEED);
+        // And never past the slip it is correcting. Overshoot is a wobble at
+        // small angles and a spin at large ones.
+        const align = clamp(slip * car.selfAlign * dt * rolling, -Math.abs(slip), Math.abs(slip));
         player.heading += align;
         const ca = Math.cos(align);
         const sa = Math.sin(align);

@@ -298,3 +298,82 @@ describe('bots driving to the tyres', () => {
     expect(sliding.averageSpeed).toBeLessThan(gripped.averageSpeed);
   });
 });
+
+/**
+ * A car has to stay drivable after it goes wrong.
+ *
+ * The reported symptom was "the control randomly gets stuck turning right,
+ * which makes it unplayable", and it was not the controls: a car nudged
+ * sideways at low speed rotated at 4.7 rad/s — faster than `steerRate` — so
+ * the driver could not steer out of it and the car simply turned one way until
+ * the round ended. The direction was whichever way it had been nudged, which
+ * is why it read as random.
+ *
+ * Two things caused it, and both are physical errors rather than tuning:
+ * engine braking was applied along the car's nose even when the car was
+ * travelling sideways, which pinned the forward component at zero every tick
+ * and so held the slip angle at a right angle; and the self-aligning moment
+ * did not scale with speed, so it acted on that maximal input at full
+ * strength.
+ */
+describe('a spun car settles', () => {
+  const sideways = (forward: number, lateral: number): PlayerState =>
+    makePlayer({ heading: 0, vx: lateral, vz: forward, x: 0, z: 0 });
+
+  it.each([
+    [0, 2],
+    [0, 6],
+    [0, 14],
+    [2, 6],
+    [8, 14],
+  ])('stops turning from forward %i, sideways %i', (forward, lateral) => {
+    const config = modeConfig('grandprix');
+    const car = sideways(forward, lateral);
+    drive(car, config, makeInput({ moveX: 0, moveZ: 0 }), 300);
+
+    // Ten seconds of nothing. A car that is still rotating after that is a car
+    // the driver has lost, permanently.
+    expect(Math.abs(car.heading)).toBeLessThan(Math.PI);
+  });
+
+  it('rotates less and less rather than at a fixed rate', () => {
+    // The invariant that makes the car playable, stated as what actually went
+    // wrong. A hard snap straight from fully sideways is correct and is
+    // self-limiting — it reduces the very slip angle driving it. What is not
+    // survivable is a CONSTANT rate, which is what a pinned slip angle
+    // produced: the car turned at 4.7 rad/s indefinitely, `steerRate` is 3.1,
+    // so no input could answer it.
+    const config = modeConfig('grandprix');
+    const idle = makeInput({ moveX: 0, moveZ: 0 });
+
+    for (const lateral of [1, 4, 8, 16, 25]) {
+      for (const forward of [0, 1, 5, 15, 26]) {
+        const car = sideways(forward, lateral);
+
+        const start = car.heading;
+        drive(car, config, idle, 60);
+        const early = Math.abs(car.heading - start);
+
+        const middle = car.heading;
+        drive(car, config, idle, 60);
+        const late = Math.abs(car.heading - middle);
+
+        // Whatever it did in the first two seconds, it must be doing far less
+        // in the next two. A fixed rate would make these equal.
+        expect(late).toBeLessThan(Math.max(early * 0.5, 0.05));
+      }
+    }
+  });
+
+  it('still lets a driver catch a slide with opposite lock', () => {
+    // The fix must not have cost the thing self-alignment is for.
+    const config = modeConfig('grandprix');
+    const car = sideways(6, 12);
+    const before = Math.abs(slipAngle(car));
+
+    drive(car, config, makeInput({ moveX: -1, moveZ: 1 }), 90);
+
+    expect(Math.abs(slipAngle(car))).toBeLessThan(before * 0.5);
+    expect(Math.sqrt(car.vx * car.vx + car.vz * car.vz)).toBeGreaterThan(4);
+  });
+});

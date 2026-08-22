@@ -469,7 +469,20 @@ make:
 | `selfAlign`      | How fast the caster pulls a sliding car straight, in proportion to slip angle. Makes a slide catchable rather than terminal.                                                           |
 
 Whatever the tyres cannot erase survives as sideways velocity — that surplus
-**is** the drift, and it unwinds through `selfAlign`. Grass and worn rubber
+**is** the drift, and it unwinds through `selfAlign`, which scales with how
+fast the car is _rolling_: the aligning moment comes from the tyres turning, so
+a car barely moving has none.
+
+Two details there are load-bearing, and getting either wrong makes the car
+undrivable rather than merely wrong. Engine braking and drag are scaled by how
+much of the car's motion is along its own nose, because a car travelling
+sideways is not rolling and there is nothing for them to work against. And the
+aligning rotation is clamped to the slip angle it is correcting. Without the
+first, engine braking pins the forward component at zero every tick, which
+holds the slip angle at a right angle — the largest input the aligning moment
+can be given — and the car then turns at 4.7 rad/s indefinitely against a
+`steerRate` of 3.1, so the driver cannot steer out of it. It reads as the
+steering being stuck. Grass and worn rubber
 scale the limit down, so both let go sooner. Steering stays live whatever the
 throttle is doing, so a spun car can be turned around and driven away.
 

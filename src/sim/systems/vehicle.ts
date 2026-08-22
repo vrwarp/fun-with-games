@@ -1,4 +1,4 @@
-import { angleDelta, clamp, distanceSq2, length2 } from '../../shared/math.js';
+import { clamp, distanceSq2 } from '../../shared/math.js';
 import type { SimConfig } from '../config.js';
 import { isOnTrack } from '../track.js';
 import { BUTTON_PRIMARY, BUTTON_SECONDARY, type PlayerInput, type PlayerState } from '../types.js';
@@ -8,10 +8,25 @@ import { effectRemaining, hasEffect, isImmobilized } from './effects.js';
  * Car handling.
  *
  * This is the one place where the kit's movement model changes shape: a car
- * does not strafe. The thumbstick stops being a velocity and becomes a
- * *heading request* — the direction you want to be pointing — and the car
- * rotates toward it at a rate that shrinks as it speeds up. Everything that
- * makes racing feel like racing falls out of that one substitution:
+ * does not strafe, and it is not *aimed*. Every other mode reads the stick as
+ * a direction in the world — push where you want to be. A car reads its two
+ * axes as **two separate controls in the car's own frame**:
+ *
+ * ```
+ *   moveX  −1 … +1   steering, full left to full right
+ *   moveZ  +1 … −1   throttle, then coast at 0, then brake and reverse
+ * ```
+ *
+ * They are independent, which is the point: a driver holds a steering angle
+ * through a corner while deciding separately how much throttle to carry. A
+ * single "point there" vector cannot express that — it conflates the two, and
+ * because it is measured against the camera it also behaves differently in
+ * every view, and feeds back through the chase camera's own lag. Reading raw
+ * axes instead makes the controls identical in all five views: a car is
+ * steered relative to itself, and where the camera happens to be is not the
+ * car's business.
+ *
+ * The rest of what makes racing feel like racing falls out of the handling:
  *
  *  - **No strafing.** Speed only ever exists along the car's own axis, so the
  *    only way to change direction is to turn and wait.
@@ -22,9 +37,9 @@ import { effectRemaining, hasEffect, isImmobilized } from './effects.js';
  *    instead of instantly, so a car that turns harder than the tyres allow
  *    washes wide, and a car on grass or on worn rubber washes wider.
  *
- * Pulling the stick back past 90° from the car's nose brakes rather than
- * requesting an impossible instant U-turn, which is both what a player
- * expects and what stops a spin from becoming unrecoverable.
+ * Steering is live whatever the throttle is doing, so a spun car can be
+ * turned around on the spot and driven away — unrecoverable is not a state a
+ * thumbstick player should be able to reach.
  *
  * ## Why it lives on the movement path
  *
@@ -36,10 +51,8 @@ import { effectRemaining, hasEffect, isImmobilized } from './effects.js';
  * a clock.
  */
 
-/** Stick deflection below which the driver is treated as hands-off. */
+/** Deflection below which an axis reads as centred, not as a light touch. */
 const INPUT_DEADZONE = 0.05;
-/** Stick alignment below which "forward" is really a request to slow down. */
-const BRAKE_ALIGNMENT = -0.25;
 /** Speeds below this are snapped to a standstill so a parked car stays parked. */
 const REST_SPEED = 0.02;
 
@@ -166,34 +179,24 @@ export function steerVehicle(
     return;
   }
 
-  const rawX = clamp(input.moveX, -1, 1);
-  const rawZ = clamp(input.moveZ, -1, 1);
-  const magnitude = Math.min(1, length2(rawX, rawZ));
-  const steering = magnitude > INPUT_DEADZONE;
+  const steer = centred(clamp(input.moveX, -1, 1));
+  const pedal = centred(clamp(input.moveZ, -1, 1));
 
   // --- Steering -------------------------------------------------------------
-  let alignment = 1;
-  if (steering) {
-    const desired = Math.atan2(rawX, rawZ);
-    const delta = angleDelta(player.heading, desired);
-
+  // Live regardless of the throttle: a driver steers through a corner they are
+  // braking into, and a stationary car still has to be able to point itself.
+  if (steer !== 0) {
     // Authority falls away with speed. `top` rather than a constant, so a
     // car in the tow or with DRS open is correspondingly harder to place.
     const speedFraction = top > 0 ? Math.min(1, Math.abs(forward) / top) : 0;
     const authority = 1 - car.steerFalloff * speedFraction;
-    const maxTurn = car.steerRate * authority * dt;
-
-    player.heading += clamp(delta, -maxTurn, maxTurn);
-    // Measured against the heading we ended up with, not the one we asked
-    // for: a car mid-turn is still going where it is pointed.
-    alignment = Math.cos(angleDelta(player.heading, desired));
+    player.heading += steer * car.steerRate * authority * dt;
   }
 
   // --- Throttle and brakes --------------------------------------------------
   const brakeHeld = (input.buttons & buttonBit(car.brakeButton)) !== 0;
-  const stickBack = steering && alignment < BRAKE_ALIGNMENT;
-  const braking = brakeHeld || stickBack;
-  const throttle = steering && !braking ? magnitude : 0;
+  const braking = brakeHeld || pedal < 0;
+  const throttle = braking ? 0 : pedal;
 
   if (braking) {
     if (forward > 0) {
@@ -234,6 +237,11 @@ export function steerVehicle(
   }
 
   writeBack(player, forward, lateral, sin, cos);
+}
+
+/** Treats a barely-touched axis as centred, so a resting thumb does nothing. */
+function centred(value: number): number {
+  return Math.abs(value) < INPUT_DEADZONE ? 0 : value;
 }
 
 /** Recomposes car-local velocity back into world axes. */

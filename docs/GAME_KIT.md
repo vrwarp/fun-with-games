@@ -304,11 +304,25 @@ checks it for the win. Team names/colours for the UI live in
 ### Racing — `systems/vehicle.ts`, `systems/race.ts`, `track.ts`
 
 The one place the kit swaps its movement model. With `vehicle.enabled` the
-thumbstick stops being a velocity and becomes a **heading request**: the car
-rotates toward it at a rate that shrinks with speed, speed exists only along
-the car's own axis, and sideways velocity is scrubbed off at a `grip` rate
-rather than instantly. No strafing, understeer, and slides — and a stick pulled
-back past 90° brakes rather than asking for an impossible U-turn.
+stick stops being a direction and becomes **two separate controls in the car's
+own frame**:
+
+```
+  moveX  −1 … +1   steering, full left to full right
+  moveZ  +1 … −1   throttle, then coast at 0, then brake and reverse
+```
+
+They are independent, which is the point — a driver holds a steering angle
+through a corner while deciding separately how much throttle to carry, and a
+single "point there" vector cannot express that. Because the axes are read in
+the car's frame rather than the camera's, **driving is identical in all five
+views**, and a chase camera's own lag cannot feed back into the steering.
+
+The handling on top: speed exists only along the car's own axis (no strafing),
+`steerFalloff` takes steering authority away with speed (understeer), and
+sideways velocity is scrubbed at a `grip` rate rather than instantly (slides,
+worse on grass and worn rubber). Steering stays live whatever the throttle is
+doing, so a spun car can be turned around and driven away.
 
 It hangs off `integratePlayer`, so it runs inside client prediction too. That
 is deliberate: a car is fast enough that an unpredicted metre is a visible one.

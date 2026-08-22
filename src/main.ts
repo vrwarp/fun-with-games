@@ -303,7 +303,12 @@ async function launch(app: HTMLElement, options: LaunchOptions): Promise<void> {
     lastFrameMs = now;
 
     const yaw = renderer.cameraYaw;
-    const intent = mergeIntents(touch.read(yaw), buttons.read(), input.read(yaw));
+    // A car is steered, not aimed: its stick axes are steering and throttle in
+    // the CAR's frame, so they must not be rotated into the camera's. Passing
+    // no yaw is what keeps `moveX`/`moveZ` as the raw right/forward axes —
+    // and what makes driving identical in all five views.
+    const intentYaw = config.vehicle.enabled ? 0 : yaw;
+    const intent = mergeIntents(touch.read(intentYaw), buttons.read(), input.read(intentYaw));
     session.setIntent(intent.moveX, intent.moveZ, intent.sprint, intent.buttons);
     session.update(now);
 

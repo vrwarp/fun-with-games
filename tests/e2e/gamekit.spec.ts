@@ -265,6 +265,66 @@ test.describe('2D and 2.5D views', () => {
 });
 
 test.describe('racing', () => {
+  test('a car is steered relative to itself, not to the camera', async ({ page }) => {
+    // Every other mode reads the stick as a direction in the world, rotated by
+    // the camera. A car reads its axes in its own frame — which is what makes
+    // driving identical in all five views instead of depending on where the
+    // camera happens to be.
+    await page.goto(
+      '/?net=broadcast&autojoin=1&room=e2e-carctl&mode=grandprix&name=Driver&view=topdown',
+    );
+    await waitForHud(page);
+    await expect
+      .poll(() => page.evaluate(() => window.__FWG__.tick), { timeout: 30_000 })
+      .toBeGreaterThan(60);
+
+    const self = () =>
+      page.evaluate(() => {
+        const handle = window.__FWG__;
+        return handle.players.find((player) => player.id === handle.selfId);
+      });
+
+    // The grid faces +X. In top-down, "up the screen" is -Z, so a
+    // camera-relative reading of the same key would drive the car that way.
+    const before = await self();
+    await page.keyboard.down('KeyW');
+    await page.waitForTimeout(1800);
+    await page.keyboard.up('KeyW');
+    const after = await self();
+
+    const alongNose = (after?.x ?? 0) - (before?.x ?? 0);
+    const upTheScreen = (before?.z ?? 0) - (after?.z ?? 0);
+    expect(alongNose).toBeGreaterThan(8);
+    expect(Math.abs(upTheScreen)).toBeLessThan(alongNose / 2);
+  });
+
+  test('steering and throttle are separate controls', async ({ page }) => {
+    await page.goto('/?net=broadcast&autojoin=1&room=e2e-axes&mode=grandprix&name=Driver');
+    await waitForHud(page);
+    await expect
+      .poll(() => page.evaluate(() => window.__FWG__.tick), { timeout: 30_000 })
+      .toBeGreaterThan(60);
+
+    const self = () =>
+      page.evaluate(() => {
+        const handle = window.__FWG__;
+        return handle.players.find((player) => player.id === handle.selfId);
+      });
+
+    // Steering with no throttle turns the car and takes it nowhere.
+    const before = await self();
+    await page.keyboard.down('KeyD');
+    await page.waitForTimeout(1200);
+    await page.keyboard.up('KeyD');
+    const turned = await self();
+
+    const travelled = Math.hypot(
+      (turned?.x ?? 0) - (before?.x ?? 0),
+      (turned?.z ?? 0) - (before?.z ?? 0),
+    );
+    expect(travelled).toBeLessThan(1);
+  });
+
   test('a grand prix renders, grids up and drives', async ({ page }) => {
     const errors: string[] = [];
     page.on('pageerror', (error) => errors.push(error.message));

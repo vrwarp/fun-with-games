@@ -20,6 +20,51 @@ export type ModeView = 'follow' | 'first' | 'iso' | 'topdown' | 'side';
 /** Every view, in the order a player should be offered them. */
 export const VIEW_IDS: readonly ModeView[] = ['follow', 'first', 'iso', 'topdown', 'side'];
 
+/**
+ * The two views the game is actually designed around.
+ *
+ * Driving from a fixed camera is the problem. First person and isometric both
+ * keep the car's nose pointed up the screen, so "steer left" looks like
+ * turning left. A camera parked at a fixed angle does not: drive back toward
+ * it and the same input now appears to steer the other way, because the car
+ * is facing you. That is not a preference, it is a control being wrong half
+ * the lap, and it is why the rest are no longer offered for a car.
+ */
+export const SUPPORTED_VIEWS: readonly ModeView[] = ['first', 'iso'];
+
+/**
+ * Views kept working but no longer promoted.
+ *
+ * They remain valid everywhere `?view=` is parsed, so links already shared
+ * keep resolving, and a mode whose whole identity is one of them — a
+ * side-scroller is not a side-scroller from any other angle — still gets it.
+ * What they no longer get is design attention.
+ */
+export const DEPRECATED_VIEWS: readonly ModeView[] = ['follow', 'topdown', 'side'];
+
+export function isDeprecatedView(view: ModeView): boolean {
+  return DEPRECATED_VIEWS.includes(view);
+}
+
+/**
+ * Views to offer for a mode, given the one it defaults to.
+ *
+ * The supported pair, plus the mode's own default when that is a deprecated
+ * one — dropping a mode's default from its own picker would make it
+ * unreachable from the UI, and would quietly re-frame the side-scroller as
+ * something else.
+ */
+export function viewsFor(defaultView: ModeView, current?: ModeView): readonly ModeView[] {
+  const offered = isDeprecatedView(defaultView)
+    ? [...SUPPORTED_VIEWS, defaultView]
+    : [...SUPPORTED_VIEWS];
+  // Whatever the player is actually on stays listed, even when it is one of
+  // the retired ones: a picker that cannot show its own current value reads as
+  // having silently changed the setting.
+  if (current !== undefined && !offered.includes(current)) offered.push(current);
+  return offered;
+}
+
 /** What each view is called in the UI. */
 export const VIEW_LABELS: Readonly<Record<ModeView, string>> = {
   follow: 'Third person (3D)',
@@ -210,19 +255,20 @@ export const GAME_MODES: readonly GameModeInfo[] = [
     goal: 'Three laps of the circuit. Catch a tow, open the wing to pass, and pit before the tyres go.',
     usesPrimaryAction: true,
     primaryLabel: 'DRS',
-    usesSecondaryAction: true,
-    secondaryLabel: 'Brake',
+    // The brake is a pedal on touch and E/K on a keyboard, so it does not also
+    // need a round button competing for the same thumb.
+    usesSecondaryAction: false,
+    view: 'first',
     suggestedPlayers: 2,
   },
   {
     id: 'street',
     title: 'Street Circuit',
-    tagline: 'A tight city lap, seen from above. Same cars, no wings.',
+    tagline: 'A tight city lap on a rotating chase camera. Same cars, no wings.',
     goal: 'Five laps of the streets. No DRS, no pit stops — just the racing line.',
     usesPrimaryAction: false,
-    usesSecondaryAction: true,
-    secondaryLabel: 'Brake',
-    view: 'topdown',
+    usesSecondaryAction: false,
+    view: 'iso',
     suggestedPlayers: 2,
   },
   {

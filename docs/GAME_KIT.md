@@ -68,13 +68,30 @@ Three independent knobs decide what a game looks like:
 
 ### Views — `src/render/views.ts`
 
-| `view`    | Reads as         | Camera                                    |
-| --------- | ---------------- | ----------------------------------------- |
-| `follow`  | 3D third-person  | perspective, swings behind you, drag-able |
-| `first`   | first person     | perspective, in the player's own head     |
-| `iso`     | 2.5D isometric   | orthographic, fixed 45° diagonal          |
-| `topdown` | flat 2D          | orthographic, almost straight down        |
-| `side`    | 2D side-scroller | orthographic, level with the z = 0 lane   |
+| `view`    | Reads as         | Camera                                            | Status     |
+| --------- | ---------------- | ------------------------------------------------- | ---------- |
+| `first`   | first person     | perspective, in the player's own head             | supported  |
+| `iso`     | 2.5D isometric   | orthographic 45° diagonal; chases a car's heading | supported  |
+| `follow`  | 3D third-person  | perspective, swings behind you, drag-able         | deprecated |
+| `topdown` | flat 2D          | orthographic, almost straight down                | deprecated |
+| `side`    | 2D side-scroller | orthographic, level with the z = 0 lane           | deprecated |
+
+**Two of the five are what the game is designed around.** The reason is
+steering. A car's axes are read in the car's own frame, so a camera parked at
+a fixed angle inverts them every time the car drives back toward it — press
+left, watch it go right, for half of every lap. `first` cannot do that (the
+eye is bolted to the chassis) and `iso` no longer does either:
+`viewFollowsHeading()` orbits it behind a car while leaving it fixed on foot,
+where the stick is already camera-relative and a rotating world would only be
+disorienting. The projection and down-angle are untouched, so it stays
+isometric — a rotating isometric, which is what overhead racing games have
+always used.
+
+The other three still work. `?view=` accepts them everywhere, so links already
+shared keep resolving, and `viewsFor()` still offers a mode the view it is
+defined by — a side-scroller is not a side-scroller from any other angle. What
+they no longer get is a place in a picker they are not the default of, or
+design attention.
 
 `first` is the one view built differently. `ArcRotateCamera` orbits a target
 rather than looking forward from a point, so a cockpit is made by aiming the
@@ -95,20 +112,21 @@ in the same match may legitimately use different projections. That makes it
 the fastest demo trick in the kit:
 
 ```
-?mode=soccer&view=topdown     # soccer as a flat 2D game
 ?mode=arena&view=iso          # the shooter as 2.5D isometric
-?mode=tag&view=side           # tag on a single lane
-?mode=platformer&view=follow  # the platformer in 3D, for contrast
 ?mode=grandprix&view=first    # onboard, from the cockpit
+?mode=street&view=first       # the street race from inside the car
+?mode=soccer&view=topdown     # deprecated, but still resolves
 ```
 
 The lobby has a **Camera** picker covering the same ground, and the in-game
 **Settings** panel changes it mid-match without a reload — a view you can only
 reach by typing a query string is a view a phone player does not have.
 
-Input stays correct in every view automatically: movement is rotated by
-`cameraYaw`, so "up" is always "away from the camera", and the fixed views
-simply have a fixed yaw. Orthographic framing is recomputed on every resize
+Input stays correct in every view automatically **on foot**: movement is
+rotated by `cameraYaw`, so "up" is always "away from the camera", and the fixed
+views simply have a fixed yaw. A car is the exception and is handled the other
+way round — the input stays in the car's frame and the _camera_ moves to match,
+which is why the supported views are the two that can do that. Orthographic framing is recomputed on every resize
 because Babylon's ortho box is absolute, not aspect-derived.
 
 Manual camera control belongs to `follow` alone — an isometric camera you can
@@ -338,8 +356,16 @@ own frame**:
 They are independent, which is the point — a driver holds a steering angle
 through a corner while deciding separately how much throttle to carry, and a
 single "point there" vector cannot express that. Because the axes are read in
-the car's frame rather than the camera's, **driving is identical in all five
-views**, and a chase camera's own lag cannot feed back into the steering.
+the car's frame rather than the camera's, **driving is identical in every
+view**, and a chase camera's own lag cannot feed back into the steering.
+
+Independent axes need independent _controls_, or the separation is theoretical.
+On a phone a car therefore gets `src/render/driving.ts` in place of the
+thumbstick: a horizontal steering track under one thumb, throttle and brake
+pedals under the other, and the mode's action buttons stacked above the pedals
+rather than fighting them for the corner. One stick cannot express two
+independent axes on a phone, because holding a steering angle while lifting off
+means pinning a thumb to a diagonal and keeping it there.
 
 The handling on top is a **traction limit**, not a set of fiats. Speed exists
 only along the car's own axis (no strafing), and everything else follows from

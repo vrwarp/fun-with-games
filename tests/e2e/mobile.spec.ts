@@ -39,6 +39,28 @@ async function holdStick(page: Page, dx: number, dy: number, holdMs: number): Pr
   await page.mouse.up();
 }
 
+/**
+ * Presses and holds one driving control.
+ *
+ * `offset` is a fraction of the element's half-width. It is what the steering
+ * track reads — where you press IS the input — and pedals ignore it.
+ */
+async function holdControl(page: Page, testId: string, holdMs: number, offset = 0): Promise<void> {
+  const control = page.getByTestId(testId);
+  await expect(control).toBeVisible();
+
+  const box = await control.boundingBox();
+  if (!box) throw new Error(`${testId} has no bounding box`);
+
+  const cx = box.x + box.width / 2 + (box.width / 2) * offset;
+  const cy = box.y + box.height / 2;
+
+  await page.mouse.move(cx, cy);
+  await page.mouse.down();
+  await page.waitForTimeout(holdMs);
+  await page.mouse.up();
+}
+
 test.describe('on a phone', () => {
   test('starts and renders', async ({ page }) => {
     await launch(page);
@@ -280,42 +302,75 @@ test.describe('on a phone', () => {
     await expect(page.getByTestId('touch-buttons')).toBeHidden();
   });
 
-  test('a car is drivable with one thumb', async ({ page }) => {
-    // Racing is the mode with the most to lose on a phone: it needs a stick
-    // AND two buttons, and none of it can be keyboard-only (CLAUDE.md §7).
+  test('a car gets a wheel and pedals, not a thumbstick', async ({ page }) => {
+    // Racing is the mode with the most to lose on a phone, and a stick is the
+    // wrong control for it: holding a steering angle while lifting off means
+    // pinning one thumb to a diagonal, so "turn a bit less" and "slow down"
+    // stop being separable. Two thumbs, two controls (CLAUDE.md §7).
     await page.goto(`/?net=broadcast&autojoin=1&room=${ROOM}-gp&mode=grandprix&name=Driver`);
     await expect(page.getByTestId('hud')).toBeVisible({ timeout: 30_000 });
 
+    await expect(page.getByTestId('touch-controls')).toHaveCount(0);
+    const steer = page.getByTestId('driving-steer');
+    const throttle = page.getByTestId('driving-throttle');
+    const brake = page.getByTestId('driving-brake');
     const drs = page.getByTestId('touch-button-primary');
-    const brake = page.getByTestId('touch-button-secondary');
     await expect(drs).toHaveText('DRS');
-    await expect(brake).toHaveText('Brake');
 
-    for (const button of [drs, brake]) {
-      const box = await button.boundingBox();
+    // Every one of them has to be findable by a thumb.
+    for (const control of [steer, throttle, brake, drs]) {
+      const box = await control.boundingBox();
       expect(box?.width ?? 0).toBeGreaterThanOrEqual(44);
       expect(box?.height ?? 0).toBeGreaterThanOrEqual(44);
     }
 
-    // The pit board has to fit a phone alongside everything else.
+    // Steering on the left, pedals on the right: one thumb each, or the split
+    // buys nothing.
+    const steerBox = (await steer.boundingBox())!;
+    const throttleBox = (await throttle.boundingBox())!;
+    expect(steerBox.x + steerBox.width).toBeLessThanOrEqual(throttleBox.x);
+
+    // Nothing may sit on top of anything else down there.
+    const drsBox = (await drs.boundingBox())!;
+    const brakeBox = (await brake.boundingBox())!;
+    expect(drsBox.y + drsBox.height).toBeLessThanOrEqual(brakeBox.y + 1);
+    expect(brakeBox.y + brakeBox.height).toBeLessThanOrEqual(throttleBox.y + 1);
+
+    // The pit board has to fit a phone alongside all of it.
     const board = page.getByTestId('race-board');
     await expect(board).toBeVisible();
     const boardBox = await board.boundingBox();
     const viewport = page.viewportSize();
     expect((boardBox?.x ?? 0) + (boardBox?.width ?? 0)).toBeLessThanOrEqual(viewport?.width ?? 0);
+  });
 
-    // And the stick alone has to be enough to actually drive.
-    const before = await page.evaluate(() => {
-      const handle = window.__FWG__;
-      return handle.players.find((player) => player.id === handle.selfId);
-    });
-    await holdStick(page, 0, -40, 2500);
-    const after = await page.evaluate(() => {
-      const handle = window.__FWG__;
-      return handle.players.find((player) => player.id === handle.selfId);
-    });
+  test('the throttle drives and the wheel only steers', async ({ page }) => {
+    // The property the split exists for: one control changes speed, the other
+    // changes direction, and neither does the other one's job.
+    await page.goto(`/?net=broadcast&autojoin=1&room=${ROOM}-gp2&mode=grandprix&name=Driver`);
+    await expect(page.getByTestId('hud')).toBeVisible({ timeout: 30_000 });
+    await expect
+      .poll(() => page.evaluate(() => window.__FWG__.tick), { timeout: 30_000 })
+      .toBeGreaterThan(90);
 
-    expect(before).toBeDefined();
+    const self = () =>
+      page.evaluate(() => {
+        const handle = window.__FWG__;
+        return handle.players.find((player) => player.id === handle.selfId);
+      });
+
+    // Full lock, no throttle. The car may rotate; it must not go anywhere.
+    const parked = await self();
+    await holdControl(page, 'driving-steer', 2000, 0.9);
+    const stillParked = await self();
+    expect(parked).toBeDefined();
+    const crept = Math.hypot(stillParked!.x - parked!.x, stillParked!.z - parked!.z);
+    expect(crept).toBeLessThan(1);
+
+    // Throttle alone, no steering: now it moves.
+    const before = await self();
+    await holdControl(page, 'driving-throttle', 2500);
+    const after = await self();
     expect(Math.hypot(after!.x - before!.x, after!.z - before!.z)).toBeGreaterThan(3);
   });
 

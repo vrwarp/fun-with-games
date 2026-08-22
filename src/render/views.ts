@@ -12,7 +12,7 @@ import { VIEW_IDS, type ModeView } from '../shared/modes.js';
  * | -------- | --------------------------------------- | ----------------- |
  * | `follow` | third-person 3D, swings behind you      | perspective       |
  * | `first`  | first person, from the driver's head    | perspective       |
- * | `iso`    | 2.5D isometric, fixed diagonal          | orthographic      |
+ * | `iso`    | 2.5D isometric; chases a car's heading  | orthographic      |
  * | `topdown`| flat 2D from directly overhead          | orthographic      |
  * | `side`   | 2D side-scroller, one lane deep         | orthographic      |
  *
@@ -138,6 +138,8 @@ const SPECS: Record<ViewMode, ViewSpec> = {
     manualControl: false,
     targetHeight: 1,
     // Camera sits over +X / -Z, so those two walls are between it and play.
+    // When it chases a car it orbits instead, and the renderer drops the
+    // hiding entirely — there is no longer a reliably "near" wall.
     hiddenWalls: ['southZ', 'eastX'],
   },
   topdown: {
@@ -173,6 +175,28 @@ const SPECS: Record<ViewMode, ViewSpec> = {
 
 export function viewSpec(view: ViewMode): ViewSpec {
   return SPECS[view];
+}
+
+/**
+ * Whether this view should swing around behind the direction of travel.
+ *
+ * `spec.autoFollow` answers it for most views. The isometric one is the
+ * exception, and only when there is a car involved: on foot the stick is a
+ * world direction rotated by the camera's yaw, so a fixed diagonal is fine and
+ * a rotating world would just be disorienting. A car is steered in its OWN
+ * frame, and against a camera that never moves that inverts every time you
+ * drive back toward it — press left, watch the car go right.
+ *
+ * Rotating the camera instead of the input is the fix that keeps both true:
+ * steering stays in the car's frame (so it is identical in every view, and a
+ * chase camera's lag cannot feed back into the front axle) while the nose
+ * stays pointed up the screen. The projection and the down-angle are
+ * untouched, so it is still isometric — it is a rotating isometric, which is
+ * what overhead racing games have always used.
+ */
+export function viewFollowsHeading(view: ViewMode, vehicle: boolean): boolean {
+  if (SPECS[view].autoFollow) return true;
+  return vehicle && view === 'iso';
 }
 
 /**

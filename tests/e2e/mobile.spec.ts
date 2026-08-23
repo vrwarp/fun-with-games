@@ -376,18 +376,41 @@ test.describe('on a phone', () => {
       return Math.abs(Math.atan2(Math.sin(after - before), Math.cos(after - before)));
     };
 
-    // Full right lock, thumb still down.
-    await page.mouse.move(rightEnd, midY);
+    // Get it rolling first. Steering is a steering ANGLE and a car yaws by
+    // rolling, so a stationary car with the wheel hard over is supposed to sit
+    // there — the failure this test is about only shows up on a moving car.
+    // There is one pointer to play with, so the throttle and the wheel take
+    // turns and the car coasts through the measurement. Left lock rather than
+    // right because the grid faces +X against the near wall, and a car parked
+    // on the boundary would be still for reasons that have nothing to do with
+    // the wheel.
+    await holdControl(page, 'driving-throttle', 1200);
+
+    // Full left lock, thumb still down.
+    await page.mouse.move(leftEnd, midY);
     await page.mouse.down();
-    await page.waitForTimeout(400);
+    await page.waitForTimeout(200);
     const whileHeld = await swingOver(500);
     expect(whileHeld).toBeGreaterThan(0.2);
 
     // The interruption. No pointerup will ever arrive for that thumb.
     await page.evaluate(() => window.dispatchEvent(new Event('blur')));
-    await page.waitForTimeout(400);
-    const settled = await heading();
-    const afterBlur = await swingOver(500);
+    // Lift the synthetic thumb so the next press can reach another control.
+    // The blur has already re-centred the wheel; what this undoes is the
+    // browser-level pointer capture, which would otherwise keep routing every
+    // later move to the steering track.
+    await page.mouse.up();
+
+    // Now hold the throttle with nothing on the wheel. This is the strongest
+    // conditions a stranded lock could show itself in — full pace, no input —
+    // so measuring the swing across the burst is a far better test than
+    // watching a car that has coasted to a stop.
+    const beforeBurst = await heading();
+    await holdControl(page, 'driving-throttle', 1200);
+    const afterBurst = await heading();
+    const afterBlur = Math.abs(
+      Math.atan2(Math.sin(afterBurst - beforeBurst), Math.cos(afterBurst - beforeBurst)),
+    );
 
     // The wheel must have re-centred. Compared as a RATE rather than as an
     // absolute angle: how many simulation ticks fit in a wall-clock window
@@ -396,16 +419,16 @@ test.describe('on a phone', () => {
     expect(afterBlur).toBeLessThan(whileHeld / 3);
 
     // And the driver must be able to take it back — the half that used to
-    // leave steering dead for the rest of the race.
-    await page.mouse.up();
-    await page.mouse.move(leftEnd, midY);
+    // leave steering dead for the rest of the race. Straight off the throttle,
+    // while the car is still carrying speed to steer with.
+    await page.mouse.move(rightEnd, midY);
     await page.mouse.down();
     await page.waitForTimeout(700);
     await page.mouse.up();
 
     const recovered = await heading();
-    const delta = Math.atan2(Math.sin(recovered - settled), Math.cos(recovered - settled));
-    expect(delta).toBeLessThan(-0.1);
+    const delta = Math.atan2(Math.sin(recovered - afterBurst), Math.cos(recovered - afterBurst));
+    expect(delta).toBeGreaterThan(0.1);
   });
 
   test('the throttle drives and the wheel only steers', async ({ page }) => {
@@ -423,13 +446,20 @@ test.describe('on a phone', () => {
         return handle.players.find((player) => player.id === handle.selfId);
       });
 
-    // Full lock, no throttle. The car may rotate; it must not go anywhere.
+    // Full lock, no throttle. A car steers by rolling, so a parked one with the
+    // wheel hard over turns its WHEELS and does nothing else: it neither
+    // creeps nor pirouettes.
     const parked = await self();
     await holdControl(page, 'driving-steer', 2000, 0.9);
     const stillParked = await self();
     expect(parked).toBeDefined();
     const crept = Math.hypot(stillParked!.x - parked!.x, stillParked!.z - parked!.z);
     expect(crept).toBeLessThan(1);
+    const spun = Math.atan2(
+      Math.sin(stillParked!.heading - parked!.heading),
+      Math.cos(stillParked!.heading - parked!.heading),
+    );
+    expect(Math.abs(spun)).toBeLessThan(0.05);
 
     // Throttle alone, no steering: now it moves.
     const before = await self();

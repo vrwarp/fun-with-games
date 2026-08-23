@@ -34,10 +34,10 @@ http://localhost:5173/?net=broadcast&room=demo&mode=tag
 Two of them are races with cars rather than runners. They are ordinary presets
 too — the new ingredient is a handling model and a centreline:
 
-| id          | Game                                        | Systems it exercises             |
-| ----------- | ------------------------------------------- | -------------------------------- |
-| `grandprix` | Three laps, slipstream, DRS, tyres and pits | vehicle, track, race, zones(all) |
-| `street`    | Five laps of a tight city lap, seen flat    | vehicle, track, race(tow), zones |
+| id          | Game                                      | Systems it exercises             |
+| ----------- | ----------------------------------------- | -------------------------------- |
+| `grandprix` | Six laps, slipstream, DRS, tyres and pits | vehicle, track, race, zones(all) |
+| `street`    | Five laps of a tight city lap, seen flat  | vehicle, track, race(tow), zones |
 
 The last three ship a non-3D projection. They are ordinary presets — the only
 new ingredients are gravity and a camera angle:
@@ -456,6 +456,38 @@ rather than fighting them for the corner. One stick cannot express two
 independent axes on a phone, because holding a steering angle while lifting off
 means pinning a thumb to a diagonal and keeping it there.
 
+**The stick sets the angle of the front wheels, not a rate of turn.** What the
+car then does about it is geometry — the standard kinematic bicycle model:
+
+```
+  omega = speed * tan(steerAngle) / wheelbase
+```
+
+Using that rather than adding the stick straight onto the heading is the
+difference between a car and a tank, and three things stop being special cases
+that have to be written down and start being consequences:
+
+- **A parked car does not rotate.** Turning the wheel of a stationary car turns
+  the wheels; it has to roll before any of that becomes a change of direction.
+- **The radius of a corner is set by the lock, not the speed.** Hold an angle
+  and the car traces the same arc at any speed, which is why a corner has a
+  right gear rather than a right amount of steering.
+- **Reversing swings the nose the other way.** `speed` is signed, so the yaw
+  is too, and backing out of a barrier steers the way it does in a car park.
+  That last one is what makes a spun car recoverable now that steering on the
+  spot does nothing: the driver reverses out, exactly as they would in life.
+
+| Key             | What it decides                                                                                                                                                    |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `wheelbase`     | Distance between the axles. Longer is stabler and turns wider; it is the `L` above and nothing else reads it.                                                      |
+| `maxSteerAngle` | Radians of lock at full stick. With the wheelbase this fixes the tightest circle the car can describe — `L / tan(angle)`.                                          |
+| `steerFalloff`  | Fraction of that lock the rack winds off by top speed. Not understeer: the driver is never denied an angle they could hold, the stick simply asks for less of one. |
+
+`steerFalloff` exists because full lock at racing speed asks for a radius no
+car could hold. Without it the top half of the control's travel would do
+nothing but plough, and the usable part would be a sliver of thumb travel — a
+control problem, not a physics one, which is why it is separate from the tyres.
+
 The handling on top is a **traction limit**, not a set of fiats. Speed exists
 only along the car's own axis (no strafing), and everything else follows from
 one number, `vehicle.tyreGrip` — the most lateral acceleration the tyres can
@@ -480,11 +512,9 @@ sideways is not rolling and there is nothing for them to work against. And the
 aligning rotation is clamped to the slip angle it is correcting. Without the
 first, engine braking pins the forward component at zero every tick, which
 holds the slip angle at a right angle — the largest input the aligning moment
-can be given — and the car then turns at 4.7 rad/s indefinitely against a
-`steerRate` of 3.1, so the driver cannot steer out of it. It reads as the
-steering being stuck. Grass and worn rubber
-scale the limit down, so both let go sooner. Steering stays live whatever the
-throttle is doing, so a spun car can be turned around and driven away.
+can be given — and the car then spins indefinitely with nothing the driver can
+do about it. It reads as the steering being stuck. Grass and worn rubber scale
+the limit down, so both let go sooner.
 
 Every rotation re-expresses the velocity in the frame it produced. Turning the
 car must never turn its momentum with it — that difference is the entire

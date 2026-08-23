@@ -55,7 +55,12 @@ export function computeBotInput(ctx: StepContext, bot: PlayerState): PlayerInput
   // bot has to drive rather than point (see `steerVehicle`). Everyone else
   // reads them as a direction, scaled by how much of it the decision wants.
   if (ctx.config.vehicle.enabled) {
-    return { seq: ctx.tick, ...driveAxes(bot, move, decision), sprint: decision.sprint, buttons };
+    return {
+      seq: ctx.tick,
+      ...driveAxes(bot, move, decision),
+      sprint: decision.sprint,
+      buttons,
+    };
   }
 
   const throttle = decision.throttle ?? 1;
@@ -68,12 +73,6 @@ export function computeBotInput(ctx: StepContext, bot: PlayerState): PlayerInput
   };
 }
 
-/**
- * How far the nose is off the direction a bot wants, before it is asking for
- * full steering lock. About 29°, so a bot squares up briskly without sawing
- * at the wheel down a straight.
- */
-const FULL_LOCK_RADIANS = 0.5;
 /** Radius standing in for "straight": big enough that no car is grip-limited. */
 const CORNER_STRAIGHT_RADIUS = 1e4;
 /** Fraction of the corner speed a bot will accelerate up to before coasting. */
@@ -84,6 +83,15 @@ const PIT_LOOKAHEAD = 42;
 const WORN_CAUTION = 0.3;
 /** Aim distance while off the road: short, so the nose turns back toward it. */
 const REJOIN_LOOKAHEAD = 4;
+/** Below this speed a car has no steering, because it is not rolling. */
+const STUCK_SPEED = 1.5;
+/**
+ * Heading error at which a bot asks for full lock. About 29°, so it squares up
+ * briskly without sawing at the wheel down a straight.
+ */
+const FULL_LOCK_ERROR = 0.5;
+/** Heading error past which a stopped car cannot simply drive away forwards. */
+const STUCK_ANGLE = 1;
 
 /**
  * What tells one bot from another.
@@ -164,12 +172,31 @@ function driveAxes(
   direction: { x: number; z: number },
   decision: Decision,
 ): { moveX: number; moveZ: number } {
-  const pedal = decision.brake ? -1 : (decision.throttle ?? 1);
+  const pedal = decision.reverse || decision.brake ? -1 : (decision.throttle ?? 1);
   if (direction.x === 0 && direction.z === 0) return { moveX: 0, moveZ: pedal };
 
   const wanted = Math.atan2(direction.x, direction.z);
   const off = angleDelta(bot.heading, wanted);
-  return { moveX: clamp(off / FULL_LOCK_RADIANS, -1, 1), moveZ: pedal };
+  const lock = decision.reverse ? -steeringFor(off) : steeringFor(off);
+  // Mirrored while backing up: the same lock swings the nose the other way
+  // when the car is rolling backwards, exactly as it does in a car park.
+  return { moveX: lock, moveZ: pedal };
+}
+
+/**
+ * The lock a driver would wind on to correct a heading error.
+ *
+ * Deliberately a plain proportional law rather than an inversion of the car's
+ * own `omega = speed * tan(angle) / wheelbase`. Both of the cleverer versions
+ * were tried and measured worse: asking for the arc that wipes the error out
+ * put the field in the scenery 31% of the time, and clamping that request to
+ * the grip available made it 77%, because a car that has strayed has almost no
+ * grip and so asks for almost no lock — which is precisely when it needs some.
+ * A driver does not solve for the radius either; they wind on lock until the
+ * nose comes round.
+ */
+function steeringFor(error: number): number {
+  return clamp(error / FULL_LOCK_ERROR, -1, 1);
 }
 
 /** Bit for a configured button name; 0 when the action is unbound. */
@@ -227,6 +254,15 @@ interface Decision {
   throttle?: number;
   /** Stand on the brake pedal. Only meaningful with `vehicle.enabled`. */
   brake?: boolean;
+  /**
+   * Back out of trouble rather than driving out of it.
+   *
+   * A car yaws because its wheels are rolling, so one that has stopped facing
+   * a barrier cannot steer its way out — there is nothing to steer WITH. The
+   * way out of that in a real car is reverse, and reversing swings the nose
+   * the opposite way for a given lock, so the steering has to be mirrored too.
+   */
+  reverse?: boolean;
 }
 
 function decide(ctx: StepContext, bot: PlayerState): Decision {
@@ -368,6 +404,23 @@ function drive(ctx: StepContext, bot: PlayerState): Decision {
   // drives happily parallel to the tarmac for the rest of the race. Pulling
   // the aim point right in turns the nose back toward the road, which is what
   // rejoining is.
+  // Checked before anything else about driving, and before the rejoin branch
+  // in particular — that one returns a forward throttle, which is exactly what
+  // a car in this state cannot use.
+  //
+  // Stopped and pointed somewhere that will not get it going again: with a car
+  // that yaws only while rolling there is no steering out of it, because there
+  // is nothing to steer with. Backing out is what a driver does, and it is the
+  // reason the model can afford to be honest about a stationary car not
+  // turning at all.
+  if (speed < STUCK_SPEED) {
+    const escape = trackPoseAt(path, here.progress + REJOIN_LOOKAHEAD);
+    const wanted = Math.atan2(escape.x - bot.x, escape.z - bot.z);
+    if (Math.abs(angleDelta(bot.heading, wanted)) > STUCK_ANGLE) {
+      return { target: { x: escape.x, z: escape.z }, sprint: false, fire: false, reverse: true };
+    }
+  }
+
   const strayed = here.lateral > ctx.config.track.halfWidth;
   const lookahead = strayed ? REJOIN_LOOKAHEAD : Math.max(7, speed * 0.85);
   const rejoinTarget = strayed ? trackPoseAt(path, here.progress + REJOIN_LOOKAHEAD) : null;

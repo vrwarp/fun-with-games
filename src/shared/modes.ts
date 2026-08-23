@@ -251,8 +251,8 @@ export const GAME_MODES: readonly GameModeInfo[] = [
   {
     id: 'grandprix',
     title: 'Grand Prix',
-    tagline: 'Formula racing — lights out, three laps, wings and tyres.',
-    goal: 'Three laps of the circuit. Catch a tow, open the wing to pass, and pit before the tyres go.',
+    tagline: 'Formula racing — lights out, six laps, wings and tyres.',
+    goal: 'Six laps of the circuit. Catch a tow, open the wing to pass, and nurse the tyres home.',
     usesPrimaryAction: true,
     primaryLabel: 'DRS',
     // The brake is a pedal on touch and E/K on a keyboard, so it does not also

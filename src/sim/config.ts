@@ -232,14 +232,35 @@ export interface VehicleConfig {
   readonly coastDecel: number;
   /** Top reverse speed, as a fraction of the forward top speed. */
   readonly reverseFraction: number;
-  /** Steering rate at a standstill, radians/second. */
-  readonly steerRate: number;
   /**
-   * Fraction of steering authority lost at top speed, in [0, 1).
+   * Distance between the front and rear axles, in world units.
    *
-   * This is the understeer knob: 0 corners like a shopping trolley at any
-   * speed, 0.6 means a flat-out car turns at 40% of its parked rate and the
-   * driver has to brake for the corner.
+   * The number that turns a steering angle into a turn. A car yaws because its
+   * front wheels are pointed somewhere and the whole thing is ROLLING —
+   * `omega = speed * tan(angle) / wheelbase` — which is why a stationary car
+   * does not rotate however far you turn the wheel, why the radius of a corner
+   * is set by the lock rather than by the speed, and why reversing swings the
+   * nose the other way. All three fall out of this rather than being written
+   * down separately.
+   */
+  readonly wheelbase: number;
+  /**
+   * Steering angle at the front wheels at full lock, in radians.
+   *
+   * A road car manages about 0.6; a racing car rather less, because it never
+   * needs to park. This is the *angle of the wheels*, not a rate of turn: the
+   * rate is whatever that angle and the car's speed produce together.
+   */
+  readonly maxSteerAngle: number;
+  /**
+   * Fraction of the lock taken away at top speed, in [0, 1).
+   *
+   * Not the understeer knob — the tyres are that, and `tyreGrip` decides it.
+   * This is the rack: full lock at 27 units/second asks for a radius no car
+   * could hold, so the input would spend the whole straight in a range that
+   * does nothing but plough. Trimming the *available* angle with speed keeps
+   * the control usable across its travel, which is what a real speed-sensitive
+   * rack is for.
    */
   readonly steerFalloff: number;
   /**
@@ -513,7 +534,8 @@ export const DEFAULT_SIM_CONFIG: SimConfig = {
     brakeDecel: 34,
     coastDecel: 12,
     reverseFraction: 0.35,
-    steerRate: 3.2,
+    wheelbase: 3,
+    maxSteerAngle: 0.55,
     steerFalloff: 0.55,
     grip: 7,
     tyreGrip: 0,

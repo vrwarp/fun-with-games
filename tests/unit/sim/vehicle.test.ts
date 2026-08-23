@@ -11,15 +11,18 @@ import { makeInput, makePlayer } from '../../helpers/factories.js';
  * Straight, flat, empty. Every assertion here is about the handling model, so
  * the world around it is deliberately featureless.
  */
-function carConfig(overrides: SimConfigOverrides = {}) {
+function carConfig({ vehicle, ...overrides }: SimConfigOverrides = {}) {
   return makeSimConfig({
-    vehicle: { enabled: true },
     playerMaxSpeed: 20,
     obstacleCount: 0,
     pickupCount: 0,
     arenaHalfExtentX: 400,
     arenaHalfExtentZ: 400,
     ...overrides,
+    // Spread last, and merged rather than replaced: a trailing `...overrides`
+    // silently drops `enabled: true`, and a test that thinks it is measuring a
+    // car is then measuring a runner. That has cost an afternoon twice.
+    vehicle: { enabled: true, ...vehicle },
   });
 }
 
@@ -40,16 +43,51 @@ function drive(
 
 const speedOf = (p: PlayerState): number => Math.hypot(p.vx, p.vz);
 
+/**
+ * A car with the tyres and the drivetrain taken out of the picture.
+ *
+ * Grip high enough that no slip survives a tick, and no coasting, so a car
+ * placed at a speed is still doing it when the measurement comes out. What is
+ * left is the steering geometry and nothing else — the tyre model has its own
+ * tests in `tyres.test.ts`, and measuring both at once would make every radius
+ * here a two-variable answer.
+ */
+function geometryConfig(vehicle: SimConfigOverrides['vehicle'] = {}) {
+  return carConfig({ vehicle: { grip: 400, tyreGrip: 400, coastDecel: 0, ...vehicle } });
+}
+
+/**
+ * Radius of the arc the car actually traces, in world units.
+ *
+ * Distance travelled over heading turned — the same number you would get by
+ * measuring the circle with a tape.
+ */
+function radiusAt(config: ReturnType<typeof carConfig>, speed: number, stick: number): number {
+  const dt = tickDeltaSeconds(config);
+  const car = makePlayer({ heading: 0, vx: 0, vz: speed });
+  const input = makeInput({ moveX: stick, moveZ: 0 });
+  let turned = 0;
+  let travelled = 0;
+  for (let i = 0; i < 20; i++) {
+    const before = car.heading;
+    const { x, z } = car;
+    integratePlayer(car, input, config, [], dt, i, false);
+    turned += car.heading - before;
+    travelled += Math.hypot(car.x - x, car.z - z);
+  }
+  return travelled / turned;
+}
+
 describe('vehicle handling', () => {
   it('reads the two axes as separate controls, not as a direction', () => {
     // The whole point of the model: steering is `moveX`, throttle is `moveZ`,
     // and neither implies the other.
     const config = carConfig();
 
-    // Steering alone turns the car and moves it nowhere.
+    // Steering alone turns the WHEELS and takes the car nowhere. It does not
+    // turn the car either, because a car yaws by rolling — see below.
     const turning = makePlayer({ heading: 0 });
     drive(turning, config, makeInput({ moveX: 1, moveZ: 0 }), 10);
-    expect(turning.heading).toBeGreaterThan(0);
     expect(speedOf(turning)).toBe(0);
 
     // Throttle alone drives it dead straight.
@@ -60,14 +98,43 @@ describe('vehicle handling', () => {
     expect(straight.vx).toBe(0);
   });
 
+  it('does not turn a parked car, however far the wheel goes over', () => {
+    // The property that makes it a car rather than a tank. Turning the wheel
+    // of a stationary car turns the wheels; the car has to roll before any of
+    // that becomes a change of direction.
+    const config = carConfig();
+    const parked = makePlayer({ heading: 0.4, vx: 0, vz: 0 });
+
+    drive(parked, config, makeInput({ moveX: 1, moveZ: 0 }), 120);
+
+    expect(parked.heading).toBe(0.4);
+    expect(speedOf(parked)).toBe(0);
+  });
+
   it('steers at full lock left and right, symmetrically', () => {
     const config = carConfig();
-    const left = makePlayer({ heading: 0 });
-    const right = makePlayer({ heading: 0 });
-    drive(left, config, makeInput({ moveX: -1 }), 5);
-    drive(right, config, makeInput({ moveX: 1 }), 5);
+    const left = makePlayer({ heading: 0, vz: 8 });
+    const right = makePlayer({ heading: 0, vz: 8 });
+    drive(left, config, makeInput({ moveX: -1, moveZ: 1 }), 5);
+    drive(right, config, makeInput({ moveX: 1, moveZ: 1 }), 5);
     expect(left.heading).toBeCloseTo(-right.heading, 6);
     expect(right.heading).toBeGreaterThan(0);
+  });
+
+  it('holds a radius set by the lock rather than by the speed', () => {
+    // A car on a fixed steering angle traces the same arc whatever speed it
+    // is doing — that is what `omega = v tan(d) / L` means, and it is why a
+    // corner has a right gear rather than a right amount of steering. It only
+    // stops being true when the tyres run out, so this uses a gentle angle
+    // that both speeds can hold.
+    const config = geometryConfig({ steerFalloff: 0 });
+
+    // Same lock, three times the speed, same arc. `steerFalloff` is off here
+    // precisely because it is the one thing that would break this — see below.
+    expect(radiusAt(config, 18, 0.25)).toBeCloseTo(radiusAt(config, 6, 0.25), 0);
+    // And the arc is the one the geometry predicts: R = L / tan(angle).
+    const angle = 0.25 * config.vehicle.maxSteerAngle;
+    expect(radiusAt(config, 12, 0.25)).toBeCloseTo(config.vehicle.wheelbase / Math.tan(angle), 0);
   });
 
   it('carries analog throttle: half the axis is half the speed', () => {
@@ -108,19 +175,22 @@ describe('vehicle handling', () => {
     expect(speedOf(car)).toBeCloseTo(config.playerMaxSpeed, 1);
   });
 
-  it('steers less at speed than at a standstill', () => {
-    const config = carConfig();
-    const parked = makePlayer({ heading: 0 });
-    const flying = makePlayer({ heading: 0, vz: config.playerMaxSpeed });
+  it('winds the rack off at speed, so the same stick takes more room', () => {
+    // `steerFalloff` is a speed-sensitive rack, not understeer by fiat. The
+    // driver is never denied an angle they could hold; what shrinks is the
+    // angle the stick ASKS for, because full lock at racing speed would ask
+    // for a radius no car could hold and the top half of the control's travel
+    // would do nothing but plough. This is why the previous test has to turn
+    // it off to see the bicycle model underneath.
+    const config = geometryConfig();
+    const fast = radiusAt(config, config.playerMaxSpeed, 1);
+    const slow = radiusAt(config, 0.2, 1);
 
-    const stick = makeInput({ moveX: 1, moveZ: 0 });
-    drive(parked, config, stick, 1);
-    drive(flying, config, stick, 1);
-
-    // Understeer: this is what forces a driver to brake for the corner.
-    expect(flying.heading).toBeGreaterThan(0);
-    expect(flying.heading).toBeLessThan(parked.heading);
-    expect(flying.heading).toBeCloseTo(parked.heading * (1 - config.vehicle.steerFalloff), 2);
+    expect(fast).toBeGreaterThan(slow);
+    // And it is the rack doing it, not a fudge: the angle scales linearly with
+    // speed, so at the top of the range it is exactly the configured fraction.
+    const angleAt = (radius: number): number => Math.atan(config.vehicle.wheelbase / radius);
+    expect(angleAt(fast)).toBeCloseTo(angleAt(slow) * (1 - config.vehicle.steerFalloff), 1);
   });
 
   it('brakes harder on the pedal than off the throttle', () => {
@@ -146,16 +216,25 @@ describe('vehicle handling', () => {
     expect(braked.heading).toBe(0); // braking is not steering
   });
 
-  it('turns a stopped car around rather than stranding it', () => {
+  it('backs a stopped car out, steering the way a car park does', () => {
+    // `CLAUDE.md` requires that a spun car is recoverable, and it used to be
+    // because steering worked at a standstill. It does not any more, and it
+    // should not: this is what a driver actually does instead. Reversing swings
+    // the nose the opposite way for a given lock, which falls out of the model
+    // rather than being written down — `forward` is signed, so the yaw is too.
     const config = carConfig();
-    const car = makePlayer({ heading: 0 });
-    // Deliberate: a real car cannot pivot, but a player who has spun on a
-    // phone has one thumb and nowhere to go. Holding a steering axis gets
-    // them pointed the other way; unrecoverable is not a state to ship.
-    // A second of full lock is most of a half-turn at `steerRate`, which is
-    // the point: the way out of a spin is short enough that nobody gives up.
-    drive(car, config, makeInput({ moveX: 1 }), 30);
-    expect(car.heading).toBeGreaterThan(Math.PI * 0.9);
+
+    const backing = makePlayer({ heading: 0 });
+    drive(backing, config, makeInput({ moveX: 1, moveZ: -1 }), 60);
+
+    // It moved, and it came round — the opposite way to the same lock going
+    // forwards, which is the bit that makes it feel like a car.
+    expect(speedOf(backing)).toBeGreaterThan(0);
+    expect(backing.heading).toBeLessThan(-0.2);
+
+    const forwards = makePlayer({ heading: 0 });
+    drive(forwards, config, makeInput({ moveX: 1, moveZ: 1 }), 60);
+    expect(forwards.heading).toBeGreaterThan(0.2);
   });
 
   it('reverses on the brake pedal, capped well below the forward top speed', () => {

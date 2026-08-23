@@ -338,7 +338,17 @@ export interface TrackConfig {
   readonly halfWidth: number;
   /** Top-speed multiplier once off the tarmac. */
   readonly offTrackSpeed: number;
-  /** Grip multiplier once off the tarmac. */
+  /**
+   * Grip multiplier once off the tarmac.
+   *
+   * Deliberately much milder than `offTrackSpeed`, because the two penalties
+   * are not interchangeable. Losing speed costs a driver time, which is a
+   * penalty they can see, understand and drive out of. Losing grip costs them
+   * CONTROL, and a car that will not answer the wheel does not read as a
+   * mistake being punished — it reads as the controls having broken. Grass is
+   * meant to be slow and forgiving on a thumb, so the time loss does the
+   * punishing and this only makes the car feel loose while it happens.
+   */
   readonly offTrackGrip: number;
   /** Cars per row on the starting grid. 2 is the Formula-style staggered grid. */
   readonly gridColumns: number;
@@ -554,7 +564,7 @@ export const DEFAULT_SIM_CONFIG: SimConfig = {
     enabled: false,
     halfWidth: 6,
     offTrackSpeed: 0.45,
-    offTrackGrip: 0.35,
+    offTrackGrip: 0.6,
     gridColumns: 2,
     gridRowSpacing: 5,
   },

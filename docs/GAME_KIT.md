@@ -505,6 +505,24 @@ Whatever the tyres cannot erase survives as sideways velocity — that surplus
 fast the car is _rolling_: the aligning moment comes from the tyres turning, so
 a car barely moving has none.
 
+**Every one of those forces is scaled by `gripFraction` — surface times wear —
+and there is exactly one such function on purpose.** All four contact patches
+share one grip budget, so if a single term forgets to ask, it ends up fighting
+the others. That is not hypothetical: the aligning moment used to be a flat
+config number, so on grass a full-strength caster pulled against a
+third-strength front axle. They balanced at about twelve degrees of slip and
+stayed there — nose cocked into the corner, car travelling dead straight, full
+lock doing nothing at all. It reads to a driver as the steering having simply
+stopped working. Any new tyre force has to come through `gripFraction` too.
+
+The speed limit is likewise on the **car**, not on its nose. The throttle only
+ever reads and tops up the forward component, so without a check on the
+resultant a sliding car carries its sideways velocity untaxed — at forty
+degrees of slip that is a third over the limit, and the engine feeds it every
+tick, so a slide _accelerates_. It is bled rather than clamped, and both
+components together, so losing a tow does not put a wall of air in front of
+you and the direction of travel is untouched.
+
 Two details there are load-bearing, and getting either wrong makes the car
 undrivable rather than merely wrong. Engine braking and drag are scaled by how
 much of the car's motion is along its own nose, because a car travelling
@@ -538,6 +556,14 @@ half-width. `src/sim/track.ts` derives everything else from it — whether a car
 is on the tarmac, how far round the lap it is, the racing line a bot follows,
 and the starting grid. Off-track is grass, not a wall: `track.offTrackSpeed`
 and `offTrackGrip` make it slow and slippery, which is forgiving on a thumb.
+
+Those two are deliberately **not** set to the same severity, and the asymmetry
+is the design. `offTrackSpeed` is harsh (0.4–0.45) because losing speed costs a
+driver time — a penalty they can see, understand, and drive out of.
+`offTrackGrip` is mild (0.6) because losing grip costs them _control_, and a car
+that will not answer the wheel does not read as a mistake being punished; it
+reads as the controls having broken. Run wide and you should lose the lap, not
+the car.
 
 Circuits are authored as **control points** and rounded by `smoothTrack`
 (Chaikin corner-cutting) into the centreline both layers use. A raw polyline

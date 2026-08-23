@@ -330,7 +330,7 @@ const PRESETS: Record<GameModeId, SimConfigOverrides> = {
   // three circles that mean "open the wing here" and "change tyres here".
 
   /**
-   * The full Formula weekend: a grid start, three laps, a slipstream, DRS on
+   * The full Formula weekend: a grid start, six laps, a slipstream, DRS on
    * the two straights, tyres that go off, and a pit lane to fix them in.
    */
   grandprix: {
@@ -345,8 +345,19 @@ const PRESETS: Record<GameModeId, SimConfigOverrides> = {
       // The rack stays almost fully alive at speed. Understeer is the tyres'
       // job now, and taking the angle away here as well would charge the
       // driver twice for the same corner.
-      steerRate: 3.1,
-      steerFalloff: 0.15,
+      // A grand prix car: long, and it never has to park, so it runs less
+      // lock than a road car. Full lock here is a radius of about six metres,
+      // which the tyres can only hold at walking pace — everything faster is
+      // grip-limited, which is the point.
+      wheelbase: 3.4,
+      // Generous lock, lightly trimmed. Measured across a sweep, trimming it
+      // harder is strictly worse: the bots then cannot make the corners and
+      // spend a quarter of the race in the run-off. What should stop a driver
+      // asking for too much is the grip running out, not the rack running out
+      // — at speed full lock here demands three times the grip the tyres have,
+      // so the car simply understeers, which is the honest answer.
+      maxSteerAngle: 0.6,
+      steerFalloff: 0.3,
       grip: 8,
       // The number that decides every corner. A car needs v^2/r to hold a
       // line, so 26 buys a radius of about 28 flat out and about 7 at half
@@ -452,8 +463,11 @@ const PRESETS: Record<GameModeId, SimConfigOverrides> = {
       engineAccel: 24,
       brakeDecel: 24,
       coastDecel: 15,
-      steerRate: 3.6,
-      steerFalloff: 0.15,
+      // Shorter and turnier than the grand prix car, which is most of why a
+      // street circuit suits it.
+      wheelbase: 2.6,
+      maxSteerAngle: 0.65,
+      steerFalloff: 0.3,
       grip: 9,
       // Deliberately looser than the grand prix car: a street race should be
       // sliding about. Measured, this is the difference between a field that

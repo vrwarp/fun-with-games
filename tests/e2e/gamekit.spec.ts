@@ -224,9 +224,9 @@ test.describe('2D and 2.5D views', () => {
   });
 
   test('the camera turns with the car, not with where it is going', async ({ page }) => {
-    // A head is bolted to the chassis. The chase camera deliberately only
-    // swings while the player is moving; doing that in a cockpit would leave
-    // the view pointing at the scenery every time a driver turned on the spot.
+    // A head is bolted to the chassis: the cockpit follows where the car is
+    // POINTED, not where it is travelling, which is what keeps the horizon
+    // still through a slide instead of swinging to chase the drift.
     await page.goto(
       '/?net=broadcast&autojoin=1&room=e2e-fp3&mode=grandprix&name=Driver&view=first',
     );
@@ -235,15 +235,32 @@ test.describe('2D and 2.5D views', () => {
       .poll(() => page.evaluate(() => window.__FWG__.tick), { timeout: 30_000 })
       .toBeGreaterThan(60);
 
-    const before = await page.evaluate(() => window.__FWG__.cameraAlpha);
-    await page.keyboard.down('KeyA');
-    await page.waitForTimeout(1200);
-    await page.keyboard.up('KeyA');
+    const state = () =>
+      page.evaluate(() => {
+        const handle = window.__FWG__;
+        const self = handle.players.find((player) => player.id === handle.selfId);
+        return { alpha: handle.cameraAlpha, heading: self?.heading ?? 0 };
+      });
 
-    const after = await page.evaluate(() => window.__FWG__.cameraAlpha);
-    let turned = Math.abs(after - before) % (Math.PI * 2);
-    if (turned > Math.PI) turned = Math.PI * 2 - turned;
-    expect(turned).toBeGreaterThan(0.3);
+    // Throttle AND lock: a car yaws by rolling, so steering on the spot is
+    // supposed to leave both the car and the camera exactly where they were.
+    const before = await state();
+    await page.keyboard.down('KeyW');
+    await page.keyboard.down('KeyA');
+    await page.waitForTimeout(1500);
+    await page.keyboard.up('KeyA');
+    await page.keyboard.up('KeyW');
+    const after = await state();
+
+    const wrap = (angle: number): number => Math.abs(Math.atan2(Math.sin(angle), Math.cos(angle)));
+    const swung = wrap(after.heading - before.heading);
+    const panned = wrap(after.alpha - before.alpha);
+
+    expect(swung).toBeGreaterThan(0.3);
+    // Bolted on, so the camera went round with it — bounded both ways, because
+    // a camera that lagged badly and one that overshot are both wrong.
+    expect(panned).toBeGreaterThan(swung * 0.6);
+    expect(panned).toBeLessThan(swung * 1.4);
   });
 
   test('the 3D follow camera stays perspective', async ({ page }) => {
@@ -315,7 +332,8 @@ test.describe('racing', () => {
         return handle.players.find((player) => player.id === handle.selfId);
       });
 
-    // Steering with no throttle turns the car and takes it nowhere.
+    // Steering with no throttle takes the car nowhere — and, because a car
+    // yaws by rolling rather than by being told to, does not turn it either.
     const before = await self();
     await page.keyboard.down('KeyD');
     await page.waitForTimeout(1200);
@@ -327,6 +345,19 @@ test.describe('racing', () => {
       (turned?.z ?? 0) - (before?.z ?? 0),
     );
     expect(travelled).toBeLessThan(1);
+    const swung = (turned?.heading ?? 0) - (before?.heading ?? 0);
+    expect(Math.abs(Math.atan2(Math.sin(swung), Math.cos(swung)))).toBeLessThan(0.05);
+
+    // Throttle with no steering moves it and leaves the nose where it was.
+    const rolling = await self();
+    await page.keyboard.down('KeyW');
+    await page.waitForTimeout(1200);
+    await page.keyboard.up('KeyW');
+    const driven = await self();
+
+    expect(
+      Math.hypot((driven?.x ?? 0) - (rolling?.x ?? 0), (driven?.z ?? 0) - (rolling?.z ?? 0)),
+    ).toBeGreaterThan(4);
   });
 
   test('a grand prix renders, grids up and drives', async ({ page }) => {

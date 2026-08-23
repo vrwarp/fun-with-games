@@ -240,25 +240,37 @@ export function steerVehicle(
   const pedal = centred(clamp(input.moveZ, -1, 1));
 
   // --- Steering -------------------------------------------------------------
-  // Live regardless of the throttle: a driver steers through a corner they are
-  // braking into, and a stationary car still has to be able to point itself.
+  // The stick sets the ANGLE of the front wheels, not a rate of turn. What the
+  // car then does about it is physics:
+  //
+  //     omega = speed * tan(angle) / wheelbase
+  //
+  // This is the standard kinematic bicycle model, and using it rather than
+  // adding the stick straight onto the heading is the difference between a car
+  // and a tank. Three things stop being special cases and start being
+  // consequences:
+  //
+  //  - A stationary car does not rotate. Turning the wheel of a parked car
+  //    turns the wheels; the car needs to roll before any of that becomes a
+  //    change of direction.
+  //  - The radius of a corner is set by the lock, not by the speed. Hold an
+  //    angle and the car traces the same arc at any speed — until the tyres
+  //    run out, which is the traction limit's job below and not this one's.
+  //  - Reversing swings the nose the other way, because `forward` is signed
+  //    and so is the yaw it produces. Backing out of a barrier steers the way
+  //    it does in a car park.
   if (steer !== 0) {
-    // Authority falls away with speed. `top` rather than a constant, so a
-    // car in the tow or with DRS open is correspondingly harder to place.
-    //
-    // With a traction limit configured this is a light touch — the steering
-    // rack is not what stops a car cornering, the tyres are, and taking the
-    // authority away here would pre-empt the physics below with a fiat.
+    // A speed-sensitive rack. Full lock at racing speed asks for a radius no
+    // car could hold, so without this the top half of the control's travel
+    // would do nothing but plough and the usable part would be a sliver.
     const speedFraction = top > 0 ? Math.min(1, Math.abs(forward) / top) : 0;
-    const authority = 1 - car.steerFalloff * speedFraction;
-    let yaw = steer * car.steerRate * authority * dt;
+    const angle = steer * car.maxSteerAngle * (1 - car.steerFalloff * speedFraction);
+    let yaw = ((forward * Math.tan(angle)) / car.wheelbase) * dt;
 
     // The rack can out-ask the tyres, but a front axle that has lost grip does
     // not rotate the car — it washes out, and the car goes straight on. Cap
     // the demand at the yaw the tyres can actually hold (w = a / v), times the
-    // rope the mode is willing to give the driver. Below walking pace there is
-    // no grip to lose, so the cap lifts and a car can still be turned around
-    // on the spot.
+    // rope the mode is willing to give the driver.
     const rolling = Math.abs(forward);
     if (traction > 0 && car.frontGrip > 0 && rolling > YAW_CAP_SPEED) {
       const holdable = (traction / rolling) * car.frontGrip * dt;

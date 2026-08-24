@@ -368,16 +368,30 @@ const PRESETS: Record<GameModeId, SimConfigOverrides> = {
       // Only a little rope. A grand prix car is precise: the drama is in
       // being ON the limit, not in hanging the back out, and the bots hold
       // the road for 98% of a lap at this figure.
-      frontGrip: 1.45,
-      selfAlign: 3,
+      frontGrip: 4.6,
+      selfAlign: 3.5,
+      weightFront: 0.44,
+      weightTransfer: 0.28,
       brakeButton: 'secondary',
     },
-    collision: { enabled: true, restitution: 0.15, friction: 0.4, spin: 0.03 },
+    collision: {
+      enabled: true,
+      restitution: 0.15,
+      friction: 0.4,
+      spin: 0.03,
+      damageSeconds: 0.45,
+      damageThreshold: 9,
+      damageGrip: 0.78,
+    },
     track: {
       enabled: true,
       halfWidth: 6,
       offTrackSpeed: 0.45,
       offTrackGrip: 0.6,
+      kerbWidth: 1.1,
+      kerbGrip: 0.82,
+      kerbShake: 17,
+      barrierRunoff: 5,
       gridColumns: 2,
       gridRowSpacing: 5,
     },
@@ -475,8 +489,12 @@ const PRESETS: Record<GameModeId, SimConfigOverrides> = {
       // still keeping all four wheels on the road.
       tyreGrip: 28,
       frictionCircle: 0.6,
-      frontGrip: 1.5,
-      selfAlign: 3.4,
+      frontGrip: 5,
+      selfAlign: 4,
+      // A road car sits more evenly and rolls further onto its nose than a
+      // downforce car does, so it is both softer and more willing to rotate.
+      weightFront: 0.5,
+      weightTransfer: 0.32,
       brakeButton: 'secondary',
     },
     collision: { enabled: true, restitution: 0.2, friction: 0.45, spin: 0.04 },
@@ -485,6 +503,15 @@ const PRESETS: Record<GameModeId, SimConfigOverrides> = {
       halfWidth: 4.5,
       offTrackSpeed: 0.4,
       offTrackGrip: 0.6,
+      // A street circuit's kerbs are the real thing rather than a racetrack's
+      // sausage: narrower, and they hurt more.
+      kerbWidth: 0.8,
+      kerbGrip: 0.75,
+      kerbShake: 24,
+      // No barrier. This circuit doubles back on itself hard enough that any
+      // run-off worth the name lays a wall across the next section of road,
+      // and a barrier through the tarmac looks far worse than none.
+      barrierRunoff: 0,
       gridColumns: 2,
       gridRowSpacing: 4,
     },

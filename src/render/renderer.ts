@@ -4,7 +4,9 @@ import { ArcRotateCamera } from '@babylonjs/core/Cameras/arcRotateCamera.js';
 import { HemisphericLight } from '@babylonjs/core/Lights/hemisphericLight.js';
 import { DirectionalLight } from '@babylonjs/core/Lights/directionalLight.js';
 import { ShadowGenerator } from '@babylonjs/core/Lights/Shadows/shadowGenerator.js';
-import { Color3, Color4 } from '@babylonjs/core/Maths/math.color.js';
+import { Color3 } from '@babylonjs/core/Maths/math.color.js';
+import { SurfaceMarks } from './marks.js';
+import { isOnTrack } from '../sim/track.js';
 import { Vector3 } from '@babylonjs/core/Maths/math.vector.js';
 import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial.js';
 import { Texture } from '@babylonjs/core/Materials/Textures/texture.js';
@@ -59,6 +61,16 @@ const FOLLOW_RESPONSIVENESS = 1.6;
  * different renderer against the same `RenderState` would leave the game fully
  * playable and every simulation test passing.
  */
+/**
+ * How much wider the frustum gets at top speed, as a fraction.
+ *
+ * Small on purpose. Enough that a driver feels the difference between a
+ * hairpin and the back straight, and not so much that the car appears to
+ * shrink — past about a fifth it stops reading as speed and starts reading as
+ * a lens change.
+ */
+const FOV_SPEED_GAIN = 0.16;
+
 export class Renderer {
   readonly engine: Engine;
   readonly scene: Scene;
@@ -78,6 +90,10 @@ export class Renderer {
   #walls = new Map<WallSide, Mesh>();
   #shadows: ShadowGenerator | null = null;
   #localId: string | null = null;
+  #marks: SurfaceMarks | null = null;
+  /** Cars get a field of view that opens with speed; runners do not. */
+  #speedFov = false;
+  #baseFov = 0;
   #cameraTarget = new Vector3(0, 0, 0);
   #disposed = false;
 
@@ -111,13 +127,22 @@ export class Renderer {
     this.engine.setHardwareScalingLevel(1 / pixelRatio);
 
     this.scene = new Scene(this.engine);
-    this.scene.clearColor = new Color4(0.05, 0.06, 0.09, 1);
+    this.#createSky(options.config);
 
     this.#canvas = options.canvas;
     this.#config = options.config;
     this.#view = options.view ?? 'follow';
     this.camera = this.#createCamera(options.canvas, options.config);
     this.#shadows = this.#createLights(options.config);
+
+    // Tyre marks are a racing thing: the modes with a surface to mark and a
+    // handling model worth showing. Elsewhere the pool would sit unused.
+    const racingScene = options.config.track.enabled && options.config.trackPath.length >= 2;
+    if (racingScene) {
+      this.#marks = new SurfaceMarks(this.scene, options.config.playerRadius * 1.8);
+      this.#speedFov = options.config.vehicle.enabled;
+      this.#baseFov = this.camera.fov;
+    }
     this.#createArena(options.config, options.obstacles);
 
     this.#entities = new EntityViews(this.scene, options.config, this.#shadows, {
@@ -171,10 +196,27 @@ export class Renderer {
     this.#kit.sync(state, deltaSeconds);
     this.#sinceManualCamera += deltaSeconds;
 
+    if (this.#marks) {
+      this.#marks.update(
+        state.players.map((player) => ({
+          id: player.id,
+          x: player.x,
+          z: player.z,
+          heading: player.heading,
+          vx: player.vx,
+          vz: player.vz,
+          onTrack: isOnTrack(this.#config, player.x, player.z),
+        })),
+        deltaSeconds,
+      );
+    }
+
+    const local = state.players.find((player) => player.id === this.#localId);
+    if (this.#speedFov) this.#applySpeedFov(local, deltaSeconds);
+
     if (this.#localId) {
       const position = this.#entities.playerPosition(this.#localId);
       const spec = viewSpec(this.#view);
-      const local = state.players.find((player) => player.id === this.#localId);
 
       if (position && spec.eye && local) {
         this.#trackCockpit(local.heading, position, spec.eye);
@@ -243,6 +285,7 @@ export class Renderer {
   }
 
   dispose(): void {
+    this.#marks?.dispose();
     if (this.#disposed) return;
     this.#disposed = true;
     this.#canvas.removeEventListener('pointerdown', this.#onManualCamera);
@@ -442,14 +485,85 @@ export class Renderer {
     return this.#view;
   }
 
+  /**
+   * Sky, haze and the horizon they meet at.
+   *
+   * The scene used to end at a flat dark clear colour, which reads as a room
+   * with the lights off rather than as outdoors — and worse, gives the eye
+   * nothing to judge distance against, so a straight looked the same length at
+   * every speed.
+   *
+   * Three things fix that and none of them costs a draw call:
+   *
+   *  - **A gradient sky**, painted into the clear colour and echoed by the
+   *    ambient light's sky and ground colours, so the scene is lit by
+   *    something that agrees with what is behind it.
+   *  - **Distance fog** the same colour as that sky. Objects far away fade
+   *    into the horizon instead of hanging in a void, which is the single
+   *    strongest depth cue available for free — it is a shader term, not
+   *    geometry.
+   *  - **A warmer, lower sun**, which is what makes a surface read as lit
+   *    rather than as tinted. A light straight overhead flattens everything.
+   *
+   * Fog also earns its keep on the frame budget: the far plane can be pulled
+   * in behind it without the player seeing anything pop.
+   */
+  /**
+   * Opens the field of view as the car goes faster.
+   *
+   * The oldest trick in racing games and still the best value: nothing about
+   * the scene changes, but widening the frustum pulls the edges of the frame
+   * past the camera faster, and the whole image acquires the stretch that
+   * reads as speed. It costs one number a frame.
+   *
+   * Eased rather than set, because the FOV is the shape of the world and
+   * snapping it every time a car brushes a kerb is nauseating. The rate is
+   * deliberately slower going back down than up: getting quicker should feel
+   * like it happens TO you, and lifting off should feel like relief.
+   */
+  #applySpeedFov(local: { vx: number; vz: number } | undefined, deltaSeconds: number): void {
+    const speed = local ? Math.hypot(local.vx, local.vz) : 0;
+    const fraction = Math.min(1, speed / Math.max(1, this.#config.playerMaxSpeed));
+    const wanted = this.#baseFov * (1 + FOV_SPEED_GAIN * fraction);
+    const opening = wanted > this.camera.fov;
+    const rate = Math.min(1, deltaSeconds * (opening ? 1.6 : 3.2));
+    this.camera.fov += (wanted - this.camera.fov) * rate;
+  }
+
+  #createSky(config: SimConfig): void {
+    const racing = config.track.enabled && config.trackPath.length >= 2;
+    // A circuit gets daylight; everything else keeps the darker arena mood it
+    // was designed against, so this does not quietly restyle fifteen modes.
+    const horizon = racing ? new Color3(0.55, 0.65, 0.78) : new Color3(0.09, 0.11, 0.16);
+    this.scene.clearColor = horizon.toColor4(1);
+
+    this.scene.fogMode = Scene.FOGMODE_LINEAR;
+    this.scene.fogColor = horizon;
+    // Starts well out so nothing a driver is actually looking at is hazed, and
+    // ends past the arena so the walls dissolve into the horizon rather than
+    // stopping against it.
+    const span = Math.max(config.arenaHalfExtentX, config.arenaHalfExtentZ);
+    this.scene.fogStart = span * (racing ? 0.5 : 0.8);
+    this.scene.fogEnd = span * 2.4;
+  }
+
   #createLights(config: SimConfig): ShadowGenerator | null {
+    const racing = config.track.enabled && config.trackPath.length >= 2;
+
     const ambient = new HemisphericLight('ambient', new Vector3(0, 1, 0), this.scene);
-    ambient.intensity = 0.55;
-    ambient.groundColor = new Color3(0.12, 0.13, 0.18);
+    ambient.intensity = racing ? 0.7 : 0.55;
+    // Bounced light takes the colour of what it bounced off. Outdoors that is
+    // sky above and ground below, and saying so is most of what separates a
+    // scene that looks lit from one that looks tinted.
+    ambient.diffuse = racing ? new Color3(0.86, 0.9, 1) : new Color3(1, 1, 1);
+    ambient.groundColor = racing ? new Color3(0.22, 0.26, 0.2) : new Color3(0.12, 0.13, 0.18);
 
     const sun = new DirectionalLight('sun', new Vector3(-0.5, -1, 0.4), this.scene);
     sun.position = new Vector3(20, 40, -20);
-    sun.intensity = 1.1;
+    sun.intensity = racing ? 1.35 : 1.1;
+    // Warm, because sunlight is. A neutral key against a cool sky is what
+    // makes a scene read as fluorescent.
+    if (racing) sun.diffuse = new Color3(1, 0.96, 0.86);
 
     const span = Math.max(config.arenaHalfExtentX, config.arenaHalfExtentZ);
     sun.shadowMinZ = 1;
@@ -500,7 +614,11 @@ export class Renderer {
     ground.receiveShadows = true;
 
     const wallMaterial = new StandardMaterial('wall:mat', this.scene);
-    wallMaterial.diffuseColor = Color3.FromHexString('#39415a');
+    // The arena boundary is dark navy, which reads as a wall of night against
+    // a daylit sky — a hard black band across the horizon in the cockpit. A
+    // circuit's boundary should be something the fog can swallow, so outdoors
+    // it takes a pale concrete instead and dissolves rather than looming.
+    wallMaterial.diffuseColor = Color3.FromHexString(racing ? '#8d93a1' : '#39415a');
     wallMaterial.specularColor = new Color3(0.1, 0.1, 0.12);
 
     const wallHeight = 2.5;

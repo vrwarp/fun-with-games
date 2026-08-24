@@ -307,7 +307,7 @@ export class World {
     for (const player of players) {
       integratePlayer(player, player.input, this.config, this.obstacles, dt, this.tick, locked);
     }
-    resolvePlayerCollisions(players, this.config);
+    resolvePlayerCollisions(players, this.config, this.tick);
 
     // 4. Interactions, in fixed order.
     updateCombat(ctx); //     respawns KO'd players whose timer expired

@@ -541,6 +541,34 @@ make:
 | `frontGrip`      | How much more yaw the rack may ask for than the tyres can hold. 1 is pure understeer — the front washes out and the car goes straight on. Above 1 leaves rope to provoke a slide with. |
 | `frictionCircle` | How much braking steals from cornering. Trail braking and power oversteer both live here.                                                                                              |
 | `selfAlign`      | How fast the caster pulls a sliding car straight, in proportion to slip angle. Makes a slide catchable rather than terminal.                                                           |
+| `weightFront`    | Share of the car's weight over the front axle at rest. The static balance.                                                                                                             |
+| `weightTransfer` | How much of the weight moves between the axles at the limit. Where trail braking, power oversteer and lift-off oversteer all come from.                                                |
+
+**The car has two axles, and the weight moves between them.** Each carries a
+share of the load, makes lateral grip in proportion to that share, and spends
+some of it lengthways — braking split by load the way a brake bias does, drive
+all to the rear. The two always sum to `tyreGrip`, so the split decides balance
+rather than how much grip exists. `frontGrip` and `selfAlign` are multipliers
+on those per-axle numbers now, not the numbers themselves: the front axle caps
+how much of the rack's request the car will honour, and the rear axle is what
+the aligning moment pulls with.
+
+That one change is why the following are not written down anywhere. Taking one
+corner at one steering angle from one entry speed, on the `grandprix` preset,
+and varying only the pedal:
+
+```
+  full throttle   turned 0.292   slip -0.04   runs wide — front load 0.15
+  lift            turned 0.841   slip -0.42   rotates three times as much
+  trail brake     turned 0.842   slip -0.44   most rotation, controlled
+  full brake      turned 0.659   slip -1.11   rear unweighted, steps out
+```
+
+Because of this, **the throttle and brakes are resolved before the steering**
+inside `steerVehicle`. The pedal decides where the weight is, the weight
+decides what the front axle can do, and the front axle decides how much lock
+the car honours; reading a load the pedal had not been consulted about would
+put that chain a tick behind the driver.
 
 Whatever the tyres cannot erase survives as sideways velocity — that surplus
 **is** the drift, and it unwinds through `selfAlign`, which scales with how
@@ -598,6 +626,38 @@ half-width. `src/sim/track.ts` derives everything else from it — whether a car
 is on the tarmac, how far round the lap it is, the racing line a bot follows,
 and the starting grid. Off-track is grass, not a wall: `track.offTrackSpeed`
 and `offTrackGrip` make it slow and slippery, which is forgiving on a thumb.
+
+The renderer puts a **gantry over the start/finish line** and, where the
+circuit has room, **barriers** set back from the kerb by `track.barrierRunoff`.
+Both are scenery — nothing collides with them. The run-off is config rather
+than a renderer constant because whether a barrier fits is a property of the
+LAYOUT: a single offset ribbon round a course that doubles back crosses the
+road wherever adjacent sections are closer than twice the run-off, and a wall
+lying across the tarmac looks far worse than no wall. `street` sets 0 and goes
+without for exactly that reason.
+
+Both are one draw call each (`#wall` builds a barrier as a single ribbon, the
+way `#band` builds the road), because a barrier assembled from a box per
+segment would be a hundred draw calls to say the same thing.
+
+**Kerbs sit inside the track limits**, which is the whole point of them:
+`track.kerbWidth` is a band measured inward from the edge where you keep most
+of your grip (`kerbGrip`) but the car will not sit still (`kerbShake`). Riding
+one straightens a corner at the cost of stability, which is the trade a real
+kerb offers. The shake is a function of how far along the circuit the car IS
+rather than of the tick, so a parked car on a kerb sits still, every peer
+computes the identical kick for the identical metre, and a snapshot restore
+lands on the same number.
+
+**A shunt is remembered.** With `collision.damageSeconds` a hard enough contact
+leaves both cars with a `bent` effect that costs grip while it lasts —
+`damageThreshold` keeps racing wheel-to-wheel free, and severity is expressed
+as DURATION rather than depth, because a timed effect is the one shape of
+per-player state that is already snapshotted, transmitted and checksummed.
+Both cars, always: damage landing only on the car that was hit would make a
+lunge down the inside free for whoever lunged, which is the behaviour it
+exists to price. It wears off on purpose — one shunt on lap one should cost a
+stint, not the race.
 
 Those two are deliberately **not** set to the same severity, and the asymmetry
 is the design. `offTrackSpeed` is harsh (0.4–0.45) because losing speed costs a

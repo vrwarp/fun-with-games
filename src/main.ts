@@ -615,6 +615,11 @@ function exposeTestHandle(session: NetSession, renderer: Renderer, modeId: GameM
           z: player.z,
           y: player.y,
           heading: player.heading,
+          // Velocity, because several driving assertions are about whether the
+          // car is actually MOVING and a stopped car is indistinguishable from
+          // a broken control if you only ever look at its heading.
+          vx: player.vx,
+          vz: player.vz,
           score: player.score,
         }));
       },

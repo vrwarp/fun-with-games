@@ -167,7 +167,7 @@ describe('resolvePlayerCollisions', () => {
     const a = makePlayer({ id: 'a', x: 0 });
     const b = makePlayer({ id: 'b', x: 0.2 });
 
-    resolvePlayerCollisions([a, b], config);
+    resolvePlayerCollisions([a, b], config, 0);
 
     expect(Math.abs(b.x - a.x)).toBeGreaterThanOrEqual(config.playerRadius * 2 - 1e-6);
   });
@@ -176,7 +176,7 @@ describe('resolvePlayerCollisions', () => {
     const a = makePlayer({ id: 'a', x: 0 });
     const b = makePlayer({ id: 'b', x: 5 });
 
-    resolvePlayerCollisions([a, b], config);
+    resolvePlayerCollisions([a, b], config, 0);
 
     expect(a.x).toBe(0);
     expect(b.x).toBe(5);
@@ -186,7 +186,7 @@ describe('resolvePlayerCollisions', () => {
     const runOnce = (): [number, number] => {
       const a = makePlayer({ id: 'a', x: 0, z: 0 });
       const b = makePlayer({ id: 'b', x: 0, z: 0 });
-      resolvePlayerCollisions([a, b], config);
+      resolvePlayerCollisions([a, b], config, 0);
       return [a.x, b.x];
     };
 

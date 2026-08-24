@@ -5,6 +5,8 @@ import { HemisphericLight } from '@babylonjs/core/Lights/hemisphericLight.js';
 import { DirectionalLight } from '@babylonjs/core/Lights/directionalLight.js';
 import { ShadowGenerator } from '@babylonjs/core/Lights/Shadows/shadowGenerator.js';
 import { Color3 } from '@babylonjs/core/Maths/math.color.js';
+import { SurfaceMarks } from './marks.js';
+import { isOnTrack } from '../sim/track.js';
 import { Vector3 } from '@babylonjs/core/Maths/math.vector.js';
 import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial.js';
 import { Texture } from '@babylonjs/core/Materials/Textures/texture.js';
@@ -59,6 +61,16 @@ const FOLLOW_RESPONSIVENESS = 1.6;
  * different renderer against the same `RenderState` would leave the game fully
  * playable and every simulation test passing.
  */
+/**
+ * How much wider the frustum gets at top speed, as a fraction.
+ *
+ * Small on purpose. Enough that a driver feels the difference between a
+ * hairpin and the back straight, and not so much that the car appears to
+ * shrink — past about a fifth it stops reading as speed and starts reading as
+ * a lens change.
+ */
+const FOV_SPEED_GAIN = 0.16;
+
 export class Renderer {
   readonly engine: Engine;
   readonly scene: Scene;
@@ -78,6 +90,10 @@ export class Renderer {
   #walls = new Map<WallSide, Mesh>();
   #shadows: ShadowGenerator | null = null;
   #localId: string | null = null;
+  #marks: SurfaceMarks | null = null;
+  /** Cars get a field of view that opens with speed; runners do not. */
+  #speedFov = false;
+  #baseFov = 0;
   #cameraTarget = new Vector3(0, 0, 0);
   #disposed = false;
 
@@ -118,6 +134,15 @@ export class Renderer {
     this.#view = options.view ?? 'follow';
     this.camera = this.#createCamera(options.canvas, options.config);
     this.#shadows = this.#createLights(options.config);
+
+    // Tyre marks are a racing thing: the modes with a surface to mark and a
+    // handling model worth showing. Elsewhere the pool would sit unused.
+    const racingScene = options.config.track.enabled && options.config.trackPath.length >= 2;
+    if (racingScene) {
+      this.#marks = new SurfaceMarks(this.scene, options.config.playerRadius * 1.8);
+      this.#speedFov = options.config.vehicle.enabled;
+      this.#baseFov = this.camera.fov;
+    }
     this.#createArena(options.config, options.obstacles);
 
     this.#entities = new EntityViews(this.scene, options.config, this.#shadows, {
@@ -171,10 +196,27 @@ export class Renderer {
     this.#kit.sync(state, deltaSeconds);
     this.#sinceManualCamera += deltaSeconds;
 
+    if (this.#marks) {
+      this.#marks.update(
+        state.players.map((player) => ({
+          id: player.id,
+          x: player.x,
+          z: player.z,
+          heading: player.heading,
+          vx: player.vx,
+          vz: player.vz,
+          onTrack: isOnTrack(this.#config, player.x, player.z),
+        })),
+        deltaSeconds,
+      );
+    }
+
+    const local = state.players.find((player) => player.id === this.#localId);
+    if (this.#speedFov) this.#applySpeedFov(local, deltaSeconds);
+
     if (this.#localId) {
       const position = this.#entities.playerPosition(this.#localId);
       const spec = viewSpec(this.#view);
-      const local = state.players.find((player) => player.id === this.#localId);
 
       if (position && spec.eye && local) {
         this.#trackCockpit(local.heading, position, spec.eye);
@@ -243,6 +285,7 @@ export class Renderer {
   }
 
   dispose(): void {
+    this.#marks?.dispose();
     if (this.#disposed) return;
     this.#disposed = true;
     this.#canvas.removeEventListener('pointerdown', this.#onManualCamera);
@@ -465,6 +508,28 @@ export class Renderer {
    * Fog also earns its keep on the frame budget: the far plane can be pulled
    * in behind it without the player seeing anything pop.
    */
+  /**
+   * Opens the field of view as the car goes faster.
+   *
+   * The oldest trick in racing games and still the best value: nothing about
+   * the scene changes, but widening the frustum pulls the edges of the frame
+   * past the camera faster, and the whole image acquires the stretch that
+   * reads as speed. It costs one number a frame.
+   *
+   * Eased rather than set, because the FOV is the shape of the world and
+   * snapping it every time a car brushes a kerb is nauseating. The rate is
+   * deliberately slower going back down than up: getting quicker should feel
+   * like it happens TO you, and lifting off should feel like relief.
+   */
+  #applySpeedFov(local: { vx: number; vz: number } | undefined, deltaSeconds: number): void {
+    const speed = local ? Math.hypot(local.vx, local.vz) : 0;
+    const fraction = Math.min(1, speed / Math.max(1, this.#config.playerMaxSpeed));
+    const wanted = this.#baseFov * (1 + FOV_SPEED_GAIN * fraction);
+    const opening = wanted > this.camera.fov;
+    const rate = Math.min(1, deltaSeconds * (opening ? 1.6 : 3.2));
+    this.camera.fov += (wanted - this.camera.fov) * rate;
+  }
+
   #createSky(config: SimConfig): void {
     const racing = config.track.enabled && config.trackPath.length >= 2;
     // A circuit gets daylight; everything else keeps the darker arena mood it

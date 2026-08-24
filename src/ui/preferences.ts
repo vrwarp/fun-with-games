@@ -16,6 +16,7 @@ export interface Preferences {
   readonly view?: ModeView;
   readonly sprites?: boolean;
   readonly muted?: boolean;
+  readonly haptics?: boolean;
 }
 
 const STORAGE_KEY = 'fwg:preferences';
@@ -46,6 +47,7 @@ export function readPreferences(): Preferences {
       ...(view !== undefined ? { view } : {}),
       ...(typeof record['sprites'] === 'boolean' ? { sprites: record['sprites'] } : {}),
       ...(typeof record['muted'] === 'boolean' ? { muted: record['muted'] } : {}),
+      ...(typeof record['haptics'] === 'boolean' ? { haptics: record['haptics'] } : {}),
     };
   } catch {
     return {};

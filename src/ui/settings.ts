@@ -4,6 +4,7 @@ export interface SettingsValues {
   view: ModeView;
   sprites: boolean;
   muted: boolean;
+  haptics: boolean;
 }
 
 export interface SettingsOptions {
@@ -16,6 +17,14 @@ export interface SettingsOptions {
   readonly defaultView: ModeView;
   /** Called with the complete set whenever any one of them changes. */
   readonly onChange: (values: SettingsValues) => void;
+  /**
+   * Whether this device can vibrate at all.
+   *
+   * Absent on desktop and on iOS Safari, and a toggle for something that
+   * cannot happen is worse than no toggle: a player flips it, feels nothing,
+   * and concludes the feature is broken. Left out entirely instead.
+   */
+  readonly hasHaptics?: boolean;
   /** Host-only bot controls. Omit both to leave the section out. */
   readonly onAddBot?: () => void;
   readonly onRemoveBot?: () => void;
@@ -140,6 +149,18 @@ export class Settings {
         this.#toggle('settings-sound', !this.#values.muted, (on) => this.#emit({ muted: !on })),
       ),
     );
+
+    if (options.hasHaptics) {
+      body.append(
+        this.#row(
+          'Vibration',
+          'Feel the throttle and the brake through the pedals.',
+          this.#toggle('settings-haptics', this.#values.haptics, (haptics) =>
+            this.#emit({ haptics }),
+          ),
+        ),
+      );
+    }
 
     const bots = this.#buildBots(options);
     if (bots) body.append(bots);

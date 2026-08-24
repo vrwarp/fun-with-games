@@ -307,8 +307,17 @@ export function steerVehicle(
   }
 
   // --- Throttle and brakes --------------------------------------------------
+  // How hard the brake is being asked for, not merely whether. The bound
+  // button is a full press — a key has no travel to read — while a pulled-back
+  // axis carries how far the pedal actually went.
+  //
+  // This is what makes trail braking a technique rather than a word in a
+  // comment: `longitudinalLoad` below feeds the friction circle, so easing off
+  // the brake hands the front tyres back the grip it was spending and the car
+  // turns in. With a binary brake the circle only ever had two states.
   const brakeHeld = (input.buttons & buttonBit(car.brakeButton)) !== 0;
-  const braking = brakeHeld || pedal < 0;
+  const brakePressure = brakeHeld ? 1 : Math.max(0, -pedal);
+  const braking = brakePressure > 0;
   const throttle = braking ? 0 : pedal;
 
   // How hard the tyres are working lengthways this tick. The friction circle
@@ -336,13 +345,15 @@ export function steerVehicle(
 
   if (braking) {
     if (forward > 0) {
-      longitudinalLoad = car.brakeDecel;
-      forward = Math.max(0, forward - car.brakeDecel * dt);
+      longitudinalLoad = car.brakeDecel * brakePressure;
+      forward = Math.max(0, forward - longitudinalLoad * dt);
     } else {
-      // Stopped and still asking to go backwards: reverse out, gently.
-      const reverseTop = top * car.reverseFraction;
-      longitudinalLoad = car.engineAccel * 0.6;
-      forward = Math.max(-reverseTop, forward - car.engineAccel * 0.6 * dt);
+      // Stopped and still asking to go backwards: reverse out, gently. Scaled
+      // the same way, so easing the pedal backs out at walking pace and
+      // burying it is the quickest way off a barrier.
+      const reverseTop = top * car.reverseFraction * brakePressure;
+      longitudinalLoad = car.engineAccel * 0.6 * brakePressure;
+      forward = Math.max(-reverseTop, forward - longitudinalLoad * dt);
     }
   } else if (throttle > 0) {
     const target = top * throttle;

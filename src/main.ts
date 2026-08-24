@@ -16,6 +16,7 @@ import { IDLE_INTENT, KeyboardInput, mergeIntents } from './render/input.js';
 import { TouchInput } from './render/touch.js';
 import { TouchButtons } from './render/buttons.js';
 import { TouchDriving } from './render/driving.js';
+import { DriveHaptics } from './render/haptics.js';
 import { GameAudio } from './render/audio.js';
 import { keepScreenAwake, tapFeedback } from './render/device.js';
 import { loadManifest, loadModel } from './render/assets.js';
@@ -52,6 +53,24 @@ interface LaunchOptions {
   view: ViewMode | undefined;
   sprites: boolean | undefined;
   muted: boolean;
+  /** Whether the pedals drive the phone's motor. Never in the URL — see above. */
+  haptics: boolean;
+}
+
+/**
+ * The two pedals, recovered from a keyboard's single signed axis.
+ *
+ * A key has no travel, so this is the binary case: fully on or fully off.
+ * Worth doing anyway rather than skipping haptics for keyboard players — a
+ * phone with a Bluetooth keyboard is still a phone in somebody's hand.
+ */
+function keyboardPedals(moveZ: number): { throttle: number; brake: number } {
+  return moveZ < 0 ? { throttle: 0, brake: -moveZ } : { throttle: moveZ, brake: 0 };
+}
+
+/** True when the device has asked for less movement than the default. */
+function prefersReducedMotion(): boolean {
+  return globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true;
 }
 
 void bootstrap();
@@ -78,6 +97,14 @@ async function bootstrap(): Promise<void> {
   const sprites = spritesParam === null ? stored.sprites : spritesParam === '1';
   const muteParam = params.get('mute');
   const muted = muteParam === null ? (stored.muted ?? false) : muteParam === '1';
+  // Deliberately not a URL parameter. A link describes the game someone was
+  // invited to; whether their phone buzzes in their hand is nobody else's
+  // business, so this is stored-or-default and lives only in Settings.
+  //
+  // The default defers to the device. Somebody who has asked their phone for
+  // less motion has not asked for a motor running in their palm, and a game
+  // that ignores that on first launch has already got it wrong once.
+  const haptics = stored.haptics ?? !prefersReducedMotion();
 
   // `?autojoin=1` skips the lobby. Used by the e2e tests, and handy when you
   // want a shareable link that drops straight into a room.
@@ -90,6 +117,7 @@ async function bootstrap(): Promise<void> {
       transportKind,
       botCount,
       muted,
+      haptics,
       view,
       sprites,
     });
@@ -109,6 +137,7 @@ async function bootstrap(): Promise<void> {
     view: view ?? choice.view,
     sprites,
     muted,
+    haptics,
   });
 }
 
@@ -236,21 +265,30 @@ async function launch(app: HTMLElement, options: LaunchOptions): Promise<void> {
   utility.className = 'hud-utility';
   app.append(utility);
 
+  // Only a car has pedals to feel, so this is null in every other mode — and
+  // null on a device with no motor, which is desktop and every iPhone.
+  const haptics = config.vehicle.enabled ? new DriveHaptics() : null;
+  haptics?.setEnabled(options.haptics);
+
   const settings = new Settings(utility, {
     defaultView: mode.view ?? 'follow',
     initial: {
       view: resolvedView,
       sprites: options.sprites ?? mode.sprites ?? false,
       muted: options.muted,
+      haptics: options.haptics,
     },
+    ...(haptics?.supported ? { hasHaptics: true } : {}),
     onChange: (values) => {
       renderer?.setView(values.view);
       renderer?.setSprites(values.sprites);
       audio.setMuted(values.muted);
+      haptics?.setEnabled(values.haptics);
       hud.setCanOrbit(viewSpec(values.view).manualControl);
       writePreferences(values);
       // Keep the address bar describing what is actually on screen, so that
-      // "Copy link" and a refresh both stay honest.
+      // "Copy link" and a refresh both stay honest. Vibration is left out on
+      // purpose: it is about this hand, not about this match.
       syncUrl({ ...options, view: values.view, sprites: values.sprites, muted: values.muted });
     },
     onAddBot: () => void session.addBot(),
@@ -340,6 +378,17 @@ async function launch(app: HTMLElement, options: LaunchOptions): Promise<void> {
     const stick = driving?.read() ?? touch?.read(intentYaw) ?? IDLE_INTENT;
     const intent = mergeIntents(stick, buttons.read(), input.read(intentYaw));
     session.setIntent(intent.moveX, intent.moveZ, intent.sprint, intent.buttons);
+
+    // Driven from the pedals rather than from the car, and deliberately so.
+    // What a driver feels through a pedal is their own foot: it answers the
+    // instant they press, at the weight they pressed, whether or not the car
+    // has got going yet. Reading it off the car's acceleration instead would
+    // arrive late, say nothing at all while a wheel-spinning start went
+    // nowhere, and buzz through a shunt the player never asked for.
+    if (haptics) {
+      const pedals = driving?.pedals ?? keyboardPedals(intent.moveZ);
+      haptics.update(pedals.throttle, pedals.brake, now);
+    }
     session.update(now);
 
     const state = session.sample(now);
@@ -401,6 +450,9 @@ async function launch(app: HTMLElement, options: LaunchOptions): Promise<void> {
     window.removeEventListener('resize', onResize);
     window.removeEventListener('orientationchange', onOrientationChange);
     releaseWakeLock();
+    haptics?.stop();
+    window.removeEventListener('blur', silenceHaptics);
+    document.removeEventListener('visibilitychange', silenceHaptics);
     input.detach();
     touch?.dispose();
     driving?.dispose();
@@ -414,6 +466,13 @@ async function launch(app: HTMLElement, options: LaunchOptions): Promise<void> {
     renderer.dispose();
     void session.dispose();
   };
+  // A vibration is queued on the DEVICE, not on the page, so one issued a
+  // frame before the tab went away keeps running in a pocket after the render
+  // loop has stopped asking for it.
+  const silenceHaptics = (): void => haptics?.stop();
+  window.addEventListener('blur', silenceHaptics);
+  document.addEventListener('visibilitychange', silenceHaptics);
+
   window.addEventListener('pagehide', teardown, { once: true });
 
   exposeTestHandle(session, renderer, options.modeId);

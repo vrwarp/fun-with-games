@@ -41,7 +41,7 @@ describe('contact without momentum exchange', () => {
 
   it('pushes overlapping bodies apart', () => {
     const players = pair({}, {});
-    resolvePlayerCollisions(players, config);
+    resolvePlayerCollisions(players, config, 0);
     const gap = players[1].x - players[0].x;
     expect(gap).toBeCloseTo(2, 6);
   });
@@ -50,7 +50,7 @@ describe('contact without momentum exchange', () => {
     // The historical contract, and the one every footrace mode still relies
     // on: you cannot shove a rival in `tag`.
     const players = pair({ vx: 8 }, { vx: 0 });
-    resolvePlayerCollisions(players, config);
+    resolvePlayerCollisions(players, config, 0);
     expect(players[0].vx).toBe(8);
     expect(players[1].vx).toBe(0);
   });
@@ -67,7 +67,7 @@ describe('contact with momentum exchange', () => {
     const players = pair({ vx: 10 }, { vx: 0 });
     const before = momentum(players);
 
-    resolvePlayerCollisions(players, config);
+    resolvePlayerCollisions(players, config, 0);
 
     expect(players[0].vx).toBeCloseTo(5, 6);
     expect(players[1].vx).toBeCloseTo(5, 6);
@@ -81,7 +81,7 @@ describe('contact with momentum exchange', () => {
     const players = pair({ vx: 10 }, { vx: 0 });
     const before = momentum(players);
 
-    resolvePlayerCollisions(players, springy);
+    resolvePlayerCollisions(players, springy, 0);
 
     // Perfectly elastic, equal masses: the velocities swap outright.
     expect(players[0].vx).toBeCloseTo(0, 6);
@@ -93,14 +93,14 @@ describe('contact with momentum exchange', () => {
     // Overlapping but flying apart: an impulse here would suck them back
     // together and the pair would buzz instead of parting.
     const players = pair({ vx: -4 }, { vx: 4 });
-    resolvePlayerCollisions(players, config);
+    resolvePlayerCollisions(players, config, 0);
     expect(players[0].vx).toBe(-4);
     expect(players[1].vx).toBe(4);
   });
 
   it('does not touch bodies that are not overlapping at all', () => {
     const players = pair({ x: -50, vx: 10 }, { x: 50 });
-    resolvePlayerCollisions(players, config);
+    resolvePlayerCollisions(players, config, 0);
     expect(players[0].vx).toBe(10);
     expect(players[1].vx).toBe(0);
   });
@@ -116,7 +116,7 @@ describe('side-by-side contact', () => {
     // along +z, and they are touching across the x axis. The normal carries no
     // closing speed at all, so without friction this contact would be free.
     const players = pair({ vz: 20 }, { vz: 10 });
-    resolvePlayerCollisions(players, config);
+    resolvePlayerCollisions(players, config, 0);
 
     expect(players[0].vz).toBeLessThan(20);
     expect(players[1].vz).toBeGreaterThan(10);
@@ -128,7 +128,7 @@ describe('side-by-side contact', () => {
       collision: { enabled: true, restitution: 0, friction: 0, spin: 0 },
     });
     const players = pair({ vz: 20 }, { vz: 10 });
-    resolvePlayerCollisions(players, slippery);
+    resolvePlayerCollisions(players, slippery, 0);
 
     expect(players[0].vz).toBe(20);
     expect(players[1].vz).toBe(10);
@@ -142,7 +142,7 @@ describe('side-by-side contact', () => {
       collision: { enabled: true, restitution: 0, friction: 1, spin: 0.05 },
     });
     const players = pair({ vz: 20, heading: 0 }, { vz: 10, heading: 0 });
-    resolvePlayerCollisions(players, spinning);
+    resolvePlayerCollisions(players, spinning, 0);
 
     expect(players[0].heading).not.toBe(0);
     expect(Math.sign(players[0].heading)).toBe(-Math.sign(players[1].heading));
@@ -155,7 +155,7 @@ describe('side-by-side contact', () => {
       collision: { enabled: true, restitution: 0, friction: 1, spin: 0.05 },
     });
     const players = pair({ vx: 10, heading: 0 }, { vx: 0, heading: 0 });
-    resolvePlayerCollisions(players, spinning);
+    resolvePlayerCollisions(players, spinning, 0);
 
     expect(players[0].heading).toBeCloseTo(0, 10);
     expect(players[1].heading).toBeCloseTo(0, 10);
@@ -179,8 +179,8 @@ describe('determinism', () => {
 
     const first = build();
     const second = build();
-    resolvePlayerCollisions(first, config);
-    resolvePlayerCollisions(second, config);
+    resolvePlayerCollisions(first, config, 0);
+    resolvePlayerCollisions(second, config, 0);
 
     expect(second.map((p) => [p.x, p.z, p.vx, p.vz, p.heading])).toEqual(
       first.map((p) => [p.x, p.z, p.vx, p.vz, p.heading]),

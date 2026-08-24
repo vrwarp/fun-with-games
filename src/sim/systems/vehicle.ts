@@ -1,7 +1,7 @@
 import { clamp, distanceSq2 } from '../../shared/math.js';
 import type { SimConfig } from '../config.js';
 import { centred } from '../controls.js';
-import { isOnTrack } from '../track.js';
+import { hasTrack, isOnTrack, sampleTrack } from '../track.js';
 import { BUTTON_PRIMARY, BUTTON_SECONDARY, type PlayerInput, type PlayerState } from '../types.js';
 import { effectRemaining, hasEffect, isImmobilized } from './effects.js';
 
@@ -74,6 +74,14 @@ const SELF_ALIGN_FULL_SPEED = 12;
 const MAX_TRANSFER = 0.35;
 /** Load floor per axle. A weightless axle has no grip, and no car has one. */
 const MIN_AXLE_LOAD = 0.15;
+/**
+ * Ribs per world unit along a kerb.
+ *
+ * Chosen so a car at racing speed crosses several a second — fast enough to
+ * read as a rumble rather than as a series of separate shoves, and slow enough
+ * that the 30Hz tick samples it without aliasing into a slow wobble.
+ */
+const KERB_RIB_FREQUENCY = 1.7;
 
 /** Bit for a configured button name; 0 when the action is unbound. */
 function buttonBit(name: 'primary' | 'secondary' | 'none'): number {
@@ -155,9 +163,34 @@ export function gripFraction(
   tick: number,
   onTrack = true,
 ): number {
-  const surface = onTrack ? 1 : config.track.offTrackGrip;
+  let surface = onTrack ? 1 : config.track.offTrackGrip;
+  // A kerb is not the grass. It sits INSIDE the track limits, so a car on one
+  // is still racing — it simply has less to race with, and is being shaken
+  // while it does. Applied on top of the on-track case rather than as a third
+  // branch, because a car half on the kerb and half on the grass has both
+  // problems at once and should be told so.
+  if (onTrack && onKerb(config, player.x, player.z)) surface *= config.track.kerbGrip;
+  // Damage rides the same multiplier as everything else, for the reason on
+  // this function: a bent car is a car with less grip, and if that arrived
+  // anywhere but here it would fight the terms that do come through.
+  if (hasEffect(player, 'bent', tick)) surface *= config.collision.damageGrip;
+
   const life = tyreLife(player, config, tick);
   return surface * (config.race.tyreWornGrip + (1 - config.race.tyreWornGrip) * life);
+}
+
+/**
+ * True when this position is on the rumble strip inside the track edge.
+ *
+ * A band of `kerbWidth` measured inward from the boundary, so widening the
+ * road moves the kerb with it rather than leaving it stranded mid-track.
+ */
+export function onKerb(config: SimConfig, x: number, z: number): boolean {
+  const kerb = config.track.kerbWidth;
+  if (kerb <= 0 || !hasTrack(config)) return false;
+  const edge = config.track.halfWidth;
+  const across = Math.abs(sampleTrack(config.trackPath, x, z).lateral);
+  return across > edge - kerb && across <= edge;
 }
 
 /**
@@ -575,6 +608,24 @@ export function steerVehicle(
     // No traction limit configured: the original proportional scrub, which
     // washes wide under load but can never actually let go.
     lateral *= Math.max(0, 1 - car.grip * grip * dt);
+  }
+
+  // --- Kerbs ------------------------------------------------------------------
+  // A rumble strip rumbles. The grip penalty above is only half of what a kerb
+  // does to a car; the other half is that it will not sit still on one, which
+  // is why riding a kerb is a decision rather than free extra road.
+  //
+  // The shake is a function of WHERE THE CAR IS, not of a clock: the ribs are
+  // nailed to the track, so the car crosses them at a rate set by how fast it
+  // is going and every peer computes the identical kick for the identical
+  // metre. Driving it from the tick number instead would shake a parked car,
+  // and driving it from the RNG would put a desync in the shared stream.
+  if (config.track.kerbShake > 0 && onTrack && onKerb(config, player.x, player.z)) {
+    const along = sampleTrack(config.trackPath, player.x, player.z).progress;
+    // Scaled by speed as well: a kerb crossed at walking pace is a bump, and
+    // the same kerb at racing speed is what puts a car in the barrier.
+    const bite = Math.min(1, Math.abs(forward) / Math.max(1, top));
+    lateral += Math.sin(along * KERB_RIB_FREQUENCY) * config.track.kerbShake * bite * dt;
   }
 
   // --- The speed limit applies to the car, not to its nose --------------------

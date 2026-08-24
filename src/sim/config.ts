@@ -383,6 +383,25 @@ export interface TrackConfig {
    * punishing and this only makes the car feel loose while it happens.
    */
   readonly offTrackGrip: number;
+  /**
+   * Width of the kerb band inside the track edge, in world units. 0 for none.
+   *
+   * The strip of rumble a driver is allowed to use and expected to respect. It
+   * is not off-track — you keep most of your grip — but the car is unsettled
+   * while you are on it, so riding a kerb straightens a corner at the cost of
+   * stability, which is the trade a real kerb offers.
+   */
+  readonly kerbWidth: number;
+  /** Grip multiplier while a wheel is on the kerb. Milder than the grass. */
+  readonly kerbGrip: number;
+  /**
+   * How hard a kerb shakes the car, in world units/second² of lateral kick.
+   *
+   * Derived from how far along the circuit the car IS rather than from a clock
+   * or the RNG, so every peer computes the same shake for the same metre of
+   * kerb and a snapshot restore lands on the identical number.
+   */
+  readonly kerbShake: number;
   /** Cars per row on the starting grid. 2 is the Formula-style staggered grid. */
   readonly gridColumns: number;
   /** Spacing between grid rows, in world units. */
@@ -487,6 +506,24 @@ export interface CollisionConfig {
    * This is what makes a late lunge down the inside dangerous for both cars.
    */
   readonly spin: number;
+  /**
+   * Seconds of impaired handling per unit of closing speed in a shunt.
+   *
+   * A hit that only exchanges momentum is a hit with no memory: cars bounce
+   * apart and race on as if nothing happened, so a lunge down the inside costs
+   * nothing to get wrong. This gives contact a consequence that outlives it.
+   *
+   * Carried as a timed effect rather than as a new field, and that is a design
+   * decision rather than bookkeeping: damage that wears off means one shunt on
+   * lap one costs a driver a stint rather than the race, which is the right
+   * call for a six-lap sprint on a phone. Severity is expressed as DURATION —
+   * a heavier hit is impaired for longer.
+   */
+  readonly damageSeconds: number;
+  /** Closing speed a shunt must exceed to do any damage at all. */
+  readonly damageThreshold: number;
+  /** Grip multiplier while a car is carrying damage. */
+  readonly damageGrip: number;
 }
 
 export interface SimConfig {
@@ -591,6 +628,9 @@ export const DEFAULT_SIM_CONFIG: SimConfig = {
   },
   collision: {
     enabled: false,
+    damageSeconds: 0,
+    damageThreshold: 8,
+    damageGrip: 0.75,
     restitution: 0.2,
     friction: 0.35,
     spin: 0.02,
@@ -600,6 +640,9 @@ export const DEFAULT_SIM_CONFIG: SimConfig = {
     halfWidth: 6,
     offTrackSpeed: 0.45,
     offTrackGrip: 0.6,
+    kerbWidth: 0,
+    kerbGrip: 0.85,
+    kerbShake: 0,
     gridColumns: 2,
     gridRowSpacing: 5,
   },

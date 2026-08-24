@@ -215,7 +215,7 @@ describe('players on different floors', () => {
     const lower = makePlayer({ id: 'a', x: 0, z: 0, y: 0 });
     const upper = makePlayer({ id: 'b', x: 0, z: 0, y: 6 });
 
-    resolvePlayerCollisions([lower, upper], cfg);
+    resolvePlayerCollisions([lower, upper], cfg, 0);
 
     expect(lower.x).toBe(0);
     expect(upper.x).toBe(0);
@@ -226,7 +226,7 @@ describe('players on different floors', () => {
     const a = makePlayer({ id: 'a', x: 0, z: 0, y: 4 });
     const b = makePlayer({ id: 'b', x: 0.2, z: 0, y: 4 });
 
-    resolvePlayerCollisions([a, b], cfg);
+    resolvePlayerCollisions([a, b], cfg, 0);
 
     expect(Math.abs(b.x - a.x)).toBeGreaterThanOrEqual(cfg.playerRadius * 2 - 1e-6);
   });

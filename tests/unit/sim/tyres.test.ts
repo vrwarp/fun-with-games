@@ -5,10 +5,11 @@ import {
   type SimConfig,
   type SimConfigOverrides,
 } from '@/sim/config.js';
-import { integratePlayer } from '@/sim/systems/movement.js';
+import { integratePlayer, resolvePlayerCollisions } from '@/sim/systems/movement.js';
 import { modeConfig } from '@/sim/presets.js';
 import { isOnTrack, trackPoseAt } from '@/sim/track.js';
-import { slipAngle, vehicleTraction } from '@/sim/systems/vehicle.js';
+import { onKerb, slipAngle, vehicleGrip, vehicleTraction } from '@/sim/systems/vehicle.js';
+import { hasEffect } from '@/sim/systems/effects.js';
 import { World } from '@/sim/world.js';
 import type { PlayerState } from '@/sim/types.js';
 import { makeInput, makePlayer } from '../../helpers/factories.js';
@@ -530,5 +531,165 @@ describe('the grass is slow, not broken', () => {
     expect(isOnTrack(config, road.x, road.z)).toBe(true);
     expect(isOnTrack(config, grass.x, grass.z)).toBe(false);
     expect(speedOf(grass)).toBeLessThan(speedOf(road) * 0.5);
+  });
+});
+
+describe('kerbs are a decision, not free road', () => {
+  const STRAIGHT = [
+    { x: 0, z: -300 },
+    { x: 0, z: 300 },
+  ];
+
+  function kerbConfig(overrides: SimConfigOverrides = {}) {
+    const { track, ...rest } = overrides;
+    return gripConfig({
+      trackPath: STRAIGHT,
+      vehicle: { selfAlign: 3, frontGrip: 4, steerFalloff: 0.3 },
+      ...rest,
+      track: {
+        enabled: true,
+        halfWidth: 5,
+        kerbWidth: 1.2,
+        kerbGrip: 0.8,
+        kerbShake: 26,
+        offTrackSpeed: 0.45,
+        offTrackGrip: 0.6,
+        ...track,
+      },
+    });
+  }
+
+  it('sits inside the track limits, not outside them', () => {
+    // The whole point: a kerb is road you are allowed to use. If it read as
+    // off-track it would just be grass with a different name.
+    const config = kerbConfig();
+    // Middle of the road, on the kerb, and past the edge.
+    expect(onKerb(config, 0, 0)).toBe(false);
+    expect(isOnTrack(config, 0, 0)).toBe(true);
+
+    expect(onKerb(config, 4.5, 0)).toBe(true);
+    expect(isOnTrack(config, 4.5, 0)).toBe(true);
+
+    expect(onKerb(config, 7, 0)).toBe(false);
+    expect(isOnTrack(config, 7, 0)).toBe(false);
+  });
+
+  it('costs less grip than the grass and more than the road', () => {
+    const config = kerbConfig();
+    const road = vehicleGrip(makePlayer({ x: 0, z: 0 }), config, 0, true);
+    const kerb = vehicleGrip(makePlayer({ x: 4.5, z: 0 }), config, 0, true);
+    const grass = vehicleGrip(makePlayer({ x: 7, z: 0 }), config, 0, false);
+
+    expect(kerb).toBeLessThan(road);
+    expect(kerb).toBeGreaterThan(grass);
+  });
+
+  it('shakes the car, and only while it is on the kerb', () => {
+    // A rumble strip rumbles. Without this the kerb is only a grip penalty,
+    // which is a thing a driver would simply never notice they were on.
+    const config = kerbConfig();
+    const straight = makeInput({ moveZ: 1 });
+
+    const wander = (x: number): number => {
+      const car = makePlayer({ x, z: -100, heading: 0 });
+      let worst = 0;
+      const dt = tickDeltaSeconds(config);
+      for (let i = 0; i < 60; i++) {
+        integratePlayer(car, straight, config, [], dt, i, false);
+        worst = Math.max(worst, Math.abs(lateralOf(car)));
+      }
+      return worst;
+    };
+
+    expect(wander(4.5)).toBeGreaterThan(0.2);
+    expect(wander(0)).toBeLessThan(0.01);
+  });
+
+  it('shakes by position rather than by the clock', () => {
+    // Determinism, and the reason the kick is a function of distance along the
+    // circuit. Driven from the tick number it would shake a PARKED car, which
+    // is both wrong and a desync waiting for a peer to restore a snapshot at a
+    // different tick.
+    const config = kerbConfig();
+    const parked = makePlayer({ x: 4.5, z: 0, heading: 0 });
+    const dt = tickDeltaSeconds(config);
+    for (let i = 0; i < 90; i++) integratePlayer(parked, makeInput({}), config, [], dt, i, false);
+
+    expect(speedOf(parked)).toBeLessThan(0.05);
+  });
+});
+
+describe('a shunt is remembered', () => {
+  function contactConfig(damageSeconds: number) {
+    return gripConfig({
+      collision: {
+        enabled: true,
+        restitution: 0.15,
+        friction: 0.4,
+        spin: 0.03,
+        damageSeconds,
+        damageThreshold: 9,
+        damageGrip: 0.7,
+      },
+    });
+  }
+
+  /**
+   * Runs two cars into each other head-on at `closing` speed apiece.
+   *
+   * The offset has to put them genuinely OVERLAPPING — inside
+   * `playerRadius * 2` of each other — or `resolvePlayerCollisions` skips the
+   * pair entirely and every assertion here passes by never happening. It is
+   * asserted below rather than left to the arithmetic.
+   */
+  function shunt(config: Config, closing: number, tick = 100): PlayerState[] {
+    const gap = config.playerRadius * 0.6;
+    const a = makePlayer({ x: -gap, z: 0, heading: 0, vx: closing, vz: 0 });
+    const b = makePlayer({ x: gap, z: 0, heading: 0, vx: -closing, vz: 0 });
+    Object.assign(b, { id: 'b-second' });
+    // They must actually be touching, or none of this tests anything.
+    expect(Math.abs(b.x - a.x)).toBeLessThan(config.playerRadius * 2);
+    resolvePlayerCollisions([a, b], config, tick);
+    return [a, b];
+  }
+
+  it('bends both cars, not only the one that was hit', () => {
+    // Otherwise a lunge down the inside is free for whoever lunged, which is
+    // the exact behaviour damage exists to price.
+    const config = contactConfig(0.5);
+    const [a, b] = shunt(config, 12);
+
+    expect(hasEffect(a!, 'bent', 100)).toBe(true);
+    expect(hasEffect(b!, 'bent', 100)).toBe(true);
+  });
+
+  it('bends harder hits for longer', () => {
+    // Severity is expressed as duration, because a timed effect is the one
+    // shape of per-player state that is already snapshotted and checksummed.
+    const config = contactConfig(0.5);
+    const light = shunt(config, 10)[0]!;
+    const heavy = shunt(config, 20)[0]!;
+
+    expect(heavy.effects['bent']!).toBeGreaterThan(light.effects['bent']!);
+  });
+
+  it('lets a gentle touch go', () => {
+    // Racing wheel to wheel has to stay possible. Only a real hit counts.
+    const config = contactConfig(0.5);
+    const [a] = shunt(config, 2);
+    expect(hasEffect(a!, 'bent', 100)).toBe(false);
+  });
+
+  it('costs grip while it lasts, and gives it back after', () => {
+    const config = contactConfig(0.5);
+    const [a] = shunt(config, 16);
+    const until = a!.effects['bent']!;
+
+    expect(vehicleGrip(a!, config, 100)).toBeLessThan(vehicleGrip(a!, config, until + 1));
+  });
+
+  it('does nothing at all when the mode has not asked for it', () => {
+    const [a] = shunt(contactConfig(0), 25);
+    expect(a!.effects['bent']).toBeUndefined();
   });
 });

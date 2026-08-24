@@ -8,7 +8,7 @@ import {
   type PlayerState,
 } from '../types.js';
 import { ceilingAbove, supportHeight } from './arena.js';
-import { isImmobilized, movementScale } from './effects.js';
+import { addEffect, isImmobilized, movementScale } from './effects.js';
 import { steerVehicle } from './vehicle.js';
 
 /** Below this speed a player is treated as stationary and stops turning. */
@@ -355,7 +355,11 @@ export function applyImpulse(player: PlayerState, ix: number, iz: number, iy = 0
  * exactly the moment a player expects to be shoved around by the world, and
  * predicting it against a stale rival position would invent phantom contacts.
  */
-export function resolvePlayerCollisions(players: PlayerState[], config: SimConfig): void {
+export function resolvePlayerCollisions(
+  players: PlayerState[],
+  config: SimConfig,
+  tick: number,
+): void {
   const minDistance = config.playerRadius * 2;
   const minDistanceSq = minDistance * minDistance;
   const verticalReach = config.playerHeight;
@@ -394,7 +398,7 @@ export function resolvePlayerCollisions(players: PlayerState[], config: SimConfi
       b.x += nx * overlap;
       b.z += nz * overlap;
 
-      if (impact.enabled) exchangeMomentum(a, b, nx, nz, impact);
+      if (impact.enabled) exchangeMomentum(a, b, nx, nz, impact, config.tickRate, tick);
     }
   }
 }
@@ -413,6 +417,8 @@ function exchangeMomentum(
   nx: number,
   nz: number,
   impact: CollisionConfig,
+  tickRate: number,
+  tick: number,
 ): void {
   // Closing speed along the contact normal. Positive means they are already
   // moving apart — separation has done its job and an impulse now would suck
@@ -421,6 +427,25 @@ function exchangeMomentum(
   const rvz = b.vz - a.vz;
   const normalSpeed = rvx * nx + rvz * nz;
   if (normalSpeed > 0) return;
+
+  // Both cars carry the shunt away with them. `normalSpeed` is how hard they
+  // met — the one number a contact already knows and the only honest measure
+  // of severity — so it decides how long the damage lasts rather than how
+  // deep it goes. See `damageSeconds`: a hit you drive away from is the point.
+  //
+  // Both sides, always. Damage that only landed on the car that was hit would
+  // make a lunge down the inside free for whoever lunged, which is the exact
+  // behaviour this exists to price.
+  if (impact.damageSeconds > 0) {
+    const severity = -normalSpeed - impact.damageThreshold;
+    if (severity > 0) {
+      // `addEffect` never shortens an effect, so a light tap while already
+      // bent cannot cut a heavy shunt's sentence short.
+      const until = tick + Math.round(severity * impact.damageSeconds * tickRate);
+      addEffect(a, 'bent', until);
+      addEffect(b, 'bent', until);
+    }
+  }
 
   // Equal masses: each body takes half of the exchange.
   const j = (-(1 + impact.restitution) * normalSpeed) / 2;

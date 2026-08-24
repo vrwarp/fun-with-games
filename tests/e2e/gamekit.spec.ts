@@ -360,6 +360,42 @@ test.describe('racing', () => {
     ).toBeGreaterThan(4);
   });
 
+  test('every graphics tier renders without falling over', async ({ page }) => {
+    // The one thing a browser is needed for here. The tier POLICY is unit
+    // tested — CI renders in software at single digit frame rates whatever is
+    // switched on, so nothing here can tell an expensive look from a cheap one
+    // — but whether a post-processing chain, an SSAO pass and a generated cube
+    // texture actually COMPILE and draw is a question only a real GL context
+    // answers, and getting it wrong is a black screen rather than a slow one.
+    const errors: string[] = [];
+    page.on('pageerror', (error) => errors.push(error.message));
+
+    await page.goto('/?net=broadcast&autojoin=1&room=e2e-gfx&mode=grandprix&name=Driver');
+    await waitForHud(page);
+    await expect
+      .poll(() => page.evaluate(() => window.__FWG__.tick), { timeout: 30_000 })
+      .toBeGreaterThan(30);
+
+    const picker = page.getByTestId('settings-quality');
+    for (const tier of ['low', 'medium', 'high'] as const) {
+      await page.getByTestId('settings-button').click();
+      await expect(picker).toBeVisible();
+      await picker.selectOption(tier);
+      await page.getByTestId('settings-close').click();
+
+      // Rebuilding a pipeline tears down render targets and builds new ones.
+      // If any of that throws, the scene stops advancing — so the tick is the
+      // honest check that the renderer survived, not merely that no exception
+      // reached the console.
+      const before = await page.evaluate(() => window.__FWG__.tick);
+      await expect
+        .poll(() => page.evaluate(() => window.__FWG__.tick), { timeout: 20_000 })
+        .toBeGreaterThan(before + 10);
+    }
+
+    expect(errors).toEqual([]);
+  });
+
   test('a grand prix renders, grids up and drives', async ({ page }) => {
     const errors: string[] = [];
     page.on('pageerror', (error) => errors.push(error.message));

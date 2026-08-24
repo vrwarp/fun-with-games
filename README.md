@@ -155,6 +155,7 @@ and remembers them on the device.
 | [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)       | Before your first non-trivial change        |
 | [`docs/NETWORKING.md`](./docs/NETWORKING.md)           | Anything touching multiplayer               |
 | [`docs/TESTING.md`](./docs/TESTING.md)                 | Writing tests, or wondering why one is slow |
+| [`docs/RENDERING.md`](./docs/RENDERING.md)             | Materials, lighting, quality tiers, the car |
 | [`docs/ASSETS.md`](./docs/ASSETS.md)                   | Adding or generating art                    |
 | [`docs/MODULES.md`](./docs/MODULES.md)                 | Picking up a task                           |
 | [`docs/PARALLEL_AGENTS.md`](./docs/PARALLEL_AGENTS.md) | Several agents are working at once          |

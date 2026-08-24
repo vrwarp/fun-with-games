@@ -5,10 +5,25 @@ import { HemisphericLight } from '@babylonjs/core/Lights/hemisphericLight.js';
 import { DirectionalLight } from '@babylonjs/core/Lights/directionalLight.js';
 import { ShadowGenerator } from '@babylonjs/core/Lights/Shadows/shadowGenerator.js';
 import { Color3 } from '@babylonjs/core/Maths/math.color.js';
+import { createLogger } from '../shared/logger.js';
 import { SurfaceMarks } from './marks.js';
+import { createSkyDome, createSkyEnvironment } from './environment.js';
+import { createSurface, grass } from './surfaces.js';
+import { PBRMaterial } from '@babylonjs/core/Materials/PBR/pbrMaterial.js';
+import {
+  QualityGovernor,
+  qualitySettings,
+  readDeviceHints,
+  startingTier,
+  type QualityTier,
+} from './quality.js';
+import { DefaultRenderingPipeline } from '@babylonjs/core/PostProcesses/RenderPipeline/Pipelines/defaultRenderingPipeline.js';
+import { SSAO2RenderingPipeline } from '@babylonjs/core/PostProcesses/RenderPipeline/Pipelines/ssao2RenderingPipeline.js';
+import { ImageProcessingConfiguration } from '@babylonjs/core/Materials/imageProcessingConfiguration.js';
 import { isOnTrack } from '../sim/track.js';
 import { Vector3 } from '@babylonjs/core/Maths/math.vector.js';
 import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial.js';
+import type { Material } from '@babylonjs/core/Materials/material.js';
 import { Texture } from '@babylonjs/core/Materials/Textures/texture.js';
 import { CreateBox } from '@babylonjs/core/Meshes/Builders/boxBuilder.js';
 import type { Mesh } from '@babylonjs/core/Meshes/mesh.js';
@@ -23,6 +38,7 @@ import type { SimConfig } from '../sim/config.js';
 import type { Obstacle } from '../sim/types.js';
 import type { RenderState } from '../net/view.js';
 import { EntityViews } from './entities.js';
+import { finishOptions } from './carmaterials.js';
 import { KitViews } from './kitviews.js';
 import { TrackView } from './trackview.js';
 import {
@@ -44,7 +60,16 @@ export interface RendererOptions {
   view?: ViewMode;
   /** Draw players as billboarded sprites instead of 3D bodies. */
   sprites?: boolean;
+  /** Force a quality tier. Omitted means "work out what this device can take". */
+  quality?: QualityTier;
 }
+
+const log = createLogger('render:renderer');
+
+/** Texels per side of the generated grass. */
+const GRASS_TEXTURE_SIZE = 256;
+/** World units one tile of grass covers. */
+const GRASS_TILE = 5;
 
 /** How long a manual camera adjustment suspends auto-follow, in seconds. */
 const MANUAL_CAMERA_HOLD_SECONDS = 2.5;
@@ -94,6 +119,11 @@ export class Renderer {
   /** Cars get a field of view that opens with speed; runners do not. */
   #speedFov = false;
   #baseFov = 0;
+  #governor: QualityGovernor;
+  #pipeline: DefaultRenderingPipeline | null = null;
+  #ssao: SSAO2RenderingPipeline | null = null;
+  /** True once the player has chosen a tier by hand; we stop second-guessing. */
+  #tierIsChosen = false;
   #cameraTarget = new Vector3(0, 0, 0);
   #disposed = false;
 
@@ -120,14 +150,20 @@ export class Renderer {
       failIfMajorPerformanceCaveat: false,
     });
 
-    // Phones routinely report a device pixel ratio of 3, which means rendering
-    // nine times the pixels of a logical viewport — the fastest way to turn a
-    // playable game into a slideshow. Cap the effective ratio at 2.
-    const pixelRatio = Math.min(globalThis.devicePixelRatio || 1, 2);
-    this.engine.setHardwareScalingLevel(1 / pixelRatio);
+    // Which look this device can afford. Everything visual below asks the
+    // tier rather than sniffing the platform itself, so there is one policy
+    // and it is unit-tested — see `quality.ts` for why that matters here.
+    this.#governor = new QualityGovernor(options.quality ?? startingTier(readDeviceHints()));
 
     this.scene = new Scene(this.engine);
     this.#createSky(options.config);
+
+    // Something for surfaces to reflect, on every tier and before any material
+    // is built. Physically-based materials are DEFINED by what they reflect,
+    // so this is not polish that a cheap device can skip — without it metal is
+    // a flat black shape and car paint is a flat coloured one. Six 64px faces,
+    // generated, owned by the scene and freed with it.
+    createSkyEnvironment(this.scene);
 
     this.#canvas = options.canvas;
     this.#config = options.config;
@@ -143,6 +179,7 @@ export class Renderer {
       this.#speedFov = options.config.vehicle.enabled;
       this.#baseFov = this.camera.fov;
     }
+    this.#applyQuality(this.#governor.tier);
     this.#createArena(options.config, options.obstacles);
 
     this.#entities = new EntityViews(this.scene, options.config, this.#shadows, {
@@ -150,9 +187,12 @@ export class Renderer {
       // Derived rather than passed in: the renderer already knows which view
       // it is drawing, and a second flag would only be a way to disagree.
       firstPerson: viewSpec(this.#view).eye !== undefined,
+      finish: finishOptions(this.#governor.tier),
     });
     this.#kit = new KitViews(this.scene, options.config, this.#shadows);
-    this.#track = new TrackView(this.scene, options.config);
+    this.#track = new TrackView(this.scene, options.config, {
+      normalMaps: qualitySettings(this.#governor.tier).normalMaps,
+    });
     this.#framingScale = options.config.vehicle.enabled
       ? Math.min(1.7, Math.max(1, options.config.playerMaxSpeed / 14))
       : 1;
@@ -213,6 +253,7 @@ export class Renderer {
 
     const local = state.players.find((player) => player.id === this.#localId);
     if (this.#speedFov) this.#applySpeedFov(local, deltaSeconds);
+    this.#governQuality(deltaSeconds);
 
     if (this.#localId) {
       const position = this.#entities.playerPosition(this.#localId);
@@ -530,6 +571,170 @@ export class Renderer {
     this.camera.fov += (wanted - this.camera.fov) * rate;
   }
 
+  /**
+   * Gives up a tier when the device plainly cannot hold it.
+   *
+   * There is no reliable way to ask a browser what GPU it has, so the honest
+   * answer is to try and watch. The policy — how long a shortfall has to last
+   * before it counts, and that it only ever steps DOWN — lives in
+   * `QualityGovernor` where it can be tested; this is only the wiring.
+   *
+   * Skipped entirely once a player has chosen a tier by hand. Somebody who
+   * deliberately asked for the handsome version on a machine that struggles
+   * with it has made a decision, and silently undoing it is worse than the
+   * frame rate they accepted.
+   */
+  #governQuality(deltaSeconds: number): void {
+    if (this.#tierIsChosen) return;
+    const next = this.#governor.update(this.engine.getFps(), deltaSeconds);
+    if (next === null) return;
+    log.debug('dropping quality tier', next);
+    this.#applyQuality(next);
+    this.#applyTierToScene(next);
+  }
+
+  /** The tier currently in force, after any automatic step down. */
+  get quality(): QualityTier {
+    return this.#governor.tier;
+  }
+
+  /**
+   * Switches the whole look, at runtime.
+   *
+   * Called both by the Settings panel and by the governor below. A player's
+   * choice is final — `#tierIsChosen` stops the automatic fallback from
+   * quietly overriding somebody who deliberately asked for the handsome
+   * version on a device that struggles with it. Their machine, their call.
+   */
+  setQuality(tier: QualityTier, chosen = true): void {
+    if (chosen) this.#tierIsChosen = true;
+    if (tier === this.#governor.tier && this.#pipeline) return;
+    this.#governor.setTier(tier);
+    this.#applyQuality(tier);
+    this.#applyTierToScene(tier);
+  }
+
+  /**
+   * The half of a tier change that lives in the scene rather than the pipeline.
+   *
+   * Whether a surface has a normal map is compiled into its shader, so neither
+   * of these can be a property assignment — the materials have to be built
+   * again, and the things holding them go with them. The circuit is static
+   * geometry, so rebuilding it is a handful of milliseconds at the moment
+   * somebody moved a slider.
+   */
+  #applyTierToScene(tier: QualityTier): void {
+    this.#entities.setFinish(finishOptions(tier));
+    this.#track.dispose();
+    this.#track = new TrackView(this.scene, this.#config, {
+      normalMaps: qualitySettings(tier).normalMaps,
+    });
+  }
+
+  /**
+   * Everything a tier decides, applied in one place.
+   *
+   * Rebuilt rather than mutated: a rendering pipeline is a chain of render
+   * targets sized to the canvas, and half-reconfiguring one leaves post
+   * processes attached to buffers nothing writes to any more. Tearing it down
+   * costs a frame at the moment a player changes a setting, which is exactly
+   * when a frame is affordable.
+   */
+  #applyQuality(tier: QualityTier): void {
+    const quality = qualitySettings(tier);
+
+    // Resolution first, because everything below is priced per fragment.
+    const ratio = Math.min(globalThis.devicePixelRatio || 1, quality.maxPixelRatio);
+    this.engine.setHardwareScalingLevel(1 / ratio);
+
+    this.#applyToneMapping();
+
+    this.#pipeline?.dispose();
+    this.#pipeline = null;
+    this.#ssao?.dispose();
+    this.#ssao = null;
+
+    // Nothing at all on the cheapest tier. Not a pipeline with everything
+    // switched off: an empty `DefaultRenderingPipeline` still costs a
+    // full-screen copy, and a full-screen copy at a phone's pixel ratio is
+    // precisely the cost this tier exists to avoid.
+    if (!quality.antialias && !quality.bloom) return;
+
+    try {
+      const pipeline = new DefaultRenderingPipeline('post', true, this.scene, [this.camera]);
+      pipeline.fxaaEnabled = quality.antialias;
+      pipeline.bloomEnabled = quality.bloom;
+      if (quality.bloom) {
+        // Restrained on purpose. This is sunlight on bodywork, not a dream
+        // sequence: the threshold is high so only genuine highlights bloom,
+        // and the weight is low so they glow rather than smear.
+        pipeline.bloomThreshold = 0.85;
+        pipeline.bloomWeight = 0.22;
+        pipeline.bloomKernel = 32;
+        pipeline.bloomScale = 0.5;
+      }
+      this.#pipeline = pipeline;
+
+      if (quality.ambientOcclusion) {
+        // The most expensive thing in this file, and desktop-only for that
+        // reason. What it buys is contact: without it every object looks like
+        // a sticker floating slightly above whatever it stands on.
+        this.#ssao = new SSAO2RenderingPipeline('ssao', this.scene, 0.75, [this.camera]);
+        this.#ssao.radius = 1.4;
+        this.#ssao.totalStrength = 0.9;
+        this.#ssao.samples = 12;
+        this.#ssao.expensiveBlur = false;
+      }
+    } catch (error) {
+      // A software renderer or a locked-down context can refuse a render
+      // target outright. Losing the polish is strictly better than losing the
+      // scene, which is the same bargain the shadow map already makes.
+      log.debug('post-processing unavailable', error);
+      this.#pipeline = null;
+      this.#ssao = null;
+    }
+  }
+
+  /**
+   * Filmic tone mapping, on every tier including the cheapest.
+   *
+   * This is the single largest difference between a render and a photograph
+   * and it is nearly free — a term in the material's own shader rather than a
+   * screen pass, so it costs no bandwidth and no extra target.
+   *
+   * Without it, everything brighter than white clips to a flat white blob:
+   * the sun off a wing, a bloom highlight, the sky near the horizon. ACES
+   * rolls those off the way film does, which is why the results look
+   * photographed rather than computed.
+   */
+  #applyToneMapping(): void {
+    const image = this.scene.imageProcessingConfiguration;
+    image.toneMappingEnabled = true;
+    image.toneMappingType = ImageProcessingConfiguration.TONEMAPPING_ACES;
+    // Exposure well above 1, and this is the part that is easy to get wrong.
+    //
+    // ACES is built to roll off values ABOVE white — that is the whole point
+    // of it. Handed a scene that was lit for no tone mapping at all, where
+    // nothing ever exceeds 1, it has nothing to roll off and simply darkens
+    // the midtones: the first attempt at this came out looking like dusk. The
+    // fix is not a gentler curve, it is a brighter scene. The lights below are
+    // raised to match, so the highlights genuinely go over 1 and the curve
+    // does the job it exists for.
+    // Raised when the ground and the cars became physically based. A PBR
+    // surface with a true albedo is a much darker number than the hand-picked
+    // diffuse colour it replaced — real tarmac reflects about a tenth of what
+    // hits it — so the scene went murky at an exposure that had been correct.
+    // Exposure is the right dial for that: the materials stay honest and the
+    // camera is opened up, which is exactly what a photographer would do.
+    image.exposure = 1.35;
+    image.contrast = 1.05;
+    // No vignette, and I tried one. In the isometric view the corners of the
+    // frame are SKY, and darkening the sky does not read as a lens — it reads
+    // as a dirty screen. A vignette wants a camera pointed at a subject, and
+    // half the views here are not.
+    image.vignetteEnabled = false;
+  }
+
   #createSky(config: SimConfig): void {
     const racing = config.track.enabled && config.trackPath.length >= 2;
     // A circuit gets daylight; everything else keeps the darker arena mood it
@@ -537,21 +742,34 @@ export class Renderer {
     const horizon = racing ? new Color3(0.55, 0.65, 0.78) : new Color3(0.09, 0.11, 0.16);
     this.scene.clearColor = horizon.toColor4(1);
 
+    // A circuit gets a real sky rather than a flat fill. It is the same
+    // gradient the cars reflect, which is the point: a car mirroring a sky
+    // nobody can see is a car from a different scene. The other modes keep
+    // their flat backdrop — the arena is meant to read as a room.
+    if (racing) createSkyDome(this.scene);
+
     this.scene.fogMode = Scene.FOGMODE_LINEAR;
     this.scene.fogColor = horizon;
     // Starts well out so nothing a driver is actually looking at is hazed, and
     // ends past the arena so the walls dissolve into the horizon rather than
     // stopping against it.
+    // Far out, and retuned once the scene was properly lit. Fog set for a dark
+    // scene is barely visible; the same fog over a bright one washes the whole
+    // mid-distance flat, because there is far more light for it to scatter.
+    // Only the genuine distance should haze.
     const span = Math.max(config.arenaHalfExtentX, config.arenaHalfExtentZ);
-    this.scene.fogStart = span * (racing ? 0.5 : 0.8);
-    this.scene.fogEnd = span * 2.4;
+    this.scene.fogStart = span * (racing ? 1.1 : 0.8);
+    this.scene.fogEnd = span * 3;
   }
 
   #createLights(config: SimConfig): ShadowGenerator | null {
     const racing = config.track.enabled && config.trackPath.length >= 2;
 
     const ambient = new HemisphericLight('ambient', new Vector3(0, 1, 0), this.scene);
-    ambient.intensity = racing ? 0.7 : 0.55;
+    // Lit for a tone-mapped pipeline, so these are deliberately hot: see
+    // `#applyToneMapping`. Values that look blown out written down here are
+    // what the ACES curve turns into a highlight rather than a white blob.
+    ambient.intensity = racing ? 0.55 : 0.55;
     // Bounced light takes the colour of what it bounced off. Outdoors that is
     // sky above and ground below, and saying so is most of what separates a
     // scene that looks lit from one that looks tinted.
@@ -560,7 +778,7 @@ export class Renderer {
 
     const sun = new DirectionalLight('sun', new Vector3(-0.5, -1, 0.4), this.scene);
     sun.position = new Vector3(20, 40, -20);
-    sun.intensity = racing ? 1.35 : 1.1;
+    sun.intensity = racing ? 2.4 : 1.1;
     // Warm, because sunlight is. A neutral key against a cool sky is what
     // makes a scene read as fluorescent.
     if (racing) sun.diffuse = new Color3(1, 0.96, 0.86);
@@ -586,6 +804,37 @@ export class Renderer {
     }
   }
 
+  /**
+   * The arena boundary.
+   *
+   * A circuit's is physically based, and that is not gilding: it is the only
+   * vertical surface of any size in the scene, so it is the one thing lit
+   * almost entirely by the sky rather than by the sun. A classic material
+   * gets no light from an environment at all, which is why this used to be a
+   * hard BLACK band across the horizon whenever the boundary happened to face
+   * away from the sun — pale concrete rendering as a hole in the world. Given
+   * something to reflect, the same wall takes the sky's colour on every side
+   * and recedes the way distance actually looks.
+   *
+   * The arena modes keep the classic material and their dark navy: indoors
+   * there is no sky to catch, and the wall of night is the point there.
+   */
+  #wallMaterial(racing: boolean): Material {
+    if (!racing) {
+      const material = new StandardMaterial('wall:mat', this.scene);
+      material.diffuseColor = Color3.FromHexString('#39415a');
+      material.specularColor = new Color3(0.1, 0.1, 0.12);
+      return material;
+    }
+    const material = new PBRMaterial('wall:mat', this.scene);
+    material.albedoColor = Color3.FromHexString('#9aa0ad').toLinearSpace();
+    material.metallic = 0;
+    // Concrete. Rough enough to have no highlight of its own, so all it ever
+    // shows is the sky's own brightness.
+    material.roughness = 0.9;
+    return material;
+  }
+
   #createArena(config: SimConfig, obstacles: readonly Obstacle[]): void {
     const width = config.arenaHalfExtentX * 2;
     const depth = config.arenaHalfExtentZ * 2;
@@ -598,28 +847,42 @@ export class Renderer {
     const groundThickness = 8;
     const ground = CreateBox('ground', { width, height: groundThickness, depth }, this.scene);
     ground.position.y = -groundThickness / 2;
-    const groundMaterial = new StandardMaterial('ground:mat', this.scene);
     // A circuit gets grass. The road is the one thing a driver has to be able
     // to find instantly, and grey-on-grey is a road you discover by leaving it.
     const racing = config.track.enabled && config.trackPath.length >= 2;
-    const checker = createCheckerTexture(this.scene, {
-      cells: Math.round(width / 3),
-      ...(racing ? { colorA: '#1c3325', colorB: '#20392a', lineColor: '#294a36' } : {}),
-    });
-    checker.wrapU = Texture.WRAP_ADDRESSMODE;
-    checker.wrapV = Texture.WRAP_ADDRESSMODE;
-    groundMaterial.diffuseTexture = checker;
-    groundMaterial.specularColor = new Color3(0.05, 0.05, 0.06);
-    ground.material = groundMaterial;
-    ground.receiveShadows = true;
+    if (racing) {
+      // Real turf, physically lit, tiled every few metres. The checker below
+      // is a placeholder for a plane with nothing on it; a circuit deserves
+      // better, and the grass/tarmac contrast is a driver's fastest read of
+      // where the road is.
+      const material = new PBRMaterial('ground:mat', this.scene);
+      const surface = createSurface(this.scene, 'ground', grass(GRASS_TEXTURE_SIZE), {
+        size: GRASS_TEXTURE_SIZE,
+        uScale: Math.max(1, Math.round(width / GRASS_TILE)),
+        vScale: Math.max(1, Math.round(depth / GRASS_TILE)),
+        strength: 7,
+        withNormal: qualitySettings(this.#governor.tier).normalMaps,
+      });
+      material.albedoTexture = surface.albedo;
+      if (surface.normal) material.bumpTexture = surface.normal;
+      material.metallic = 0;
+      // As diffuse as anything in the scene. Grass has no sheen at all, and
+      // the flatness is what makes the tarmac beside it look wet by contrast.
+      material.roughness = 0.96;
+      ground.material = material;
+      ground.receiveShadows = true;
+    } else {
+      const groundMaterial = new StandardMaterial('ground:mat', this.scene);
+      const checker = createCheckerTexture(this.scene, { cells: Math.round(width / 3) });
+      checker.wrapU = Texture.WRAP_ADDRESSMODE;
+      checker.wrapV = Texture.WRAP_ADDRESSMODE;
+      groundMaterial.diffuseTexture = checker;
+      groundMaterial.specularColor = new Color3(0.05, 0.05, 0.06);
+      ground.material = groundMaterial;
+      ground.receiveShadows = true;
+    }
 
-    const wallMaterial = new StandardMaterial('wall:mat', this.scene);
-    // The arena boundary is dark navy, which reads as a wall of night against
-    // a daylit sky — a hard black band across the horizon in the cockpit. A
-    // circuit's boundary should be something the fog can swallow, so outdoors
-    // it takes a pale concrete instead and dissolves rather than looming.
-    wallMaterial.diffuseColor = Color3.FromHexString(racing ? '#8d93a1' : '#39415a');
-    wallMaterial.specularColor = new Color3(0.1, 0.1, 0.12);
+    const wallMaterial = this.#wallMaterial(racing);
 
     const wallHeight = 2.5;
     const wallThickness = 0.6;

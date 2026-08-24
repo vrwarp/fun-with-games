@@ -1,6 +1,8 @@
 import { Color3 } from '@babylonjs/core/Maths/math.color.js';
 import { Vector3 } from '@babylonjs/core/Maths/math.vector.js';
 import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial.js';
+import { PBRMaterial } from '@babylonjs/core/Materials/PBR/pbrMaterial.js';
+import type { Material } from '@babylonjs/core/Materials/material.js';
 import { Texture } from '@babylonjs/core/Materials/Textures/texture.js';
 import { CreateRibbon } from '@babylonjs/core/Meshes/Builders/ribbonBuilder.js';
 import { CreateBox } from '@babylonjs/core/Meshes/Builders/boxBuilder.js';
@@ -10,6 +12,7 @@ import type { Scene } from '@babylonjs/core/scene.js';
 import type { SimConfig, TrackPoint } from '../sim/config.js';
 import { sampleTrack, trackLength, trackPoseAt } from '../sim/track.js';
 import { createKerbTexture, createStartLineTexture } from './textures.js';
+import { asphalt, createSurface, type Surface } from './surfaces.js';
 
 /**
  * Draws the circuit: tarmac, kerbs, the start/finish line, sector marks and
@@ -30,6 +33,10 @@ import { createKerbTexture, createStartLineTexture } from './textures.js';
  * lie a driver could hit. The ordering below is the paint order.
  */
 const ROAD_Y = 0.02;
+/** Texels per side of the generated asphalt. */
+const ROAD_TEXTURE_SIZE = 256;
+/** World units one tile of asphalt covers. Roughly a car's length. */
+const ROAD_TILE = 6;
 const DRS_Y = 0.05;
 const KERB_Y = 0.08;
 const SECTOR_Y = 0.11;
@@ -46,6 +53,15 @@ const LINE_Y = 0.14;
  * the paint stays flat and still wins.
  */
 const LAYER_BIAS = { drs: -1, kerb: -2, sector: -3, line: -4 } as const;
+/**
+ * Half-width of the line painted at each end of a DRS zone, in world units.
+ *
+ * Wider than it was, and carrying the brightness the fill gave up. Where a
+ * zone BEGINS is the thing a driver has to see; that it continues is something
+ * the HUD already says.
+ */
+const DRS_EDGE = 0.35;
+
 /** Barrier height. Low enough to see the circuit over from the cockpit. */
 const BARRIER_HEIGHT = 1.1;
 /** How high the start gantry's beam sits. Tall enough for a car to pass under. */
@@ -72,14 +88,23 @@ const BAND_STEP = 1.5;
  */
 const NORMAL_CHORD = 1.2;
 
+/** What the current quality tier will pay for on the circuit's surfaces. */
+export interface TrackViewOptions {
+  /** Normal-mapped aggregate on the tarmac. Off on the cheapest tier. */
+  readonly normalMaps: boolean;
+}
+
 export class TrackView {
   readonly #scene: Scene;
+  readonly #normalMaps: boolean;
   #meshes: Mesh[] = [];
-  #materials: StandardMaterial[] = [];
+  #materials: Material[] = [];
+  #surfaces: Surface[] = [];
   #textures: Texture[] = [];
 
-  constructor(scene: Scene, config: SimConfig) {
+  constructor(scene: Scene, config: SimConfig, options: TrackViewOptions = { normalMaps: true }) {
     this.#scene = scene;
+    this.#normalMaps = options.normalMaps;
     if (!config.track.enabled || config.trackPath.length < 2) return;
 
     const path = config.trackPath;
@@ -87,7 +112,7 @@ export class TrackView {
     const lap = trackLength(path);
 
     // The road itself, as one band around the entire lap.
-    this.#band('track:road', path, 0, lap, -half, half, ROAD_Y, this.#roadMaterial());
+    this.#band('track:road', path, 0, lap, -half, half, ROAD_Y, this.#roadMaterial(lap, half));
 
     // Kerbs, painted just INSIDE the edge. A kerb drawn beyond the limit would
     // invite exactly the line that runs out of grip, because the simulation
@@ -120,9 +145,11 @@ export class TrackView {
     for (const mesh of this.#meshes) mesh.dispose();
     for (const material of this.#materials) material.dispose();
     for (const texture of this.#textures) texture.dispose();
+    for (const surface of this.#surfaces) surface.dispose();
     this.#meshes = [];
     this.#materials = [];
     this.#textures = [];
+    this.#surfaces = [];
   }
 
   // -------------------------------------------------------------- internals
@@ -144,7 +171,7 @@ export class TrackView {
     fromOffset: number,
     toOffset: number,
     y: number,
-    material: StandardMaterial,
+    material: Material,
   ): void {
     const span = to - from;
     const steps = Math.max(2, Math.ceil(Math.abs(span) / BAND_STEP));
@@ -192,7 +219,7 @@ export class TrackView {
     lap: number,
     offset: number,
     height: number,
-    material: StandardMaterial,
+    material: Material,
   ): void {
     const steps = Math.max(2, Math.ceil(lap / BAND_STEP));
     const foot: Vector3[] = [];
@@ -236,7 +263,28 @@ export class TrackView {
    */
   #buildZoneMarks(config: SimConfig, path: readonly TrackPoint[], half: number, lap: number): void {
     const sector = this.#flatMaterial('track:sector', '#8d99ae', 0.35, LAYER_BIAS.sector);
-    const drs = this.#flatMaterial('track:drs', '#06d6a0', 0.16, LAYER_BIAS.drs);
+    // A whisper, where it used to be a wash — and the arithmetic is worth
+    // writing down, because it is not obvious and it bit twice.
+    //
+    // These overlays are unlit emissive blended by alpha, so the result is a
+    // LERP toward the overlay's colour: `road * (1 - a) + tint * a`. The
+    // tarmac underneath is now a true asphalt albedo, which is about a tenth
+    // of the light that lands on it — roughly 0.02 in linear terms. The DRS
+    // green is 0.84. So even at four percent the fill was contributing more
+    // green than the entire road surface had, and a third of the circuit came
+    // out as a teal carpet. Halving the alpha barely moved it, because the
+    // problem was never the alpha; it was the ratio.
+    //
+    // The cue therefore moves to where a driver actually looks: the line at
+    // the entry. That is also how a real circuit marks one — a board and a
+    // painted line, not a repainted road.
+    // 0.006, and that number was measured rather than guessed. Sampled off a
+    // screenshot: the tarmac reads rgb(32,33,35) outside a zone and
+    // rgb(36,39,40) inside — a shade lighter and barely greener, which is a
+    // tint. At 0.04 the same pixels read rgb(36,53,48): a carpet.
+    // (The band is drawn double-sided, so the effective alpha is about twice
+    // what is written here — worth knowing before anyone "corrects" it.)
+    const drs = this.#flatMaterial('track:drs', '#06d6a0', 0.006, LAYER_BIAS.drs);
 
     config.zones.forEach((zone, index) => {
       if (zone.kind !== 'checkpoint' && zone.kind !== 'drs') return;
@@ -264,37 +312,73 @@ export class TrackView {
       const from = Math.max(at - zone.radius, at - lap / 2);
       const to = Math.min(at + zone.radius, at + lap / 2);
       this.#band(`track:drs:${index}`, path, from, to, -half, half, DRS_Y, drs);
-      const edge = this.#flatMaterial(`track:drs:${index}:edge`, '#06d6a0', 0.7, LAYER_BIAS.sector);
+      const edge = this.#flatMaterial(
+        `track:drs:${index}:edge`,
+        '#06d6a0',
+        0.85,
+        LAYER_BIAS.sector,
+      );
       this.#band(
         `track:drs:${index}:in`,
         path,
-        from - 0.2,
-        from + 0.2,
+        from - DRS_EDGE,
+        from + DRS_EDGE,
         -half,
         half,
         SECTOR_Y,
         edge,
       );
-      this.#band(`track:drs:${index}:out`, path, to - 0.2, to + 0.2, -half, half, SECTOR_Y, edge);
+      this.#band(
+        `track:drs:${index}:out`,
+        path,
+        to - DRS_EDGE,
+        to + DRS_EDGE,
+        -half,
+        half,
+        SECTOR_Y,
+        edge,
+      );
     });
   }
 
-  #roadMaterial(): StandardMaterial {
-    const material = new StandardMaterial('track:road:mat', this.#scene);
-    // Asphalt, and deliberately lighter than the grass it sits on: the road
-    // has to be the first thing the eye finds, from a camera 1.35 units off it
-    // as well as from directly overhead.
-    // Neutral, and deliberately NOT the blue-grey it used to be. The scene is
-    // now lit by a blue sky and a green ground bounce, and a road with blue in
-    // its own colour on top of that came out teal — painted concrete rather
-    // than tarmac. A near-neutral surface takes the sky's colour without
-    // doubling it.
-    material.diffuseColor = Color3.FromHexString('#34343a');
-    // Barely any. Emissive is a flat add that no light can shade, so a road
-    // carrying much of it stays the same brightness in shadow as in sun and
-    // the whole surface goes flat.
-    material.emissiveColor = Color3.FromHexString('#0e0e11');
-    material.specularColor = new Color3(0.06, 0.06, 0.06);
+  /**
+   * Tarmac.
+   *
+   * The biggest surface in the game and the one the camera is pointed at for
+   * the entire race, so it is the surface most worth spending on. It used to
+   * be a flat grey with a faint reflection, and the giveaway was that it
+   * stayed perfectly smooth at every distance: a road that is as featureless
+   * two metres ahead as it is on the horizon is not a road, it is a floor.
+   *
+   * Now it is physically based, and made of stones. `surfaces.ts` generates a
+   * bed of aggregate as an albedo and a height field; the height becomes a
+   * normal map, which is what makes the chips catch the low sun and what puts
+   * a *texture* under the tyres at cockpit height. Nothing here is a photo and
+   * nothing is downloaded — see the note in that file.
+   */
+  #roadMaterial(lap: number, half: number): PBRMaterial {
+    const material = new PBRMaterial('track:road:mat', this.#scene);
+    const surface = createSurface(this.#scene, 'track:road', asphalt(ROAD_TEXTURE_SIZE), {
+      size: ROAD_TEXTURE_SIZE,
+      // A ribbon's UVs run 0..1 along its whole length and across its width,
+      // so the tiling has to be worked out from the circuit's real size or
+      // the aggregate is stretched into kilometre-long smears. One tile per
+      // `ROAD_TILE` world units, in both directions, so the stones stay square.
+      uScale: Math.max(1, Math.round(lap / ROAD_TILE)),
+      vScale: Math.max(1, Math.round((half * 2) / ROAD_TILE)),
+      strength: 5,
+      withNormal: this.#normalMaps,
+    });
+    this.#surfaces.push(surface);
+
+    material.albedoTexture = surface.albedo;
+    if (surface.normal) material.bumpTexture = surface.normal;
+    // Asphalt is not a metal and it is not polished. What it does do is get
+    // *less* rough where the racing line has polished it — which is a refinement
+    // for another day; a single value that is rough but not matte is already
+    // the difference between tarmac and felt.
+    material.metallic = 0;
+    material.roughness = 0.72;
     material.backFaceCulling = CULL_BACK_FACES;
     this.#materials.push(material);
     return material;

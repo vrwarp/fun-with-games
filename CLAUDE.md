@@ -43,17 +43,18 @@ A peer-to-peer arena engine with a library of composable game systems, playable
 in 3D, 2.5D or 2D, on foot or in a car. The default mode is a shard-collecting
 sandbox; fifteen more modes ship with it.
 
-| Concern    | Choice                                                                                             |
-| ---------- | -------------------------------------------------------------------------------------------------- |
-| Rendering  | Babylon.js 9 (`@babylonjs/core`, deep imports); cockpit and isometric, plus three deprecated views |
-| Networking | [Trystero](https://github.com/dmotz/trystero) — WebRTC, decentralized signalling over Nostr        |
-| Authority  | Host-authoritative, host _elected_ (lowest peer id), auto-migrating                                |
-| Build      | Vite 7 + TypeScript 5.9 (strict, `noUncheckedIndexedAccess`)                                       |
-| Tests      | Vitest (headless sim + net) and Playwright (browser)                                               |
-| Deploy     | GitHub Pages, on push to `main`                                                                    |
-| Targets    | Desktop **and mobile browsers** — see §7, this is a hard constraint                                |
+| Concern    | Choice                                                                                                                                                                                   |
+| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Rendering  | Babylon.js 9 (`@babylonjs/core`, deep imports); cockpit and isometric, plus three deprecated views; physically-based materials on a circuit — [`docs/RENDERING.md`](./docs/RENDERING.md) |
+| Networking | [Trystero](https://github.com/dmotz/trystero) — WebRTC, decentralized signalling over Nostr                                                                                              |
+| Authority  | Host-authoritative, host _elected_ (lowest peer id), auto-migrating                                                                                                                      |
+| Build      | Vite 7 + TypeScript 5.9 (strict, `noUncheckedIndexedAccess`)                                                                                                                             |
+| Tests      | Vitest (headless sim + net) and Playwright (browser)                                                                                                                                     |
+| Deploy     | GitHub Pages, on push to `main`                                                                                                                                                          |
+| Targets    | Desktop **and mobile browsers** — see §7, this is a hard constraint                                                                                                                      |
 
-Read `docs/ARCHITECTURE.md` before your first non-trivial change.
+Read `docs/ARCHITECTURE.md` before your first non-trivial change, and
+`docs/RENDERING.md` before touching a material, a light or a surface.
 
 ---
 
@@ -461,6 +462,12 @@ depend on a file that might not be there.
 
 - `npm run assets:generate` — procedural glTF, no network, no licence
   questions, deterministic output. Commit what it writes.
+- **Textures are generated too, and the ones with a rule to check are pure.**
+  `src/render/surfaces.ts` draws asphalt, grass, carbon weave and tyre grain as
+  arithmetic over typed arrays rather than into a canvas, precisely so a unit
+  test in Node can assert that they tile, that a normal map tilts the right
+  way, and that the grass stays brighter than the tarmac. Reach for
+  `textures.ts` (canvas) only when there is nothing to assert.
 - `npm run assets:fetch` — downloads what `assets/sources.json` catalogues into
   the gitignored `public/assets/vendor/`.
 - Every asset needs recorded licence metadata. `assets:verify` fails CI without
@@ -477,6 +484,18 @@ Full guidance, including where to find CC0 art and how to generate it:
   package root. Some features additionally need a side-effect import to
   register a scene component — shadows are the classic one, and the failure
   mode is silent (no shadows, no error).
+- **A circuit's materials are physically based, and the sky is load-bearing.**
+  `PBRMaterial` is defined by what it reflects, so a scene without
+  `scene.environmentTexture` renders metal as a flat black shape. Every quality
+  tier therefore generates one. Colours going into `albedoColor` need
+  `.toLinearSpace()`, and `metallic` is a slider between two different
+  substances rather than a gloss dial — turn it up and the paint loses its
+  colour to the reflection. All three traps have bitten; see
+  `docs/RENDERING.md` §3.
+- **Overlays are priced against a very dark road.** Tarmac is a true asphalt
+  albedo — about a tenth of the light that lands on it — so an emissive tint
+  that looked subtle over the old flat grey now dominates. Budget a new one
+  against the linear value, not against how it looks over mid-grey.
 - **`verbatimModuleSyntax` is on.** Type-only imports need `import type`.
 - **`.js` extensions in relative imports**, even from `.ts` files.
 - **`exactOptionalPropertyTypes` is on.** `{ foo: undefined }` is not assignable

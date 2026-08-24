@@ -627,6 +627,19 @@ is on the tarmac, how far round the lap it is, the racing line a bot follows,
 and the starting grid. Off-track is grass, not a wall: `track.offTrackSpeed`
 and `offTrackGrip` make it slow and slippery, which is forgiving on a thumb.
 
+The renderer puts a **gantry over the start/finish line** and, where the
+circuit has room, **barriers** set back from the kerb by `track.barrierRunoff`.
+Both are scenery — nothing collides with them. The run-off is config rather
+than a renderer constant because whether a barrier fits is a property of the
+LAYOUT: a single offset ribbon round a course that doubles back crosses the
+road wherever adjacent sections are closer than twice the run-off, and a wall
+lying across the tarmac looks far worse than no wall. `street` sets 0 and goes
+without for exactly that reason.
+
+Both are one draw call each (`#wall` builds a barrier as a single ribbon, the
+way `#band` builds the road), because a barrier assembled from a box per
+segment would be a hundred draw calls to say the same thing.
+
 **Kerbs sit inside the track limits**, which is the whole point of them:
 `track.kerbWidth` is a band measured inward from the edge where you keep most
 of your grip (`kerbGrip`) but the car will not sit still (`kerbShake`). Riding

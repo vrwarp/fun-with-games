@@ -3,6 +3,7 @@ import { Vector3 } from '@babylonjs/core/Maths/math.vector.js';
 import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial.js';
 import { Texture } from '@babylonjs/core/Materials/Textures/texture.js';
 import { CreateRibbon } from '@babylonjs/core/Meshes/Builders/ribbonBuilder.js';
+import { CreateBox } from '@babylonjs/core/Meshes/Builders/boxBuilder.js';
 import type { Mesh } from '@babylonjs/core/Meshes/mesh.js';
 import type { Scene } from '@babylonjs/core/scene.js';
 
@@ -45,6 +46,10 @@ const LINE_Y = 0.14;
  * the paint stays flat and still wins.
  */
 const LAYER_BIAS = { drs: -1, kerb: -2, sector: -3, line: -4 } as const;
+/** Barrier height. Low enough to see the circuit over from the cockpit. */
+const BARRIER_HEIGHT = 1.1;
+/** How high the start gantry's beam sits. Tall enough for a car to pass under. */
+const GANTRY_HEIGHT = 5.5;
 
 /**
  * The ribbons are built `sideOrientation: 2`, which bakes both facings into
@@ -95,6 +100,20 @@ export class TrackView {
 
     // The chequered board, last so it sits on top of everything else.
     this.#band('track:line', path, -1.3, 1.3, -half, half, LINE_Y, this.#startLineMaterial(half));
+
+    // Barriers, set back from the kerb by a run-off so a small mistake is a
+    // moment rather than the end of a race. They are scenery: the simulation's
+    // track limits are still the grass, and nothing here collides. The circuit
+    // decides whether it has room for them — see `track.barrierRunoff`.
+    const runoff = config.track.barrierRunoff;
+    if (runoff > 0) {
+      const barrier = this.#barrierMaterial();
+      const back = half + runoff;
+      this.#wall('track:barrier:l', path, lap, back, BARRIER_HEIGHT, barrier);
+      this.#wall('track:barrier:r', path, lap, -back, BARRIER_HEIGHT, barrier);
+    }
+
+    this.#gantry(path, half);
   }
 
   dispose(): void {
@@ -154,6 +173,54 @@ export class TrackView {
     const mesh = CreateRibbon(name, { pathArray: [inner, outer], sideOrientation: 2 }, this.#scene);
     mesh.material = material;
     mesh.isPickable = false;
+    mesh.receiveShadows = true;
+    this.#meshes.push(mesh);
+  }
+
+  /**
+   * A vertical wall following the road, at a fixed offset across it.
+   *
+   * The horizontal counterpart of `#band`, and deliberately built the same
+   * way: one ribbon, one draw call, however long the circuit is. A barrier
+   * assembled from a box per segment would be a hundred draw calls to say the
+   * same thing, which on the device this game is aimed at is the difference
+   * between a barrier and no barrier.
+   */
+  #wall(
+    name: string,
+    path: readonly TrackPoint[],
+    lap: number,
+    offset: number,
+    height: number,
+    material: StandardMaterial,
+  ): void {
+    const steps = Math.max(2, Math.ceil(lap / BAND_STEP));
+    const foot: Vector3[] = [];
+    const top: Vector3[] = [];
+
+    for (let i = 0; i <= steps; i++) {
+      const at = (lap * i) / steps;
+      const pose = trackPoseAt(path, at);
+      const behind = trackPoseAt(path, at - NORMAL_CHORD);
+      const ahead = trackPoseAt(path, at + NORMAL_CHORD);
+      const dirX = ahead.x - behind.x;
+      const dirZ = ahead.z - behind.z;
+      const length = Math.hypot(dirX, dirZ) || 1;
+      const normalX = dirZ / length;
+      const normalZ = -dirX / length;
+
+      const x = pose.x + normalX * offset;
+      const z = pose.z + normalZ * offset;
+      foot.push(new Vector3(x, 0.02, z));
+      top.push(new Vector3(x, height, z));
+    }
+
+    const mesh = CreateRibbon(name, { pathArray: [foot, top], sideOrientation: 2 }, this.#scene);
+    mesh.material = material;
+    mesh.isPickable = false;
+    // Receives but does not cast. A barrier casting along the whole circuit
+    // would double what the shadow map has to hold for a strip of shade nobody
+    // is looking at, and the frame budget is the phone's, not the desktop's.
     mesh.receiveShadows = true;
     this.#meshes.push(mesh);
   }
@@ -229,6 +296,75 @@ export class TrackView {
     material.emissiveColor = Color3.FromHexString('#0e0e11');
     material.specularColor = new Color3(0.06, 0.06, 0.06);
     material.backFaceCulling = CULL_BACK_FACES;
+    this.#materials.push(material);
+    return material;
+  }
+
+  /**
+   * The gantry over the start/finish line.
+   *
+   * Three boxes, built once for the circuit rather than per car, and worth
+   * every one of them: a lap counter needs somewhere to *be*, and until now
+   * the most important place on the circuit was a painted stripe you crossed
+   * without noticing. It is the landmark that turns a loop of tarmac into a
+   * lap.
+   *
+   * Placed and oriented from the road itself, so it stands square across the
+   * line on any circuit rather than needing a per-track constant.
+   */
+  #gantry(path: readonly TrackPoint[], half: number): void {
+    const pose = trackPoseAt(path, 0);
+    const heading = Math.atan2(pose.dirX, pose.dirZ);
+    const normalX = pose.dirZ;
+    const normalZ = -pose.dirX;
+    const reach = half + 1.4;
+
+    const material = this.#gantryMaterial();
+    for (const side of [1, -1]) {
+      const post = CreateBox(
+        `track:gantry:post${side}`,
+        { width: 0.5, height: GANTRY_HEIGHT, depth: 0.5 },
+        this.#scene,
+      );
+      post.position.set(
+        pose.x + normalX * reach * side,
+        GANTRY_HEIGHT / 2,
+        pose.z + normalZ * reach * side,
+      );
+      post.rotation.y = heading;
+      post.material = material;
+      post.isPickable = false;
+      this.#meshes.push(post);
+    }
+
+    const beam = CreateBox(
+      'track:gantry:beam',
+      { width: reach * 2, height: 0.9, depth: 0.6 },
+      this.#scene,
+    );
+    beam.position.set(pose.x, GANTRY_HEIGHT, pose.z);
+    beam.rotation.y = heading;
+    beam.material = material;
+    beam.isPickable = false;
+    this.#meshes.push(beam);
+  }
+
+  #gantryMaterial(): StandardMaterial {
+    const material = new StandardMaterial('track:gantry:mat', this.#scene);
+    material.diffuseColor = Color3.FromHexString('#2b2f3a');
+    material.specularColor = new Color3(0.25, 0.25, 0.3);
+    this.#materials.push(material);
+    return material;
+  }
+
+  #barrierMaterial(): StandardMaterial {
+    const material = new StandardMaterial('track:barrier:mat', this.#scene);
+    // Pale, so it reads against the grass and takes the sky's colour the way
+    // the arena wall now does rather than cutting a dark line round the
+    // circuit.
+    material.diffuseColor = Color3.FromHexString('#c9ccd3');
+    material.specularColor = new Color3(0.08, 0.08, 0.09);
+    material.backFaceCulling = false;
     this.#materials.push(material);
     return material;
   }

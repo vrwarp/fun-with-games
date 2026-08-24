@@ -402,6 +402,22 @@ export interface TrackConfig {
    * kerb and a snapshot restore lands on the identical number.
    */
   readonly kerbShake: number;
+  /**
+   * Run-off between the kerb and the scenery barrier, in world units. 0 for no
+   * barrier at all.
+   *
+   * Presentation only — nothing collides with it — but it lives here because
+   * the renderer cannot decide it alone: whether a barrier FITS is a property
+   * of the circuit's layout, not of the camera. A single offset ribbon round a
+   * course that doubles back on itself crosses the road wherever adjacent
+   * sections are closer together than twice this, and a wall lying across the
+   * tarmac looks far worse than no wall at all.
+   *
+   * So a tight circuit sets 0 and goes without, which is the honest answer
+   * until barriers are broken into per-section pieces that can be omitted
+   * where there is no room.
+   */
+  readonly barrierRunoff: number;
   /** Cars per row on the starting grid. 2 is the Formula-style staggered grid. */
   readonly gridColumns: number;
   /** Spacing between grid rows, in world units. */
@@ -643,6 +659,7 @@ export const DEFAULT_SIM_CONFIG: SimConfig = {
     kerbWidth: 0,
     kerbGrip: 0.85,
     kerbShake: 0,
+    barrierRunoff: 0,
     gridColumns: 2,
     gridRowSpacing: 5,
   },

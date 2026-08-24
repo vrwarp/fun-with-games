@@ -22,10 +22,12 @@ rules below intact even when a shortcut would be quicker.
 > real car: the stick sets a **steering angle** and a kinematic bicycle model
 > turns that into yaw, so a parked car does not rotate, a corner's radius comes
 > from the lock rather than the speed, and reverse steers the other way. On top
-> of that sits a traction limit (`vehicle.tyreGrip`), so cars understeer, drift
-> and catch themselves, and contact between them exchanges momentum. A circuit
-> is a list of control points; see the "authoring a circuit" recipe before
-> writing any.
+> of that sits a **two-axle tyre model with weight transfer**: braking loads the
+> front and accelerating squats onto the rear, so trail braking, power
+> understeer and lift-off oversteer are consequences rather than rules. Contact
+> exchanges momentum and leaves both cars bent for a while; kerbs sit inside the
+> track limits and unsettle a car that rides them. A circuit is a list of
+> control points; see the "authoring a circuit" recipe before writing any.
 >
 > **2D and 2.5D are already covered.** `src/sim` is a _plane_ — it has no
 > camera and no perspective — so 2D is the native model, not a port. Add

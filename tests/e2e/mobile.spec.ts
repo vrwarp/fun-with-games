@@ -391,93 +391,70 @@ test.describe('on a phone', () => {
     // strand the pointer id: the last steering angle stuck, so the car turned
     // until it span, and no later touch was accepted, so the driver could not
     // take it back. Backgrounding is the interruption a phone actually does.
+    //
+    // Asserted on the CONTROL rather than on the car, and that is the point.
+    // An earlier version drove the car for several seconds and measured how
+    // far it rotated, which made a bug in fifty lines of pointer handling
+    // depend on the entire handling model, the countdown, whether a solo
+    // driver's round ever starts, and whether the car had found the grass
+    // yet. It duly broke the moment the tyre model changed — reporting a
+    // correctly-stationary car as a dead control — and every threshold I
+    // moved to appease it made it measure less.
+    //
+    // The knob is the honest witness. It is positioned by the same `#update`
+    // that feeds `read()`, so a stuck `#steer` leaves it parked off-centre and
+    // a refused `pointerdown` leaves it unmoved. That the wheel's output
+    // reaches the simulation at all is covered by the two tests below, which
+    // do not need an interruption to prove it.
     await page.goto(`/?net=broadcast&autojoin=1&room=${ROOM}-stuck&mode=grandprix&name=Driver`);
     await expect(page.getByTestId('hud')).toBeVisible({ timeout: 30_000 });
-    await expect
-      .poll(() => page.evaluate(() => window.__FWG__.tick), { timeout: 30_000 })
-      .toBeGreaterThan(60);
-
-    const heading = () =>
-      page.evaluate(() => {
-        const handle = window.__FWG__;
-        return handle.players.find((player) => player.id === handle.selfId)?.heading ?? 0;
-      });
 
     const track = page.getByTestId('driving-steer');
-    const box = (await track.boundingBox())!;
-    const leftEnd = box.x + box.width * 0.05;
-    const rightEnd = box.x + box.width * 0.95;
-    const midY = box.y + box.height / 2;
+    await expect(track).toBeVisible();
+    const knob = page.locator('.driving__knob');
 
-    // Everything below is bounded in simulation ticks rather than wall-clock,
-    // because every assertion here is about how far the car turned. 36 ticks
-    // is a bit over a second at 30 Hz on an unloaded machine and exactly the
-    // same amount of driving on a busy one.
-    const BURST = 36;
-    const WINDOW = 15;
-
-    /** How far the car rotates over a fixed window, wrapped to [-pi, pi]. */
-    const swingOver = async (ticks: number): Promise<number> => {
-      const before = await heading();
-      await advanceTicks(page, ticks);
-      const after = await heading();
-      return Math.abs(Math.atan2(Math.sin(after - before), Math.cos(after - before)));
+    /** How far the knob sits from centre, in pixels. */
+    const offset = async (): Promise<number> => {
+      const box = (await track.boundingBox())!;
+      const knobBox = (await knob.boundingBox())!;
+      return knobBox.x + knobBox.width / 2 - (box.x + box.width / 2);
     };
 
-    // Get it rolling first. Steering is a steering ANGLE and a car yaws by
-    // rolling, so a stationary car with the wheel hard over is supposed to sit
-    // there — the failure this test is about only shows up on a moving car.
-    // There is one pointer to play with, so the throttle and the wheel take
-    // turns and the car coasts through the measurement. Left lock rather than
-    // right because the grid faces +X against the near wall, and a car parked
-    // on the boundary would be still for reasons that have nothing to do with
-    // the wheel.
-    // Buried, not merely pressed — the pedal is analog now, and its centre is
-    // about two thirds. This test is about the wheel, so it wants the car at
-    // the speed a driver getting up to speed would actually be doing.
-    await holdPedal(page, 'driving-throttle', BURST, 1);
+    const box = (await track.boundingBox())!;
+    const midY = box.y + box.height / 2;
+    const leftEnd = box.x + box.width * 0.05;
+    const rightEnd = box.x + box.width * 0.95;
+
+    expect(Math.abs(await offset())).toBeLessThan(2);
 
     // Full left lock, thumb still down.
     await page.mouse.move(leftEnd, midY);
     await page.mouse.down();
-    await advanceTicks(page, 6);
-    const whileHeld = await swingOver(WINDOW);
-    expect(whileHeld).toBeGreaterThan(0.2);
+    const held = await offset();
+    expect(held).toBeLessThan(-box.width * 0.3);
 
     // The interruption. No pointerup will ever arrive for that thumb.
     await page.evaluate(() => window.dispatchEvent(new Event('blur')));
-    // Lift the synthetic thumb so the next press can reach another control.
-    // The blur has already re-centred the wheel; what this undoes is the
-    // browser-level pointer capture, which would otherwise keep routing every
-    // later move to the steering track.
+
+    // Half one: the wheel let go. Without this the car steers for ever.
+    await expect.poll(async () => Math.abs(await offset()), { timeout: 5_000 }).toBeLessThan(2);
+
+    // Lift the synthetic thumb so the next press can reach the track again.
+    // The blur re-centred the wheel; this undoes the browser-level capture.
     await page.mouse.up();
 
-    // Now hold the throttle with nothing on the wheel. This is the strongest
-    // conditions a stranded lock could show itself in — full pace, no input —
-    // so measuring the swing across the burst is a far better test than
-    // watching a car that has coasted to a stop.
-    const beforeBurst = await heading();
-    await holdPedal(page, 'driving-throttle', BURST, 1);
-    const afterBurst = await heading();
-    const afterBlur = Math.abs(
-      Math.atan2(Math.sin(afterBurst - beforeBurst), Math.cos(afterBurst - beforeBurst)),
-    );
-
-    // The wheel must have re-centred. Compared as a RATE rather than as an
-    // absolute angle, over an equal number of ticks either side.
-    expect(afterBlur).toBeLessThan(whileHeld / 3);
-
-    // And the driver must be able to take it back — the half that used to
-    // leave steering dead for the rest of the race. Straight off the throttle,
-    // while the car is still carrying speed to steer with.
+    // Half two: a NEW touch is accepted, the half that used to leave steering
+    // dead for the rest of the race. Opposite lock, so a stale reading cannot
+    // pass for a fresh one.
     await page.mouse.move(rightEnd, midY);
     await page.mouse.down();
-    await advanceTicks(page, 21);
+    const retaken = await offset();
     await page.mouse.up();
 
-    const recovered = await heading();
-    const delta = Math.atan2(Math.sin(recovered - afterBurst), Math.cos(recovered - afterBurst));
-    expect(delta).toBeGreaterThan(0.1);
+    expect(retaken).toBeGreaterThan(box.width * 0.3);
+
+    // And it releases again, rather than latching on the way back.
+    await expect.poll(async () => Math.abs(await offset()), { timeout: 5_000 }).toBeLessThan(2);
   });
 
   test('the throttle drives and the wheel only steers', async ({ page }) => {

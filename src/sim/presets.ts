@@ -391,6 +391,7 @@ const PRESETS: Record<GameModeId, SimConfigOverrides> = {
       kerbWidth: 1.1,
       kerbGrip: 0.82,
       kerbShake: 17,
+      barrierRunoff: 5,
       gridColumns: 2,
       gridRowSpacing: 5,
     },
@@ -507,6 +508,10 @@ const PRESETS: Record<GameModeId, SimConfigOverrides> = {
       kerbWidth: 0.8,
       kerbGrip: 0.75,
       kerbShake: 24,
+      // No barrier. This circuit doubles back on itself hard enough that any
+      // run-off worth the name lays a wall across the next section of road,
+      // and a barrier through the tarmac looks far worse than none.
+      barrierRunoff: 0,
       gridColumns: 2,
       gridRowSpacing: 4,
     },

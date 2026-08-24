@@ -25,6 +25,9 @@ interface FwgTestHandle {
     y: number;
     /** Where the body points, which for a car is not where it is going. */
     heading: number;
+    /** World velocity. A stopped car cannot steer, so tests have to see this. */
+    vx: number;
+    vz: number;
     score: number;
   }>;
   readonly fps: number;

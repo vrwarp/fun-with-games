@@ -7,7 +7,7 @@ import { ShadowGenerator } from '@babylonjs/core/Lights/Shadows/shadowGenerator.
 import { Color3 } from '@babylonjs/core/Maths/math.color.js';
 import { createLogger } from '../shared/logger.js';
 import { SurfaceMarks } from './marks.js';
-import { createSkyDome, createSkyEnvironment } from './environment.js';
+import { SUN_TRAVEL, createSkyDome, createSkyEnvironment } from './environment.js';
 import { createSurface, grass } from './surfaces.js';
 import { PBRMaterial } from '@babylonjs/core/Materials/PBR/pbrMaterial.js';
 import {
@@ -41,6 +41,7 @@ import { EntityViews } from './entities.js';
 import { finishOptions } from './carmaterials.js';
 import { KitViews } from './kitviews.js';
 import { TrackView } from './trackview.js';
+import { Scenery } from './scenery.js';
 import {
   applyView,
   viewFollowsHeading,
@@ -104,6 +105,7 @@ export class Renderer {
   #entities: EntityViews;
   #kit: KitViews;
   #track: TrackView;
+  #scenery: Scenery | null = null;
   /**
    * How far back the camera sits, relative to the on-foot framing the view
    * specs are written for. Driven by top speed: what a player needs to see is
@@ -195,6 +197,10 @@ export class Renderer {
     this.#track = new TrackView(this.scene, options.config, {
       normalMaps: qualitySettings(this.#governor.tier).normalMaps,
     });
+    // Everything on the far side of the barrier. Static, tier-independent —
+    // it is a handful of draw calls whatever the device, so there is nothing
+    // for a quality setting to take away.
+    this.#scenery = new Scenery(this.scene, options.config);
     this.#framingScale = options.config.vehicle.enabled
       ? Math.min(1.7, Math.max(1, options.config.playerMaxSpeed / 14))
       : 1;
@@ -334,6 +340,7 @@ export class Renderer {
     this.#canvas.removeEventListener('pointerdown', this.#onManualCamera);
     this.#canvas.removeEventListener('wheel', this.#onManualCamera);
     this.#track.dispose();
+    this.#scenery?.dispose();
     this.#kit.dispose();
     this.#entities.dispose();
     this.scene.dispose();
@@ -793,8 +800,16 @@ export class Renderer {
     ambient.diffuse = racing ? new Color3(0.86, 0.9, 1) : new Color3(1, 1, 1);
     ambient.groundColor = racing ? new Color3(0.22, 0.26, 0.2) : new Color3(0.12, 0.13, 0.18);
 
-    const sun = new DirectionalLight('sun', new Vector3(-0.5, -1, 0.4), this.scene);
-    sun.position = new Vector3(20, 40, -20);
+    // The direction comes from the sky, so the disc a player can see and the
+    // light casting their shadow are one fact rather than two constants that
+    // can drift. A sun in the wrong half of the sky is wrongness everybody
+    // feels and nobody names.
+    const sun = new DirectionalLight(
+      'sun',
+      new Vector3(SUN_TRAVEL.x, SUN_TRAVEL.y, SUN_TRAVEL.z),
+      this.scene,
+    );
+    sun.position = new Vector3(-SUN_TRAVEL.x * 40, -SUN_TRAVEL.y * 40, -SUN_TRAVEL.z * 40);
     sun.intensity = racing ? 2.4 : 1.1;
     // Warm, because sunlight is. A neutral key against a cool sky is what
     // makes a scene read as fluorescent.
@@ -853,8 +868,16 @@ export class Renderer {
   }
 
   #createArena(config: SimConfig, obstacles: readonly Obstacle[]): void {
-    const width = config.arenaHalfExtentX * 2;
-    const depth = config.arenaHalfExtentZ * 2;
+    const racingGround = config.track.enabled && config.trackPath.length >= 2;
+    // A circuit's ground runs well past the arena, out beyond where the fog
+    // has finished. The arena walls still mark the play area; what changes is
+    // that the WORLD no longer stops there. From any raised camera the old
+    // ground read as a slab floating in space, with a cliff edge and sky
+    // underneath it — which is the single fastest way to make a landscape look
+    // like a diorama. Land that fades into haze reads as land that continues.
+    const outer = Math.max(config.arenaHalfExtentX, config.arenaHalfExtentZ) * 5;
+    const width = racingGround ? outer * 2 : config.arenaHalfExtentX * 2;
+    const depth = racingGround ? outer * 2 : config.arenaHalfExtentZ * 2;
 
     // A deep slab, not a plane. A zero-thickness ground is invisible to the
     // side-on camera, which would leave a platformer's characters standing on
@@ -904,23 +927,25 @@ export class Renderer {
     const wallHeight = 2.5;
     const wallThickness = 0.6;
     const hidden = this.#hiddenWallsFor(this.#view);
+    const wallWidth = config.arenaHalfExtentX * 2;
+    const wallDepth = config.arenaHalfExtentZ * 2;
     const allWalls: Array<{ w: number; d: number; x: number; z: number; side: WallSide }> = [
       {
-        w: width + wallThickness * 2,
+        w: wallWidth + wallThickness * 2,
         d: wallThickness,
         x: 0,
         z: config.arenaHalfExtentZ,
         side: 'northZ',
       },
       {
-        w: width + wallThickness * 2,
+        w: wallWidth + wallThickness * 2,
         d: wallThickness,
         x: 0,
         z: -config.arenaHalfExtentZ,
         side: 'southZ',
       },
-      { w: wallThickness, d: depth, x: config.arenaHalfExtentX, z: 0, side: 'eastX' },
-      { w: wallThickness, d: depth, x: -config.arenaHalfExtentX, z: 0, side: 'westX' },
+      { w: wallThickness, d: wallDepth, x: config.arenaHalfExtentX, z: 0, side: 'eastX' },
+      { w: wallThickness, d: wallDepth, x: -config.arenaHalfExtentX, z: 0, side: 'westX' },
     ];
     // All four are built and then hidden per view, rather than filtered here:
     // the camera can change at runtime now, and a wall that was never created

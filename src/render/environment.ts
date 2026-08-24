@@ -6,6 +6,7 @@ import type { Mesh } from '@babylonjs/core/Meshes/mesh.js';
 import { Constants } from '@babylonjs/core/Engines/constants.js';
 import { Color3 } from '@babylonjs/core/Maths/math.color.js';
 import type { Scene } from '@babylonjs/core/scene.js';
+import { fbm } from './surfaces.js';
 
 /**
  * The sky, as something surfaces can reflect.
@@ -45,7 +46,7 @@ const FACE = 64;
  * the dome fills the screen, and a gradient across 64 texels magnified to a
  * thousand pixels bands into visible steps.
  */
-const DOME_FACE = 192;
+const DOME_FACE = 256;
 
 /** The six faces, in the order Babylon expects: +X -X +Y -Y +Z -Z. */
 const FACE_COUNT = 6;
@@ -68,13 +69,83 @@ export interface SkyColours {
    * anyway, so neutral is closer to the truth as well as to the intent.
    */
   readonly ground: Color3;
+  /** Unit vector pointing AT the sun. Must agree with the key light — see below. */
+  readonly sunX: number;
+  readonly sunY: number;
+  readonly sunZ: number;
+  /** The disc itself. Brighter than white on purpose; the tone curve rolls it off. */
+  readonly sunColour: Color3;
+  /** A cloud's lit top. */
+  readonly cloud: Color3;
+  /** A cloud's shaded underside. Without one, clouds read as paper cut-outs. */
+  readonly cloudShade: Color3;
+  /** 0 is a clear sky, 1 is overcast. */
+  readonly cloudCover: number;
 }
 
 export const DAYLIGHT: SkyColours = {
   zenith: new Color3(0.34, 0.48, 0.72),
   horizon: new Color3(0.78, 0.85, 0.94),
   ground: new Color3(0.15, 0.15, 0.145),
+  // Normalised from (0.5, 1, -0.4) — the negation of the key light's travel
+  // direction. `SUN_TRAVEL` below is what the renderer hands the light, so the
+  // two cannot drift apart.
+  sunX: 0.4211,
+  sunY: 0.8422,
+  sunZ: -0.3369,
+  sunColour: new Color3(1, 0.97, 0.9),
+  cloud: new Color3(1, 0.99, 0.97),
+  cloudShade: new Color3(0.62, 0.66, 0.74),
+  cloudCover: 0.45,
 };
+
+/**
+ * The direction sunlight TRAVELS, which is what a `DirectionalLight` wants.
+ *
+ * Exported so the visible sun and the light that casts the shadows are the
+ * same fact stated once. They were two independent constants, and a sky whose
+ * sun is in a different place from the one lighting the cars is the kind of
+ * wrongness everybody feels and nobody can name.
+ */
+export const SUN_TRAVEL = { x: -DAYLIGHT.sunX, y: -DAYLIGHT.sunY, z: -DAYLIGHT.sunZ };
+
+/** Smooth 0..1 ramp between two edges. */
+function smoothstep(edge0: number, edge1: number, value: number): number {
+  const t = Math.min(1, Math.max(0, (value - edge0) / (edge1 - edge0)));
+  return t * t * (3 - 2 * t);
+}
+
+/**
+ * Lattice size for the cloud field. Large, because a sky does not tile — it is
+ * sampled once over a bounded range and any repetition would read as wallpaper.
+ */
+const CLOUD_PERIOD = 64;
+/** How big the cloud clumps are. Lower is bigger. */
+const CLOUD_SCALE = 1.15;
+
+/**
+ * How much cloud is in the way, looking along a unit direction.
+ *
+ * A cloud deck is a flat layer at a height, so the honest projection is where
+ * the view ray crosses that layer: `p = dir.xz / dir.y`. It depends only on the
+ * direction, which means every cube face agrees at its edges for free — the
+ * alternative, sampling per-face 2D noise, puts a visible seam down all twelve.
+ *
+ * Straight up the projection is tight and the clouds are small overhead; near
+ * the horizon it stretches toward infinity, which is exactly what a cloud layer
+ * seen edge-on does. It is also where the detail compresses below one texel, so
+ * the last few degrees fade into the horizon haze rather than aliasing into it.
+ */
+export function cloudAt(x: number, y: number, z: number, colours: SkyColours = DAYLIGHT): number {
+  if (y <= 0.03 || colours.cloudCover <= 0) return 0;
+  const reach = 1 / y;
+  const density = fbm(x * reach * CLOUD_SCALE, z * reach * CLOUD_SCALE, CLOUD_PERIOD, 4);
+  // `cover` moves the threshold rather than scaling the result: at low cover
+  // you get a few separate clouds in a clear sky, which is what "scattered"
+  // means. Scaling would give you a uniform grey veil instead.
+  const threshold = 1 - colours.cloudCover;
+  return smoothstep(threshold, threshold + 0.2, density) * smoothstep(0.03, 0.18, y);
+}
 
 /**
  * Colour of the sky looking along `y`, where +1 is straight up and -1 down.
@@ -97,23 +168,86 @@ export function skyColourAt(y: number, colours: SkyColours = DAYLIGHT): Color3 {
 }
 
 /**
- * Direction a texel on cube face `face` points, as a unit vector's y component.
+ * Everything the sky sends back along one direction: gradient, sun, cloud.
  *
- * The cube faces are laid out in Babylon's order, and for a gradient sky the
- * only component that matters is which way is up.
+ * Ordered the way the light actually arrives. The gradient is the air itself;
+ * the sun is added to it, because a disc that far outshines its surroundings
+ * is a source rather than a surface; and the cloud is composited LAST, over
+ * both, because a cloud is in front of the sky and in front of the sun. Adding
+ * the sun after the cloud would put a bright disc through an overcast, which
+ * is the single most obvious way to get a procedural sky wrong.
+ *
+ * `x, y, z` must be a unit vector.
  */
-function upwardAt(face: number, u: number, v: number): number {
-  // u, v run -1..1 across the face.
-  switch (face) {
-    case 2:
-      return 1 / Math.hypot(u, 1, v); // +Y
-    case 3:
-      return -1 / Math.hypot(u, 1, v); // -Y
-    default:
-      // The four side faces. On all of them the vertical texel axis is world
-      // -Y, so the up component is -v scaled into the unit direction.
-      return -v / Math.hypot(u, v, 1);
+export function skyRadianceAt(
+  x: number,
+  y: number,
+  z: number,
+  colours: SkyColours = DAYLIGHT,
+): Color3 {
+  const colour = skyColourAt(y, colours);
+
+  // The sun, as two lobes. A single one cannot be both: tight enough to read
+  // as a disc AND wide enough to give the sky the glare that surrounds a real
+  // one, which is most of what says "bright day" rather than "blue paint".
+  const towardSun = Math.max(0, x * colours.sunX + y * colours.sunY + z * colours.sunZ);
+  const disc = Math.pow(towardSun, 1600);
+  const glare = Math.pow(towardSun, 6) * 0.22;
+  colour.r += colours.sunColour.r * (disc + glare);
+  colour.g += colours.sunColour.g * (disc + glare);
+  colour.b += colours.sunColour.b * (disc + glare);
+
+  const cloud = cloudAt(x, y, z, colours);
+  if (cloud > 0) {
+    // Thin edges are lit through and bright; thick middles are shaded. That
+    // one gradient is the difference between clouds and white blobs.
+    const lit = smoothstep(0.15, 0.75, cloud);
+    const r = colours.cloudShade.r + (colours.cloud.r - colours.cloudShade.r) * lit;
+    const g = colours.cloudShade.g + (colours.cloud.g - colours.cloudShade.g) * lit;
+    const b = colours.cloudShade.b + (colours.cloud.b - colours.cloudShade.b) * lit;
+    colour.r += (r - colour.r) * cloud;
+    colour.g += (g - colour.g) * cloud;
+    colour.b += (b - colour.b) * cloud;
   }
+
+  return colour;
+}
+
+/**
+ * Unit direction a texel on cube face `face` points along.
+ *
+ * The faces are in Babylon's order: +X -X +Y -Y +Z -Z. This used to return
+ * only the y component, which was all a plain gradient needed; a sun and a
+ * cloud layer need the whole vector.
+ */
+export function directionAt(face: number, u: number, v: number): [number, number, number] {
+  // u, v run -1..1 across the face. The vertical texel axis is world -Y on
+  // every side face, and the horizontal one flips with the face's handedness.
+  let x: number;
+  let y: number;
+  let z: number;
+  switch (face) {
+    case 0:
+      [x, y, z] = [1, -v, -u]; // +X
+      break;
+    case 1:
+      [x, y, z] = [-1, -v, u]; // -X
+      break;
+    case 2:
+      [x, y, z] = [u, 1, v]; // +Y
+      break;
+    case 3:
+      [x, y, z] = [u, -1, -v]; // -Y
+      break;
+    case 4:
+      [x, y, z] = [u, -v, 1]; // +Z
+      break;
+    default:
+      [x, y, z] = [-u, -v, -1]; // -Z
+      break;
+  }
+  const length = Math.hypot(x, y, z);
+  return [x / length, y / length, z / length];
 }
 
 /**
@@ -132,11 +266,14 @@ function skyFaces(size: number, colours: SkyColours): ArrayBufferView[] {
         // Texel centres, so the gradient is symmetric across the face.
         const u = ((x + 0.5) / size) * 2 - 1;
         const v = ((y + 0.5) / size) * 2 - 1;
-        const colour = skyColourAt(upwardAt(face, u, v), colours);
+        const [dx, dy, dz] = directionAt(face, u, v);
+        const colour = skyRadianceAt(dx, dy, dz, colours);
         const at = (y * size + x) * 4;
-        data[at] = Math.round(colour.r * 255);
-        data[at + 1] = Math.round(colour.g * 255);
-        data[at + 2] = Math.round(colour.b * 255);
+        // Clamped, not scaled: the sun is deliberately brighter than the
+        // buffer can hold, and letting it burn out is what a photograph does.
+        data[at] = Math.min(255, Math.round(colour.r * 255));
+        data[at + 1] = Math.min(255, Math.round(colour.g * 255));
+        data[at + 2] = Math.min(255, Math.round(colour.b * 255));
         data[at + 3] = 255;
       }
     }
@@ -191,9 +328,19 @@ export function createSkyEnvironment(scene: Scene, colours: SkyColours = DAYLIGH
  * cube lookup per background pixel.
  */
 export function createSkyDome(scene: Scene, colours: SkyColours = DAYLIGHT): Mesh {
+  // The dome and the reflection probe want DIFFERENT lower hemispheres, and
+  // that is not an inconsistency — they answer different questions.
+  //
+  // The probe models radiance: what is actually down there is dark ground, and
+  // a car's underside should reflect it. The dome models what a player SEES,
+  // and in a scene with a floor you never see the sky below the horizon at
+  // all — except at the edges of the world, where a dark hemisphere reads as a
+  // hole punched in the picture. Haze is the least wrong thing to put there,
+  // so below the horizon the dome simply keeps dimming the horizon colour.
+  const domeColours: SkyColours = { ...colours, ground: colours.horizon.scale(0.72) };
   const texture = new RawCubeTexture(
     scene,
-    skyFaces(DOME_FACE, colours),
+    skyFaces(DOME_FACE, domeColours),
     DOME_FACE,
     Constants.TEXTUREFORMAT_RGBA,
     Constants.TEXTURETYPE_UNSIGNED_BYTE,

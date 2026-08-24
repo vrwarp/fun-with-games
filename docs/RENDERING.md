@@ -29,7 +29,8 @@ Nothing below quietly restyles them: every branch is on
 | File              | Owns                                                                     |
 | ----------------- | ------------------------------------------------------------------------ |
 | `renderer.ts`     | Engine, scene, camera, lights, fog, arena, post-processing, quality tier |
-| `environment.ts`  | The generated sky: a reflection probe and a visible dome                 |
+| `environment.ts`  | The generated sky: sun, clouds, a reflection probe and a visible dome    |
+| `scenery.ts`      | Trees, tyre walls and marshal posts, as thin instances                   |
 | `surfaces.ts`     | Procedural albedo + height patterns, and the normal maps made from them  |
 | `carmesh.ts`      | The car's geometry                                                       |
 | `carmaterials.ts` | The car's substances (paint, carbon, rubber, metal)                      |
@@ -98,6 +99,43 @@ The ground colour is deliberately **neutral**, not grass green. This cube lights
 and mirrors everything in the scene, so a green lower hemisphere puts a green
 cast on every surface — the tarmac came out sage, and it took a magenta-tagged
 build to prove where it was coming from.
+
+### A sun and a cloud deck
+
+`skyRadianceAt` composites three things, in the order the light arrives:
+
+1. the gradient, which is the air;
+2. the **sun**, added to it, as two lobes — a tight disc (`pow(dot, 1600)`) and
+   a broad glare (`pow(dot, 6)`). One falloff cannot be both, and the glare is
+   most of what says "bright day" rather than "blue paint";
+3. the **cloud**, composited over both. Order matters: a disc added after the
+   cloud shines straight through an overcast, which is the most obvious way to
+   get a procedural sky wrong, so a test pins it.
+
+The cloud deck is a flat layer at a height, so the projection is where the view
+ray crosses it: `p = dir.xz / dir.y`. That depends only on the direction, which
+means **every cube face agrees at its edges for free** — per-face 2D noise
+would put a seam down all twelve. Overhead the projection is tight; near the
+horizon it stretches toward infinity, which is what a cloud layer seen edge-on
+actually does, and also where the detail drops below a texel, so the last few
+degrees fade into the horizon haze rather than aliasing into it.
+
+Cover moves a **threshold** rather than scaling a density. That is what makes
+"scattered" mean separate clouds with gaps, instead of a uniform grey veil; the
+test asserts the distribution is bimodal for exactly that reason.
+
+`SUN_TRAVEL` is exported and the renderer hands it straight to the key light,
+so the sun you can see and the light casting your shadow are one fact rather
+than two constants that drift.
+
+### The dome and the probe want different lower hemispheres
+
+Not an inconsistency — different questions. The probe models radiance: what is
+down there is dark ground, and a car's underside should reflect it. The dome
+models what a player SEES, and in a scene with a floor you never look at sky
+below the horizon except at the edges of the world, where a dark hemisphere
+reads as a hole punched in the picture. So the dome keeps dimming the horizon
+colour instead. `createSkyDome` makes that swap in one line.
 
 ---
 
@@ -179,7 +217,88 @@ how it looks over a mid-grey.
 
 ---
 
-## 7. Quality tiers
+## 7. The world beyond the kerb
+
+The scene used to end at the kerb: grass, then a grey wall, then sky. A circuit
+drawn that way is a road on a plane, and no amount of work on the road fixes
+it — what tells you a track is somewhere is the stuff you are not looking at.
+
+`scenery.ts` plants trees, tyre walls and marshal posts. Three rules make it
+affordable and correct:
+
+- **Thin instances.** One mesh, one material, one draw call, and a buffer of
+  transforms. Five hundred trees cost about what one tree costs.
+- **Nothing casts a shadow.** The shadow map is fitted to whatever casts into
+  it, so admitting a treeline would stretch it across the whole arena and leave
+  each car a handful of texels — trading the shadow that matters for hundreds
+  nobody looks at.
+- **Placement is a pure function.** `scatter` and `tyreWalls` take numbers and
+  return positions, with no Babylon near them, because they can be wrong in
+  ways a screenshot hides: a tree in the racing line is obvious, a tree just
+  inside the track limit at the far end of the circuit is not, and a tyre wall
+  on the INSIDE of a corner reads as merely odd until you notice the circuit
+  has been telling every driver the wrong thing all race.
+
+Trees are a jittered grid with a third of the cells left empty — uniform random
+points clump, and clumped trees read as a mistake rather than as a wood.
+Candidates that land near the road are dropped rather than nudged, because a
+circuit folds back on itself and nudging produces a suspicious ring hugging the
+barrier.
+
+There are **three species**, differing in silhouette more than in hue. A single
+prototype repeated hundreds of times is found out immediately: the eye is very
+good at spotting a repeated shape and rather bad at measuring a tree. (The
+cheaper fix — one mesh with a colour per instance — did not take: a
+thin-instance colour buffer needs the material set up to read it. Two extra
+draw calls buy shape variation as well, which is the stronger signal.)
+
+Tyre walls go where the road actually **bends**, measured as the turn in
+heading over a fixed chord rather than from the path's own vertices, which
+would measure how densely the circuit was authored. Straights get nothing,
+which is what makes the corners read.
+
+### The ground runs past the arena
+
+On a circuit the ground is five times the arena and the walls stay where they
+were. From any raised camera the old ground read as a slab floating in space,
+with a cliff edge and sky underneath — the fastest way to make a landscape look
+like a diorama. Scenery is planted well past the boundary too, so the wall has
+a treeline above it rather than a bare grey band across the horizon.
+
+---
+
+## 8. The road is painted
+
+Two markings, both derived from the same track path the simulation uses.
+
+**Track-limit lines** are thin white bands at the inner edge of the kerbs. That
+is where the clean track ends, and it matches the simulation: kerbs sit _inside_
+the limits here, so the line goes inside them.
+
+**The racing line** is a strip of laid-in rubber — darker than the tarmac and,
+more importantly, _smoother_. Dropping the roughness is what makes it catch the
+sky along a straight while the tarmac either side stays dull, which is how you
+see it at all from a camera a metre off the ground. It is built as a four-path
+ribbon with vertex alpha so it fades at its edges; a hard edge reads as a
+painted stripe, and rubber has no edge.
+
+`racingLineOffsets` is pure and tested. The raw signal is only "how hard is the
+road turning, and which way", which alone would pin the line to the inside kerb
+through a corner and snap it back the instant the road straightened — a
+zig-zag. **The smoothing is what makes it a line:** averaging over a long
+circular window pulls commitment backward and forward, so the line drifts out
+before the corner and unwinds after it. Turn-in and exit fall out of the filter
+rather than being written down. Circular, because a lap is — smoothing it as an
+open sequence leaves a kink at the start/finish line, which is exactly where
+everybody is looking.
+
+Commitment scales with curvature, so a fast kink gets a gentle drift and a
+hairpin gets the full width. A line pinned to the inside everywhere is not a
+racing line, it is a wall-follower.
+
+---
+
+## 9. Quality tiers
 
 `quality.ts` is pure policy, and pure on purpose: CI runs headless software
 rendering at single-digit frame rates whatever the settings, so a browser test
@@ -221,7 +340,7 @@ it describes a device, not the game somebody was invited to.
 
 ---
 
-## 8. The car
+## 10. The car
 
 `carmesh.ts` builds about forty primitives — tapered nose, six-sided monocoque,
 tapering sidepods, airbox and engine cover, halo, floor and raked diffuser,
@@ -246,7 +365,7 @@ way reads as one moulded object, and no amount of shaping fixes that.
 
 ---
 
-## 9. Status effects across material types
+## 11. Status effects across material types
 
 `skin.ts` exists because a body is no longer always a `StandardMaterial`. A car
 is `PBRMaterial`, a sprite is a `StandardMaterial` with lighting off, and the
@@ -260,7 +379,7 @@ growing a branch.
 
 ---
 
-## 10. How to check a change
+## 12. How to check a change
 
 Headless tests cover the pure parts (`surfaces.ts`, `quality.ts`,
 `environment.ts`, `marks.ts`). Everything else needs eyes, and **screenshots

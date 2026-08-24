@@ -139,8 +139,10 @@ arena differently in portrait. Both exist so the game is playable one-handed;
 see `CLAUDE.md` §7.
 
 A circuit is shaded physically: metallic-roughness materials, a generated sky
-that surfaces reflect, procedural normal maps for asphalt, grass, carbon and
-rubber, and an ACES tone curve over the lot. It runs on a phone because the
+with a sun and a cloud deck that surfaces both reflect and stand under,
+procedural normal maps for asphalt, grass, carbon and rubber, thin-instanced
+trackside scenery, a rubbered-in racing line, and an ACES tone curve over the
+lot. It runs on a phone because the
 whole look is tiered, and the tier policy is pure and unit-tested — CI renders
 in software at single-digit frame rates and cannot tell a cheap tier from an
 expensive one. The other modes keep the darker arena look they were designed

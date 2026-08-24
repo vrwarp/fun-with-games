@@ -5,6 +5,7 @@ import { PBRMaterial } from '@babylonjs/core/Materials/PBR/pbrMaterial.js';
 import type { Material } from '@babylonjs/core/Materials/material.js';
 import { Texture } from '@babylonjs/core/Materials/Textures/texture.js';
 import { CreateRibbon } from '@babylonjs/core/Meshes/Builders/ribbonBuilder.js';
+import { VertexBuffer } from '@babylonjs/core/Buffers/buffer.js';
 import { CreateBox } from '@babylonjs/core/Meshes/Builders/boxBuilder.js';
 import type { Mesh } from '@babylonjs/core/Meshes/mesh.js';
 import type { Scene } from '@babylonjs/core/scene.js';
@@ -39,6 +40,9 @@ const ROAD_TEXTURE_SIZE = 256;
 const ROAD_TILE = 6;
 const DRS_Y = 0.05;
 const KERB_Y = 0.08;
+const LIMIT_Y = 0.095;
+/** Where the laid-in rubber sits: on the road, under everything painted. */
+const RUBBER_Y = 0.03;
 const SECTOR_Y = 0.11;
 const LINE_Y = 0.14;
 
@@ -52,7 +56,24 @@ const LINE_Y = 0.14;
  * itself. A polygon offset biases the comparison rather than the geometry, so
  * the paint stays flat and still wins.
  */
-const LAYER_BIAS = { drs: -1, kerb: -2, sector: -3, line: -4 } as const;
+const LAYER_BIAS = { rubber: -0.5, drs: -1, kerb: -2, limit: -2.5, sector: -3, line: -4 } as const;
+
+/**
+ * How far the ideal line moves toward the inside of a corner, as a fraction of
+ * the half-width.
+ *
+ * Not all the way to the kerb: the strip has width of its own, and a racing
+ * line whose outer edge hangs over the kerb reads as a mistake rather than as
+ * commitment.
+ */
+const LINE_REACH = 0.62;
+/** Half-width of the rubbered-in strip, in world units. */
+const LINE_HALF_WIDTH = 0.85;
+/**
+ * Turn angle over the sampling chord at which a driver is fully committed to
+ * the inside. About 26 degrees over twelve metres — a properly slow corner.
+ */
+const TURN_FULL = 0.45;
 /**
  * Half-width of the line painted at each end of a DRS zone, in world units.
  *
@@ -94,6 +115,73 @@ export interface TrackViewOptions {
   readonly normalMaps: boolean;
 }
 
+/**
+ * Where the fast line runs, as a lateral offset from the centreline at even
+ * distances around the lap.
+ *
+ * Every circuit has one and it is the first thing a driver reads: a dark strip
+ * of laid-in rubber that swings wide, dives to the apex and runs out again. A
+ * track without it is a road; a track with it tells you which way the next
+ * corner goes before you can see it.
+ *
+ * ## Why smoothing does the work
+ *
+ * The raw signal is only "how hard is the road turning here, and which way",
+ * which on its own would put the line hard against the inside kerb through the
+ * corner and hard back to the middle the instant it straightened — a zig-zag,
+ * not a line. What makes it a racing line is the SMOOTHING: averaging the
+ * offset over a long window pulls the commitment backward and forward in time,
+ * so the line drifts out before the corner and unwinds after it. Turn-in and
+ * exit fall out of the filter rather than being written down.
+ *
+ * Circular, because a lap is. Smoothing a lap as an open sequence leaves a
+ * kink at the start/finish line, which is exactly where everybody is looking.
+ */
+export function racingLineOffsets(
+  path: readonly TrackPoint[],
+  lap: number,
+  samples: number,
+  maxOffset: number,
+): number[] {
+  if (path.length < 2 || samples < 4 || lap <= 0) return [];
+  const chord = 6;
+  const raw: number[] = [];
+
+  for (let i = 0; i < samples; i++) {
+    const at = (lap * i) / samples;
+    const behind = trackPoseAt(path, at - chord);
+    const ahead = trackPoseAt(path, at + chord);
+    const cross = behind.dirX * ahead.dirZ - behind.dirZ * ahead.dirX;
+    const dot = behind.dirX * ahead.dirX + behind.dirZ * ahead.dirZ;
+    const turn = Math.atan2(cross, dot);
+    // A positive turn is a left-hander, and the inside of a left-hander is the
+    // left — the negative direction along the right-hand normal everything
+    // else here is measured with.
+    const commitment = Math.min(1, Math.abs(turn) / TURN_FULL);
+    raw.push(-Math.sign(turn) * commitment * maxOffset);
+  }
+
+  return smoothLoop(raw, 7, 4);
+}
+
+/** Moving average over a sequence that wraps. */
+function smoothLoop(values: readonly number[], window: number, passes: number): number[] {
+  let current = [...values];
+  const count = current.length;
+  for (let pass = 0; pass < passes; pass++) {
+    const next = new Array<number>(count);
+    for (let i = 0; i < count; i++) {
+      let sum = 0;
+      for (let k = -window; k <= window; k++) {
+        sum += current[(((i + k) % count) + count) % count] ?? 0;
+      }
+      next[i] = sum / (window * 2 + 1);
+    }
+    current = next;
+  }
+  return current;
+}
+
 export class TrackView {
   readonly #scene: Scene;
   readonly #normalMaps: boolean;
@@ -120,6 +208,12 @@ export class TrackView {
     const kerb = this.#kerbMaterial(lap);
     this.#band('track:kerb:l', path, 0, lap, half - 0.9, half, KERB_Y, kerb);
     this.#band('track:kerb:r', path, 0, lap, -half, -half + 0.9, KERB_Y, kerb);
+
+    // The fast line, and the white paint that says where the road ends.
+    this.#racingLine(path, lap, half);
+    const limit = this.#limitMaterial();
+    this.#band('track:limit:l', path, 0, lap, half - 1.08, half - 0.9, LIMIT_Y, limit);
+    this.#band('track:limit:r', path, 0, lap, -half + 0.9, -half + 1.08, LIMIT_Y, limit);
 
     this.#buildZoneMarks(config, path, half, lap);
 
@@ -449,6 +543,98 @@ export class TrackView {
     material.diffuseColor = Color3.FromHexString('#c9ccd3');
     material.specularColor = new Color3(0.08, 0.08, 0.09);
     material.backFaceCulling = false;
+    this.#materials.push(material);
+    return material;
+  }
+
+  /**
+   * The rubbered-in racing line.
+   *
+   * Built as a four-path ribbon so it can fade at its edges. A hard-edged
+   * strip reads as a painted stripe, which is the one thing a racing line is
+   * not — it is rubber ground into the surface, and rubber has no edge. The
+   * two outer paths carry zero alpha and the two inner ones carry full, which
+   * costs one extra quad across the width and buys the whole effect.
+   */
+  #racingLine(path: readonly TrackPoint[], lap: number, half: number): void {
+    const samples = Math.max(16, Math.round(lap / 1.5));
+    const offsets = racingLineOffsets(path, lap, samples, (half - LINE_HALF_WIDTH) * LINE_REACH);
+    if (offsets.length === 0) return;
+
+    // Four paths across: fade, solid, solid, fade.
+    const across = [-1.9, -1, 1, 1.9].map((k) => k * LINE_HALF_WIDTH);
+    const alphas = [0, 1, 1, 0];
+    const paths: Vector3[][] = across.map(() => []);
+
+    // One extra sample so the ribbon closes on itself rather than leaving a
+    // seam at the start/finish line.
+    for (let i = 0; i <= samples; i++) {
+      const index = i % samples;
+      const at = (lap * i) / samples;
+      const pose = trackPoseAt(path, at);
+      // Right of the road, matching every other band here.
+      const normalX = pose.dirZ;
+      const normalZ = -pose.dirX;
+      const centre = offsets[index] ?? 0;
+      across.forEach((lateral, lane) => {
+        const offset = centre + lateral;
+        paths[lane]?.push(
+          new Vector3(pose.x + normalX * offset, RUBBER_Y, pose.z + normalZ * offset),
+        );
+      });
+    }
+
+    const mesh = CreateRibbon(
+      'track:rubber',
+      { pathArray: paths, sideOrientation: 2 },
+      this.#scene,
+    );
+    const colours = new Float32Array((samples + 1) * across.length * 4);
+    let at = 0;
+    for (let lane = 0; lane < across.length; lane++) {
+      for (let i = 0; i <= samples; i++) {
+        colours[at] = 1;
+        colours[at + 1] = 1;
+        colours[at + 2] = 1;
+        colours[at + 3] = alphas[lane] ?? 0;
+        at += 4;
+      }
+    }
+    mesh.setVerticesData(VertexBuffer.ColorKind, colours);
+    mesh.hasVertexAlpha = true;
+    mesh.material = this.#rubberMaterial();
+    mesh.isPickable = false;
+    mesh.receiveShadows = false;
+    this.#meshes.push(mesh);
+  }
+
+  /**
+   * Laid-in rubber: darker than the tarmac and, crucially, SMOOTHER.
+   *
+   * A racing line is not paint, it is the surface polished by a season of
+   * tyres. Dropping the roughness is what makes it catch the sky along a
+   * straight while the tarmac either side of it stays dull — which is how you
+   * see it at all from a camera a metre off the ground.
+   */
+  #rubberMaterial(): PBRMaterial {
+    const material = new PBRMaterial('track:rubber:mat', this.#scene);
+    material.albedoColor = Color3.FromHexString('#17171a').toLinearSpace();
+    material.metallic = 0;
+    material.roughness = 0.42;
+    material.zOffset = LAYER_BIAS.rubber;
+    material.backFaceCulling = CULL_BACK_FACES;
+    this.#materials.push(material);
+    return material;
+  }
+
+  /** The white line at the track limit. Paint: bright, flat, slightly glossy. */
+  #limitMaterial(): PBRMaterial {
+    const material = new PBRMaterial('track:limit:mat', this.#scene);
+    material.albedoColor = Color3.FromHexString('#d9dbdd').toLinearSpace();
+    material.metallic = 0;
+    material.roughness = 0.55;
+    material.zOffset = LAYER_BIAS.limit;
+    material.backFaceCulling = CULL_BACK_FACES;
     this.#materials.push(material);
     return material;
   }

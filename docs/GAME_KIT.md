@@ -418,6 +418,24 @@ generation. `bots.speedMultiplier` keeps them beatable.
 Bot ids start `zz-bot-` so they sort after real peer ids and never win host
 election (they are not peers at all).
 
+**Bots and players write to the same control contract**, and that is a
+correctness measure rather than tidiness. `moveX`/`moveZ` mean two different
+things depending on the mode — a direction in the world on foot, steering and
+throttle in the car's own frame with `vehicle.enabled` — and the choice used to
+be made independently in `systems/bots.ts` and in `main.ts`. Two answers to one
+question is a bug that cannot be caught: whichever half is wrong passes every
+test the other half runs, so an inverted player stick sails through a green bot
+suite and only a human at a phone ever finds out.
+
+`src/sim/controls.ts` now owns it. `usesVehicleAxes(config)` is the single
+predicate (the render layer asks it to decide whether to rotate a device's axes
+by the camera yaw); `axesForDirection()` turns a wanted world direction into
+whichever pair of axes the mode reads; `INPUT_DEADZONE` is one floor rather
+than one per device. Because it is pure `src/sim`, a headless test can drive a
+NON-bot player through the very same function a thumb reaches —
+`tests/unit/sim/controls.test.ts` races one round a circuit and checks that
+inverting the lock, or swapping the two axes, stops it dead.
+
 ### Pickups — `systems/pickups.ts`, config `pickupWeights` + `powerups`
 
 Four kinds, chosen by weight at world creation: `score` (points), `speed`,

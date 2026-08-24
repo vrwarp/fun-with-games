@@ -47,29 +47,30 @@ nothing.
 
 ### `src/sim` — the game
 
-| File                     | Responsibility                                               |
-| ------------------------ | ------------------------------------------------------------ |
-| `world.ts`               | State container and the fixed-step `step()` pipeline         |
-| `config.ts`              | Every tunable number, incl. one section per kit system       |
-| `presets.ts`             | Named game modes: one `SimConfig` per `GameModeId`           |
-| `types.ts`               | `PlayerState`, `WorldSnapshot`, phases, effects, …           |
-| `step.ts`                | `StepContext` — what a system may read/mutate per tick       |
-| `rng.ts`                 | Seeded, serializable PRNG                                    |
-| `track.ts`               | Circuit geometry: smoothing, on-track, lap progress, grids   |
-| `systems/arena.ts`       | Seed-derived obstacles, platforms, spawns and starting grids |
-| `systems/movement.ts`    | Integration (analog magnitude, effects, gravity/jumping)     |
-| `systems/phase.ts`       | Match flow: lobby/countdown/playing/ended, win conditions    |
-| `systems/effects.ts`     | Timed statuses: speed, shield, frozen, ko, safe, …           |
-| `systems/combat.ts`      | Damage, KO, respawn, lives/elimination                       |
-| `systems/projectiles.ts` | Fire-button projectiles, knockback                           |
-| `systems/tag.ts`         | Tag / infection role transfer                                |
-| `systems/ball.ts`        | Pushable ball, bounces, team goals                           |
-| `systems/zones.ts`       | Hills (king-of-the-hill), race checkpoints, lap timing       |
-| `systems/vehicle.ts`     | Car handling: steering, grip, brakes, surfaces, tyres        |
-| `systems/race.ts`        | Running order, slipstream, DRS, tyre stints, the pit lane    |
-| `systems/items.ts`       | Carryable flags (CTF) and crowns (keep-away)                 |
-| `systems/bots.ts`        | Deterministic in-sim bots, mode-aware                        |
-| `systems/pickups.ts`     | Collection, respawn, power-up payloads                       |
+| File                     | Responsibility                                                  |
+| ------------------------ | --------------------------------------------------------------- |
+| `world.ts`               | State container and the fixed-step `step()` pipeline            |
+| `config.ts`              | Every tunable number, incl. one section per kit system          |
+| `presets.ts`             | Named game modes: one `SimConfig` per `GameModeId`              |
+| `types.ts`               | `PlayerState`, `WorldSnapshot`, phases, effects, …              |
+| `step.ts`                | `StepContext` — what a system may read/mutate per tick          |
+| `rng.ts`                 | Seeded, serializable PRNG                                       |
+| `track.ts`               | Circuit geometry: smoothing, on-track, lap progress, grids      |
+| `controls.ts`            | What `moveX`/`moveZ` mean — the contract bots and players share |
+| `systems/arena.ts`       | Seed-derived obstacles, platforms, spawns and starting grids    |
+| `systems/movement.ts`    | Integration (analog magnitude, effects, gravity/jumping)        |
+| `systems/phase.ts`       | Match flow: lobby/countdown/playing/ended, win conditions       |
+| `systems/effects.ts`     | Timed statuses: speed, shield, frozen, ko, safe, …              |
+| `systems/combat.ts`      | Damage, KO, respawn, lives/elimination                          |
+| `systems/projectiles.ts` | Fire-button projectiles, knockback                              |
+| `systems/tag.ts`         | Tag / infection role transfer                                   |
+| `systems/ball.ts`        | Pushable ball, bounces, team goals                              |
+| `systems/zones.ts`       | Hills (king-of-the-hill), race checkpoints, lap timing          |
+| `systems/vehicle.ts`     | Car handling: steering, grip, brakes, surfaces, tyres           |
+| `systems/race.ts`        | Running order, slipstream, DRS, tyre stints, the pit lane       |
+| `systems/items.ts`       | Carryable flags (CTF) and crowns (keep-away)                    |
+| `systems/bots.ts`        | Deterministic in-sim bots, mode-aware                           |
+| `systems/pickups.ts`     | Collection, respawn, power-up payloads                          |
 
 Every kit system is driven by its section of `SimConfig` and is inert at the
 defaults; `presets.ts` composes them into modes (see `docs/GAME_KIT.md`).

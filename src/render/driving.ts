@@ -1,8 +1,19 @@
 import { clamp } from '../shared/math.js';
+import { INPUT_DEADZONE } from '../sim/controls.js';
 import { IDLE_INTENT, type InputIntent } from './input.js';
 
-/** Deflection below this fraction of the track reads as centred. */
-const STEER_DEADZONE = 0.06;
+/**
+ * Deflection below this fraction of the track reads as centred.
+ *
+ * Never under the simulation's own floor, which is the number that actually
+ * decides whether an input does anything. A device with a smaller deadzone
+ * than `INPUT_DEADZONE` opens a dead band nobody can see — the knob moves, the
+ * value on the wire changes, and the car ignores it — so the two are pinned
+ * together here rather than left to drift apart in separate files. A device is
+ * free to want MORE than the floor, as this one does: a thumb resting on a
+ * track is noisier than a value arriving over the network.
+ */
+const STEER_DEADZONE = Math.max(0.06, INPUT_DEADZONE);
 
 /**
  * On-screen driving controls: a steering track for one thumb, pedals for the

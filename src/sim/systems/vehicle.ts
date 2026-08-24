@@ -1,5 +1,6 @@
 import { clamp, distanceSq2 } from '../../shared/math.js';
 import type { SimConfig } from '../config.js';
+import { centred } from '../controls.js';
 import { isOnTrack } from '../track.js';
 import { BUTTON_PRIMARY, BUTTON_SECONDARY, type PlayerInput, type PlayerState } from '../types.js';
 import { effectRemaining, hasEffect, isImmobilized } from './effects.js';
@@ -57,8 +58,6 @@ import { effectRemaining, hasEffect, isImmobilized } from './effects.js';
  * a clock.
  */
 
-/** Deflection below which an axis reads as centred, not as a light touch. */
-const INPUT_DEADZONE = 0.05;
 /** Speeds below this are snapped to a standstill so a parked car stays parked. */
 const REST_SPEED = 0.02;
 /** Below this speed the front tyres have nothing to lose, so the yaw cap lifts. */
@@ -482,11 +481,6 @@ export function steerVehicle(
   // The heading may have moved since `sin`/`cos` were taken, and `forward` and
   // `lateral` were rotated to match, so recompose in the frame we ended in.
   writeBack(player, forward, lateral, Math.sin(player.heading), Math.cos(player.heading));
-}
-
-/** Treats a barely-touched axis as centred, so a resting thumb does nothing. */
-function centred(value: number): number {
-  return Math.abs(value) < INPUT_DEADZONE ? 0 : value;
 }
 
 /** Recomposes car-local velocity back into world axes. */

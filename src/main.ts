@@ -4,6 +4,7 @@ import { createLogger, setLogLevel, type LogLevel } from './shared/logger.js';
 import { DEFAULT_MODE_ID, isGameModeId, modeInfo, type GameModeId } from './shared/modes.js';
 import { hashStringToSeed } from './sim/rng.js';
 import { modeConfig } from './sim/presets.js';
+import { usesVehicleAxes } from './sim/controls.js';
 import { NetSession } from './net/session.js';
 import type { Transport } from './net/transport.js';
 import { createBroadcastTransport } from './net/transports/broadcast.js';
@@ -328,7 +329,12 @@ async function launch(app: HTMLElement, options: LaunchOptions): Promise<void> {
     // the CAR's frame, so they must not be rotated into the camera's. Passing
     // no yaw is what keeps `moveX`/`moveZ` as the raw right/forward axes —
     // and what makes driving identical in all five views.
-    const intentYaw = config.vehicle.enabled ? 0 : yaw;
+    //
+    // Asked of `usesVehicleAxes` rather than read off the config, because the
+    // bots ask the same function (`axesForDirection`, same module) for the same
+    // decision. Two independent answers to "what do these axes mean?" is a bug
+    // that hides: the half that is wrong passes every test the other half runs.
+    const intentYaw = usesVehicleAxes(config) ? 0 : yaw;
     // Exactly one of the two touch devices exists, chosen by the mode; the
     // fallback is only here so neither branch needs an assertion.
     const stick = driving?.read() ?? touch?.read(intentYaw) ?? IDLE_INTENT;

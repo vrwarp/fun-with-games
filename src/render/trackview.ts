@@ -217,9 +217,17 @@ export class TrackView {
     // Asphalt, and deliberately lighter than the grass it sits on: the road
     // has to be the first thing the eye finds, from a camera 1.35 units off it
     // as well as from directly overhead.
-    material.diffuseColor = Color3.FromHexString('#2b3038');
-    material.emissiveColor = Color3.FromHexString('#181b22');
-    material.specularColor = new Color3(0.04, 0.04, 0.05);
+    // Neutral, and deliberately NOT the blue-grey it used to be. The scene is
+    // now lit by a blue sky and a green ground bounce, and a road with blue in
+    // its own colour on top of that came out teal — painted concrete rather
+    // than tarmac. A near-neutral surface takes the sky's colour without
+    // doubling it.
+    material.diffuseColor = Color3.FromHexString('#34343a');
+    // Barely any. Emissive is a flat add that no light can shade, so a road
+    // carrying much of it stays the same brightness in shadow as in sun and
+    // the whole surface goes flat.
+    material.emissiveColor = Color3.FromHexString('#0e0e11');
+    material.specularColor = new Color3(0.06, 0.06, 0.06);
     material.backFaceCulling = CULL_BACK_FACES;
     this.#materials.push(material);
     return material;

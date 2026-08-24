@@ -314,6 +314,15 @@ export class EntityViews {
     const baseColor = Color3.FromHexString(player.color);
     const baseEmissive = player.isLocal ? baseColor.scale(0.35) : new Color3(0, 0, 0);
 
+    // Car paint, not plastic. A tight bright highlight is the whole difference
+    // between a coloured shape and a body panel — it is what tells the eye the
+    // surface is curved and lacquered, and it is one line rather than a second
+    // material or a texture.
+    if (this.#vehicle && !this.#sprites) {
+      material.specularColor = new Color3(0.85, 0.85, 0.9);
+      material.specularPower = 96;
+    }
+
     let body: Mesh;
     let wing: Mesh | null = null;
     const parts: Mesh[] = [];
@@ -497,7 +506,9 @@ export class EntityViews {
     if (!this.#carTrim) {
       const material = new StandardMaterial('car:trim', this.#scene);
       material.diffuseColor = Color3.FromHexString('#20242e');
-      material.specularColor = new Color3(0.2, 0.2, 0.24);
+      // Between the two: dark composite with a sheen, not a mirror.
+      material.specularColor = new Color3(0.35, 0.35, 0.4);
+      material.specularPower = 32;
       this.#carTrim = material;
     }
     return this.#carTrim;
@@ -507,7 +518,12 @@ export class EntityViews {
     if (!this.#carRubber) {
       const material = new StandardMaterial('car:rubber', this.#scene);
       material.diffuseColor = Color3.FromHexString('#15171d');
-      material.specularColor = new Color3(0.05, 0.05, 0.05);
+      // Dead matte, and deliberately the opposite of the bodywork above. A
+      // tyre that catches the light the way a wing does reads as painted
+      // metal, and the contrast between the two is most of what makes either
+      // of them convincing.
+      material.specularColor = new Color3(0.02, 0.02, 0.02);
+      material.specularPower = 4;
       this.#carRubber = material;
     }
     return this.#carRubber;

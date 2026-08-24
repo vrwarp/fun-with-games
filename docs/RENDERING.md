@@ -196,8 +196,15 @@ Tone mapping and the environment are in **all** tiers. The first is nearly free
 and is the largest single difference between a render and a photograph; the
 second is what makes the materials work at all.
 
-The starting tier is deliberately pessimistic (a touch screen means a phone; a
-phone with few cores or a pixel ratio of 3 means a cheap one), and
+The starting tier is deliberately pessimistic. **No GPU beats every other
+signal:** `isSoftwareRenderer()` matches the WebGL renderer string against
+SwiftShader, llvmpipe and friends, and a machine shading every fragment on the
+CPU opens on `low` however desktop-shaped it otherwise looks. That is CI
+containers, virtual machines, remote desktops and any browser where
+acceleration is off or blocklisted, and without it such a machine opens on the
+most expensive look and spends eight seconds and two rebuilds climbing back
+down. Otherwise a touch screen means a phone, and a phone with few cores or a
+pixel ratio of 3 means a cheap one. Then
 `QualityGovernor` only ever steps **down**, after a sustained shortfall rather
 than one dropped frame. A player who starts too low sees a game that runs
 beautifully and can turn the handsome switches on; a player who starts too high

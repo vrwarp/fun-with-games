@@ -153,7 +153,9 @@ export class Renderer {
     // Which look this device can afford. Everything visual below asks the
     // tier rather than sniffing the platform itself, so there is one policy
     // and it is unit-tested — see `quality.ts` for why that matters here.
-    this.#governor = new QualityGovernor(options.quality ?? startingTier(readDeviceHints()));
+    this.#governor = new QualityGovernor(
+      options.quality ?? startingTier(readDeviceHints(this.#rendererName())),
+    );
 
     this.scene = new Scene(this.engine);
     this.#createSky(options.config);
@@ -591,6 +593,21 @@ export class Renderer {
     log.debug('dropping quality tier', next);
     this.#applyQuality(next);
     this.#applyTierToScene(next);
+  }
+
+  /**
+   * What the driver calls itself, or an empty string if it will not say.
+   *
+   * Only used to spot a software rasteriser. Wrapped because `getGlInfo` can
+   * throw on a context that is already lost, and losing the whole renderer to
+   * a failed quality guess would be a poor trade.
+   */
+  #rendererName(): string {
+    try {
+      return this.engine.getGlInfo().renderer ?? '';
+    } catch {
+      return '';
+    }
   }
 
   /** The tier currently in force, after any automatic step down. */

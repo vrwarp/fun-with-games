@@ -5,6 +5,7 @@ import {
   QualityGovernor,
   TARGET_FPS,
   isQualityTier,
+  isSoftwareRenderer,
   lowerTier,
   qualitySettings,
   startingTier,
@@ -21,12 +22,50 @@ import {
  * testable at all, and this file is the reason it was written that way.
  */
 function hints(overrides: Partial<DeviceHints> = {}): DeviceHints {
-  return { coarsePointer: false, cores: 8, pixelRatio: 1, reducedMotion: false, ...overrides };
+  return {
+    coarsePointer: false,
+    cores: 8,
+    pixelRatio: 1,
+    reducedMotion: false,
+    softwareRenderer: false,
+    ...overrides,
+  };
 }
+
+describe('spotting a software rasteriser', () => {
+  it.each([
+    'Google SwiftShader',
+    'llvmpipe (LLVM 15.0.7, 256 bits)',
+    'Microsoft Basic Render Driver',
+    'Software Rasterizer',
+  ])('recognises %s', (renderer) => {
+    expect(isSoftwareRenderer(renderer)).toBe(true);
+  });
+
+  it.each([
+    'ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 Direct3D11 vs_5_0 ps_5_0, D3D11)',
+    'Apple GPU',
+    'Mali-G78',
+    'Adreno (TM) 660',
+    '',
+  ])('leaves %s alone', (renderer) => {
+    expect(isSoftwareRenderer(renderer)).toBe(false);
+  });
+});
 
 describe('picking a starting tier', () => {
   it('gives a desktop everything', () => {
     expect(startingTier(hints())).toBe('high');
+  });
+
+  it('opens a machine with no GPU on the cheapest tier, whatever else it says', () => {
+    // Beats every other signal, including a desktop-shaped one. A software
+    // rasteriser is not a slow GPU, it is a different order of magnitude —
+    // and without this a machine with acceleration switched off opens on the
+    // most expensive look and spends eight seconds and two rebuilds climbing
+    // back down. That is CI, a VM, a remote desktop, and a blocklisted driver.
+    expect(startingTier(hints({ softwareRenderer: true }))).toBe('low');
+    expect(startingTier(hints({ softwareRenderer: true, cores: 32, pixelRatio: 1 }))).toBe('low');
   });
 
   it('never opens a phone on the most expensive tier', () => {

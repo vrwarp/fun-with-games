@@ -128,10 +128,41 @@ export interface DeviceHints {
   readonly pixelRatio: number;
   /** The device has asked for less movement than the default. */
   readonly reducedMotion: boolean;
+  /** There is no GPU: every fragment is being shaded on the CPU. */
+  readonly softwareRenderer: boolean;
 }
 
-/** Reads what the platform will admit to. Safe to call anywhere. */
-export function readDeviceHints(): DeviceHints {
+/**
+ * Whether a WebGL renderer string names a software rasteriser.
+ *
+ * This is the one hardware question a browser answers honestly and usefully.
+ * A software renderer is not a slow GPU, it is a different order of magnitude
+ * — a post-processing chain that costs a millisecond on real silicon costs
+ * hundreds here — and it is common enough to matter: CI containers, virtual
+ * machines, remote desktops, and any browser where acceleration has been
+ * turned off or blocklisted.
+ *
+ * Exported and pure because it is a string-matching heuristic, which is
+ * exactly the kind of thing that quietly stops matching.
+ */
+export function isSoftwareRenderer(renderer: string): boolean {
+  const name = renderer.toLowerCase();
+  return (
+    name.includes('swiftshader') ||
+    name.includes('llvmpipe') ||
+    name.includes('softpipe') ||
+    name.includes('software') ||
+    name.includes('basic render')
+  );
+}
+
+/**
+ * Reads what the platform will admit to. Safe to call anywhere.
+ *
+ * `renderer` is the WebGL renderer string, which only the caller holding the
+ * engine can supply; omitting it simply means the software check never fires.
+ */
+export function readDeviceHints(renderer = ''): DeviceHints {
   const coarse = globalThis.matchMedia?.('(pointer: coarse)').matches ?? false;
   const reduced = globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
   return {
@@ -139,6 +170,7 @@ export function readDeviceHints(): DeviceHints {
     cores: typeof navigator === 'undefined' ? 0 : (navigator.hardwareConcurrency ?? 0),
     pixelRatio: typeof globalThis.devicePixelRatio === 'number' ? globalThis.devicePixelRatio : 1,
     reducedMotion: reduced,
+    softwareRenderer: isSoftwareRenderer(renderer),
   };
 }
 
@@ -157,6 +189,12 @@ export function readDeviceHints(): DeviceHints {
  * every fragment counts three times.
  */
 export function startingTier(hints: DeviceHints): QualityTier {
+  // No GPU at all beats every other signal, including a desktop-shaped one.
+  // Without this, a machine with acceleration switched off opens on the most
+  // expensive tier and then spends eight seconds discovering it cannot afford
+  // it — which is eight seconds of a game that looks broken, and two rebuilds
+  // to climb back out of.
+  if (hints.softwareRenderer) return 'low';
   if (!hints.coarsePointer) return 'high';
   // A phone. The question is only which kind.
   const cheap = (hints.cores > 0 && hints.cores <= 4) || hints.pixelRatio >= 3;

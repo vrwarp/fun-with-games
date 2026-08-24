@@ -492,6 +492,10 @@ Full guidance, including where to find CC0 art and how to generate it:
   substances rather than a gloss dial — turn it up and the paint loses its
   colour to the reflection. All three traps have bitten; see
   `docs/RENDERING.md` §3.
+- **A browser with no GPU opens on the cheapest tier.** `isSoftwareRenderer()`
+  reads the WebGL renderer string; a software rasteriser is a different order
+  of magnitude from a slow GPU, not a slower one. This is also why the e2e
+  suite runs on `low` — CI has no acceleration.
 - **Overlays are priced against a very dark road.** Tarmac is a true asphalt
   albedo — about a tenth of the light that lands on it — so an emissive tint
   that looked subtle over the old flat grey now dominates. Budget a new one

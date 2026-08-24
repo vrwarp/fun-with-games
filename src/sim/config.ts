@@ -316,6 +316,39 @@ export interface VehicleConfig {
    * unwind the lock.
    */
   readonly selfAlign: number;
+  /**
+   * Share of the car's weight over the FRONT axle at rest, in (0, 1).
+   *
+   * Half the reason a car has a balance at all. Each axle can make lateral
+   * grip in proportion to the load it carries, so a nose-heavy car turns in
+   * hard and lets go at the back, and a tail-heavy one ploughs. Around 0.45 is
+   * a rear-engined racer.
+   */
+  readonly weightFront: number;
+  /**
+   * How much of the weight moves between the axles at the limit, in [0, 1).
+   *
+   * Braking pitches a car onto its nose and loads the front; accelerating
+   * squats it onto the rear. Expressed as a fraction of the total weight moved
+   * when the car is using ALL of its longitudinal grip, which is how weight
+   * transfer is actually quoted — 0.25 means a quarter of the car shifts under
+   * maximum braking.
+   *
+   * This one number is where several techniques stop being special cases:
+   *
+   *  - **Trail braking.** Braking into a corner loads the front axle, so it
+   *    has more grip to turn with — while also spending some of it on
+   *    stopping. Easing the pedal trades one for the other, and the balance
+   *    between them is the technique.
+   *  - **Power oversteer.** The driven rear axle spends its grip on driving,
+   *    so burying the throttle mid-corner leaves it nothing to hold the line.
+   *  - **Lift-off oversteer.** Lifting mid-corner moves load OFF the rear,
+   *    and a rear axle that has just been unloaded is a rear axle that steps
+   *    out.
+   *
+   * None of those is written down anywhere below. They fall out.
+   */
+  readonly weightTransfer: number;
   /** Which action button brakes. */
   readonly brakeButton: 'primary' | 'secondary' | 'none';
 }
@@ -552,6 +585,8 @@ export const DEFAULT_SIM_CONFIG: SimConfig = {
     frictionCircle: 0,
     frontGrip: 0,
     selfAlign: 0,
+    weightFront: 0.45,
+    weightTransfer: 0.25,
     brakeButton: 'secondary',
   },
   collision: {

@@ -3,8 +3,8 @@ import { makeSimConfig, tickDeltaSeconds, type SimConfigOverrides } from '@/sim/
 import { integratePlayer } from '@/sim/systems/movement.js';
 import { addEffect } from '@/sim/systems/effects.js';
 import {
+  axleGrip,
   isInPitLane,
-  slipAngle,
   tyreLife,
   vehicleGrip,
   vehicleTopSpeed,
@@ -214,39 +214,74 @@ describe('vehicle handling', () => {
     expect((18 - speedOf(light)) / (18 - speedOf(hard))).toBeCloseTo(0.4, 1);
   });
 
-  it('hands grip back to the front tyres as the brake is eased', () => {
-    // Trail braking, which is the point of an analog brake. The friction
-    // circle spends the tyres on stopping first, so the harder the brake the
-    // less of them is left to hold the line.
+  it('loads the front axle on the brakes and the rear on the power', () => {
+    // The change that makes this a car rather than one lumped tyre. Weight
+    // moves, and grip follows the weight.
+    const car = carConfig().vehicle;
+    const traction = 16;
+
+    const braking = axleGrip(car, traction, -car.brakeDecel);
+    const neutral = axleGrip(car, traction, 0);
+    const power = axleGrip(car, traction, car.engineAccel);
+
+    // Nose down under braking, squatted under power.
+    expect(braking.frontLoad).toBeGreaterThan(neutral.frontLoad);
+    expect(power.frontLoad).toBeLessThan(neutral.frontLoad);
+    // At rest the split is whatever the car was built with.
+    expect(neutral.frontLoad).toBeCloseTo(car.weightFront, 6);
+
+    // Neither end ever goes weightless, because an axle with no load has no
+    // grip and a car with one of those is a pirouette rather than a car.
+    for (const state of [braking, neutral, power]) {
+      expect(state.frontLoad).toBeGreaterThan(0.1);
+      expect(state.frontLoad).toBeLessThan(0.9);
+    }
+  });
+
+  it('leaves the rear with almost nothing under heavy braking', () => {
+    // The other half of loading the front, and the reason standing on the
+    // brakes mid-corner spins a car: the end that was holding the line has
+    // just been unweighted AND is spending what is left on stopping.
+    const car = carConfig().vehicle;
+    const braking = axleGrip(car, 16, -car.brakeDecel);
+    const neutral = axleGrip(car, 16, 0);
+
+    expect(braking.front).toBeGreaterThan(braking.rear * 2);
+    expect(braking.rear).toBeLessThan(neutral.rear * 0.5);
+  });
+
+  it('turns in on the brakes and runs wide on the power', () => {
+    // The emergent behaviour, measured through the whole integrator rather
+    // than asserted about the axles. Same corner, same lock, same entry
+    // speed — only the pedal differs, and it decides where the car goes.
     //
-    // Measured as SLIP rather than as heading, which is the obvious wrong
-    // measure and reverses the answer: a car braking hard is slower, a slower
-    // car gets more steering angle out of the same stick, so it swings its
-    // NOSE further while going straight on. Slip is the honest question — is
-    // the car going where it is pointed?
+    // This replaces a test that asked whether easing the brake handed grip
+    // BACK to the front. Under a lumped tyre that was the only thing braking
+    // could do; with real axles braking loads the front, and the trade is a
+    // richer one — the front gains what the rear loses.
     const config = carConfig({
       vehicle: {
         tyreGrip: 18,
         frictionCircle: 1,
-        frontGrip: 1,
+        frontGrip: 3,
+        selfAlign: 3,
         brakeDecel: 18,
         steerFalloff: 0,
-        selfAlign: 0,
       },
     });
     const dt = tickDeltaSeconds(config);
 
-    const slipUnder = (pedal: number): number => {
+    const turnedUnder = (pedal: number): number => {
       const car = makePlayer({ heading: 0, vx: 0, vz: 18 });
       const input = makeInput({ moveX: 1, moveZ: pedal });
-      for (let i = 0; i < 4; i++) integratePlayer(car, input, config, [], dt, i, false);
-      return Math.abs(slipAngle(car));
+      for (let i = 0; i < 12; i++) integratePlayer(car, input, config, [], dt, i, false);
+      return Math.abs(car.heading);
     };
 
-    // Standing on it washes wide; easing it in tracks the nose almost exactly.
-    expect(slipUnder(1 * -1)).toBeGreaterThan(slipUnder(-0.6) * 3);
-    expect(slipUnder(-0.6)).toBeGreaterThan(slipUnder(-0.3));
-    expect(slipUnder(-0.3)).toBeLessThan(0.02);
+    // A car being asked to accelerate has taken the load off its own nose, so
+    // it will not turn — which is why you get the corner done before the
+    // throttle, not during it.
+    expect(turnedUnder(-0.6)).toBeGreaterThan(turnedUnder(1) * 1.5);
   });
 
   it('brakes harder on the pedal than off the throttle', () => {

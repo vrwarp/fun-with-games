@@ -7,7 +7,7 @@ import {
 } from '@/sim/config.js';
 import { integratePlayer } from '@/sim/systems/movement.js';
 import { modeConfig } from '@/sim/presets.js';
-import { isOnTrack } from '@/sim/track.js';
+import { isOnTrack, trackPoseAt } from '@/sim/track.js';
 import { slipAngle, vehicleTraction } from '@/sim/systems/vehicle.js';
 import { World } from '@/sim/world.js';
 import type { PlayerState } from '@/sim/types.js';
@@ -318,8 +318,26 @@ describe('bots driving to the tyres', () => {
  * strength.
  */
 describe('a spun car settles', () => {
-  const sideways = (forward: number, lateral: number): PlayerState =>
-    makePlayer({ heading: 0, vx: lateral, vz: forward, x: 0, z: 0 });
+  // On the racing line, not at the origin. `makePlayer` defaults to (0, 0),
+  // which on this circuit is out in the middle of the grass — so a suite about
+  // catching a slide while racing was quietly measuring one on a low-grip
+  // surface, at a speed the off-track limiter was hauling back.
+  const START = 40;
+
+  const sideways = (forward: number, lateral: number): PlayerState => {
+    const pose = trackPoseAt(modeConfig('grandprix').trackPath, START);
+    const heading = Math.atan2(pose.dirX, pose.dirZ);
+    const sin = Math.sin(heading);
+    const cos = Math.cos(heading);
+    return makePlayer({
+      heading,
+      x: pose.x,
+      z: pose.z,
+      // Compose the car-frame velocity back into world axes.
+      vx: forward * sin + lateral * cos,
+      vz: forward * cos - lateral * sin,
+    });
+  };
 
   it.each([
     [0, 2],
@@ -330,11 +348,13 @@ describe('a spun car settles', () => {
   ])('stops turning from forward %i, sideways %i', (forward, lateral) => {
     const config = modeConfig('grandprix');
     const car = sideways(forward, lateral);
+    const start = car.heading;
     drive(car, config, makeInput({ moveX: 0, moveZ: 0 }), 300);
 
     // Ten seconds of nothing. A car that is still rotating after that is a car
     // the driver has lost, permanently.
-    expect(Math.abs(car.heading)).toBeLessThan(Math.PI);
+    const swung = car.heading - start;
+    expect(Math.abs(Math.atan2(Math.sin(swung), Math.cos(swung)))).toBeLessThan(Math.PI);
   });
 
   it('rotates less and less rather than at a fixed rate', () => {
@@ -374,7 +394,141 @@ describe('a spun car settles', () => {
 
     drive(car, config, makeInput({ moveX: -1, moveZ: 1 }), 90);
 
-    expect(Math.abs(slipAngle(car))).toBeLessThan(before * 0.5);
-    expect(Math.sqrt(car.vx * car.vx + car.vz * car.vz)).toBeGreaterThan(4);
+    // Speed FIRST, and it is not a formality. `slipAngle` reports zero for a
+    // stopped car, so a slide assertion on its own is passed perfectly by a
+    // car that has simply died — which is what this test used to be doing, on
+    // grass, with the throttle buried. A save the driver cannot drive away
+    // from is not a save.
+    expect(speedOf(car)).toBeGreaterThan(8);
+    expect(Math.abs(slipAngle(car))).toBeLessThan(before * 0.55);
+  });
+});
+
+describe('the grass is slow, not broken', () => {
+  /** A straight road along +z, with grass either side of it. */
+  const STRAIGHT = [
+    { x: 0, z: -300 },
+    { x: 0, z: 300 },
+  ];
+
+  function surfaceConfig({ track, ...overrides }: SimConfigOverrides = {}) {
+    return gripConfig({
+      trackPath: STRAIGHT,
+      vehicle: { selfAlign: 3, frontGrip: 1.45, steerFalloff: 0.3 },
+      ...overrides,
+      // Merged, not replaced — a bare `track` override would drop `enabled`,
+      // `isOnTrack` would answer true everywhere, and every surface assertion
+      // below would compare tarmac against tarmac and pass.
+      track: { enabled: true, halfWidth: 5, offTrackSpeed: 0.45, offTrackGrip: 0.6, ...track },
+    });
+  }
+
+  /** A car out on the grass beside the road, rolling along it. */
+  function onGrass(speed: number): PlayerState {
+    return makePlayer({ x: 40, z: 0, heading: 0, vx: 0, vz: speed });
+  }
+
+  /** Which way the car is actually TRAVELLING, as opposed to pointing. */
+  const courseOf = (p: PlayerState): number => Math.atan2(p.vx, p.vz);
+
+  it('keeps changing direction under lock instead of settling into a plough', () => {
+    // The bug this is here for: every tyre force was scaled by the surface
+    // except the self-aligning moment, so on grass a full-strength caster
+    // pulled against a third-strength front axle. They balanced at about
+    // twelve degrees of slip and STAYED there — nose cocked into the corner,
+    // car travelling dead straight, full lock doing nothing at all. It reads
+    // to a driver as the steering having simply stopped working.
+    const config = surfaceConfig();
+    const car = onGrass(12);
+    expect(isOnTrack(config, car.x, car.z)).toBe(false);
+
+    const stick = makeInput({ moveX: 1, moveZ: 1 });
+    drive(car, config, stick, 30);
+    const first = courseOf(car);
+    drive(car, config, stick, 30);
+    const second = courseOf(car);
+
+    // Turning in the first second, and STILL turning in the second. An
+    // equilibrium plough passes the first of these and fails the second,
+    // which is exactly how it went unnoticed.
+    expect(Math.abs(first)).toBeGreaterThan(0.2);
+    expect(Math.abs(second - first)).toBeGreaterThan(0.2);
+  });
+
+  it('scales the aligning moment with the surface, like every other tyre force', () => {
+    // The rule underneath the test above, stated directly: grip is one number
+    // and all four contact patches share it.
+    const slippery = surfaceConfig({ track: { offTrackGrip: 0.2 } });
+    const grippy = surfaceConfig({ track: { offTrackGrip: 1 } });
+
+    const settle = (config: Config): number => {
+      // Kicked hard sideways, hands off. The kick has to be big enough that
+      // the tyres cannot simply erase it — a slide the scrub finishes off is
+      // one the caster never sees, and both surfaces then read zero.
+      const car = makePlayer({ x: 40, z: 0, heading: 0, vx: 25, vz: 25 });
+      drive(car, config, makeInput({}), 5);
+      return Math.abs(slipAngle(car));
+    };
+
+    // Less grip, less caster, so more of the slide is still there.
+    expect(settle(slippery)).toBeGreaterThan(settle(grippy));
+  });
+
+  it('never lets a slide carry more speed than the surface allows', () => {
+    // The throttle only ever reads and tops up the FORWARD component, so a
+    // sliding car used to carry its sideways velocity along untaxed: at forty
+    // degrees of slip that is a third more than the limit the car is supposed
+    // to be held to, and the engine fed it every tick. Going off the road
+    // ACCELERATED you, which is the opposite of a penalty.
+    const config = surfaceConfig();
+    const car = onGrass(12);
+    const cap = config.playerMaxSpeed * config.track.offTrackSpeed;
+
+    // Full lock and full throttle for three seconds: the most sideways this
+    // car can be made to go while still being asked for maximum speed.
+    let worst = 0;
+    const dt = tickDeltaSeconds(config);
+    const stick = makeInput({ moveX: 1, moveZ: 1 });
+    for (let i = 0; i < 90; i++) {
+      integratePlayer(car, stick, config, [], dt, i, false);
+      expect(isOnTrack(config, car.x, car.z)).toBe(false);
+      worst = Math.max(worst, speedOf(car));
+    }
+
+    // A little over the cap is the bleed catching up, not the engine winning.
+    expect(worst).toBeLessThan(cap * 1.06);
+  });
+
+  it('bleeds down to a lowered limit rather than hitting a wall of air', () => {
+    // The same clamp must not become a brick wall for a car that loses a tow
+    // or closes its wing — that is why it decelerates toward the limit rather
+    // than snapping to it.
+    const config = surfaceConfig();
+    const cap = config.playerMaxSpeed * config.track.offTrackSpeed;
+    // Arrives on the grass well above what the grass allows.
+    const car = onGrass(config.playerMaxSpeed);
+    const before = speedOf(car);
+
+    drive(car, config, makeInput({ moveZ: 1 }), 1);
+    const lost = before - speedOf(car);
+
+    expect(lost).toBeGreaterThan(0);
+    // One tick may not take more than one tick of deceleration.
+    expect(lost).toBeLessThanOrEqual(config.vehicle.coastDecel * tickDeltaSeconds(config) + 1e-6);
+    expect(speedOf(car)).toBeGreaterThan(cap);
+  });
+
+  it('still costs a lot of time, which is what makes it a mistake', () => {
+    // Grip is forgiving on purpose; speed is not. The penalty for running wide
+    // has to stay real, or there is no reason to stay on the road.
+    const config = surfaceConfig();
+    const straight = makeInput({ moveZ: 1 });
+
+    const road = drive(makePlayer({ x: 0, z: 0, heading: 0 }), config, straight, 150);
+    const grass = drive(makePlayer({ x: 40, z: 0, heading: 0 }), config, straight, 150);
+
+    expect(isOnTrack(config, road.x, road.z)).toBe(true);
+    expect(isOnTrack(config, grass.x, grass.z)).toBe(false);
+    expect(speedOf(grass)).toBeLessThan(speedOf(road) * 0.5);
   });
 });

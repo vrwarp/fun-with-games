@@ -1,5 +1,6 @@
 import { clamp, distanceSq2 } from '../../shared/math.js';
 import type { SimConfig } from '../config.js';
+import { centred } from '../controls.js';
 import { isOnTrack } from '../track.js';
 import { BUTTON_PRIMARY, BUTTON_SECONDARY, type PlayerInput, type PlayerState } from '../types.js';
 import { effectRemaining, hasEffect, isImmobilized } from './effects.js';
@@ -57,8 +58,6 @@ import { effectRemaining, hasEffect, isImmobilized } from './effects.js';
  * a clock.
  */
 
-/** Deflection below which an axis reads as centred, not as a light touch. */
-const INPUT_DEADZONE = 0.05;
 /** Speeds below this are snapped to a standstill so a parked car stays parked. */
 const REST_SPEED = 0.02;
 /** Below this speed the front tyres have nothing to lose, so the yaw cap lifts. */
@@ -132,6 +131,32 @@ export function vehicleTopSpeed(
 }
 
 /**
+ * How much of its grip the car has right now, 0-1: surface times wear.
+ *
+ * Every tyre force has to be scaled by this, and there is exactly one of them
+ * for a reason. The traction limit, the lateral scrub and the self-aligning
+ * moment are all made by the same four contact patches; if one of them ignores
+ * the surface it ends up fighting the others.
+ *
+ * That is not hypothetical — it is the bug this function was extracted to fix.
+ * The aligning moment used to be a flat config number, so on grass a
+ * FULL-strength caster pulled against a third-strength front axle. The two
+ * balanced at about twelve degrees of slip and stayed there: the nose pointed
+ * into the corner, the car travelled dead straight, and full lock did nothing
+ * whatsoever. Any term added here later must come through this too.
+ */
+export function gripFraction(
+  player: PlayerState,
+  config: SimConfig,
+  tick: number,
+  onTrack = true,
+): number {
+  const surface = onTrack ? 1 : config.track.offTrackGrip;
+  const life = tyreLife(player, config, tick);
+  return surface * (config.race.tyreWornGrip + (1 - config.race.tyreWornGrip) * life);
+}
+
+/**
  * Peak lateral acceleration the tyres can supply right now.
  *
  * The traction limit, scaled by the same surface and wear terms as the
@@ -144,14 +169,9 @@ export function vehicleTraction(
   tick: number,
   onTrack = true,
 ): number {
-  let traction = config.vehicle.tyreGrip;
+  const traction = config.vehicle.tyreGrip;
   if (traction <= 0) return 0;
-  if (!onTrack) traction *= config.track.offTrackGrip;
-
-  const life = tyreLife(player, config, tick);
-  traction *= config.race.tyreWornGrip + (1 - config.race.tyreWornGrip) * life;
-
-  return traction;
+  return traction * gripFraction(player, config, tick, onTrack);
 }
 
 /**
@@ -178,13 +198,7 @@ export function vehicleGrip(
   tick: number,
   onTrack = true,
 ): number {
-  let grip = config.vehicle.grip;
-  if (!onTrack) grip *= config.track.offTrackGrip;
-
-  const life = tyreLife(player, config, tick);
-  grip *= config.race.tyreWornGrip + (1 - config.race.tyreWornGrip) * life;
-
-  return grip;
+  return config.vehicle.grip * gripFraction(player, config, tick, onTrack);
 }
 
 /**
@@ -224,6 +238,7 @@ export function steerVehicle(
   const onTrack = isOnTrack(config, player.x, player.z);
   const top = vehicleTopSpeed(player, config, tick, onTrack);
   const traction = vehicleTraction(player, config, tick, onTrack);
+  const grip = gripFraction(player, config, tick, onTrack);
 
   if (immobile) {
     // Lights-out discipline: a car on the grid neither creeps nor rotates, so
@@ -315,6 +330,9 @@ export function steerVehicle(
   const travelSpeed = Math.sqrt(forward * forward + lateral * lateral);
   const rollingShare = travelSpeed > REST_SPEED ? Math.abs(forward) / travelSpeed : 1;
   const coastDecel = car.coastDecel * rollingShare;
+  // What the car was doing before the throttle touched it, so the ceiling
+  // below can tell how much drag has already been spent this tick.
+  const entrySpeed = travelSpeed;
 
   if (braking) {
     if (forward > 0) {
@@ -397,9 +415,19 @@ export function steerVehicle(
         // ends.
         const speed = Math.sqrt(forward * forward + lateral * lateral);
         const rolling = Math.min(1, speed / SELF_ALIGN_FULL_SPEED);
+        // And by the surface, for the reason spelled out on `gripFraction`:
+        // this is a tyre force like any other, so grass and worn rubber have
+        // to weaken it exactly as they weaken the front axle it pulls against.
+        // Left at full strength it simply out-pulled the steering, and the car
+        // ploughed on with the wheel hard over.
+        //
         // And never past the slip it is correcting. Overshoot is a wobble at
         // small angles and a spin at large ones.
-        const align = clamp(slip * car.selfAlign * dt * rolling, -Math.abs(slip), Math.abs(slip));
+        const align = clamp(
+          slip * car.selfAlign * dt * rolling * grip,
+          -Math.abs(slip),
+          Math.abs(slip),
+        );
         player.heading += align;
         const ca = Math.cos(align);
         const sa = Math.sin(align);
@@ -411,7 +439,35 @@ export function steerVehicle(
   } else {
     // No traction limit configured: the original proportional scrub, which
     // washes wide under load but can never actually let go.
-    lateral *= Math.max(0, 1 - vehicleGrip(player, config, tick, onTrack) * dt);
+    lateral *= Math.max(0, 1 - car.grip * grip * dt);
+  }
+
+  // --- The speed limit applies to the car, not to its nose --------------------
+  // `top` is how fast the car may travel, and a sliding car travels partly
+  // sideways. The throttle above only ever reads and tops up `forward`, so
+  // without this the sideways component rides along untaxed: a car at forty
+  // degrees of slip carries `forward / cos 40°`, a third more than the limit
+  // it is supposedly held to — and it does it on grass, where it has least
+  // right to. Left alone the engine feeds that every tick, so a slide
+  // ACCELERATES, which is why leaving the road read as being fired off across
+  // it rather than as a mistake.
+  //
+  // Bled rather than clamped, and both components together so the direction of
+  // travel is untouched. A hard clamp here would put a wall of air in front of
+  // anyone who lost a tow or closed the wing, which is exactly what the
+  // throttle branch above takes care to avoid.
+  const resultant = Math.sqrt(forward * forward + lateral * lateral);
+  if (resultant > top && resultant > REST_SPEED) {
+    // One tick of drag per tick, however it was spent. The throttle branch
+    // above already bleeds `forward` toward a lowered ceiling, so charging a
+    // second full helping here would slow a car that arrived on the grass in a
+    // straight line twice as fast as one that arrived sideways — backwards,
+    // and a wall of air for anyone who merely lost a tow.
+    const spent = Math.max(0, entrySpeed - resultant);
+    const budget = Math.max(0, car.coastDecel * dt - spent);
+    const scale = Math.max(top, resultant - budget) / resultant;
+    forward *= scale;
+    lateral *= scale;
   }
 
   // --- Pit limiter ----------------------------------------------------------
@@ -425,11 +481,6 @@ export function steerVehicle(
   // The heading may have moved since `sin`/`cos` were taken, and `forward` and
   // `lateral` were rotated to match, so recompose in the frame we ended in.
   writeBack(player, forward, lateral, Math.sin(player.heading), Math.cos(player.heading));
-}
-
-/** Treats a barely-touched axis as centred, so a resting thumb does nothing. */
-function centred(value: number): number {
-  return Math.abs(value) < INPUT_DEADZONE ? 0 : value;
 }
 
 /** Recomposes car-local velocity back into world axes. */

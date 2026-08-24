@@ -1,4 +1,5 @@
 import { angleDelta, clamp, distance2, normalize2 } from '../../shared/math.js';
+import { axesForDirection } from '../controls.js';
 import { hashStringToSeed } from '../rng.js';
 import type { StepContext } from '../step.js';
 import { hasTrack, isOnTrack, sampleTrack, trackPoseAt } from '../track.js';
@@ -51,23 +52,13 @@ export function computeBotInput(ctx: StepContext, bot: PlayerState): PlayerInput
   // sees DRS working from the other side of it too.
   if (hasEffect(bot, 'drsok', ctx.tick)) buttons |= actionBit(ctx.config.race.drsButton);
 
-  // A car reads the two axes as steering and throttle in its own frame, so a
-  // bot has to drive rather than point (see `steerVehicle`). Everyone else
-  // reads them as a direction, scaled by how much of it the decision wants.
-  if (ctx.config.vehicle.enabled) {
-    return {
-      seq: ctx.tick,
-      ...driveAxes(bot, move, decision),
-      sprint: decision.sprint,
-      buttons,
-    };
-  }
-
-  const throttle = decision.throttle ?? 1;
+  // What the two axes mean is NOT decided here. `axesForDirection` owns that
+  // contract and the player's pipeline asks it too, so a bot cannot end up
+  // driving to a different set of rules than the human it is racing — which is
+  // the whole reason a headless bot race is evidence about the controls.
   return {
     seq: ctx.tick,
-    moveX: move.x * throttle,
-    moveZ: move.z * throttle,
+    ...axesForDirection(ctx.config, bot.heading, move, decision),
     sprint: decision.sprint,
     buttons,
   };
@@ -85,11 +76,6 @@ const WORN_CAUTION = 0.3;
 const REJOIN_LOOKAHEAD = 4;
 /** Below this speed a car has no steering, because it is not rolling. */
 const STUCK_SPEED = 1.5;
-/**
- * Heading error at which a bot asks for full lock. About 29°, so it squares up
- * briskly without sawing at the wheel down a straight.
- */
-const FULL_LOCK_ERROR = 0.5;
 /** Heading error past which a stopped car cannot simply drive away forwards. */
 const STUCK_ANGLE = 1;
 
@@ -164,39 +150,6 @@ function pitEntry(ctx: StepContext, bot: PlayerState): { x: number; z: number } 
   }
 
   return best ? { x: best.x, z: best.z } : null;
-}
-
-/** Turns a wanted world direction into the axes a car actually understands. */
-function driveAxes(
-  bot: PlayerState,
-  direction: { x: number; z: number },
-  decision: Decision,
-): { moveX: number; moveZ: number } {
-  const pedal = decision.reverse || decision.brake ? -1 : (decision.throttle ?? 1);
-  if (direction.x === 0 && direction.z === 0) return { moveX: 0, moveZ: pedal };
-
-  const wanted = Math.atan2(direction.x, direction.z);
-  const off = angleDelta(bot.heading, wanted);
-  const lock = decision.reverse ? -steeringFor(off) : steeringFor(off);
-  // Mirrored while backing up: the same lock swings the nose the other way
-  // when the car is rolling backwards, exactly as it does in a car park.
-  return { moveX: lock, moveZ: pedal };
-}
-
-/**
- * The lock a driver would wind on to correct a heading error.
- *
- * Deliberately a plain proportional law rather than an inversion of the car's
- * own `omega = speed * tan(angle) / wheelbase`. Both of the cleverer versions
- * were tried and measured worse: asking for the arc that wipes the error out
- * put the field in the scenery 31% of the time, and clamping that request to
- * the grip available made it 77%, because a car that has strayed has almost no
- * grip and so asks for almost no lock — which is precisely when it needs some.
- * A driver does not solve for the radius either; they wind on lock until the
- * nose comes round.
- */
-function steeringFor(error: number): number {
-  return clamp(error / FULL_LOCK_ERROR, -1, 1);
 }
 
 /** Bit for a configured button name; 0 when the action is unbound. */

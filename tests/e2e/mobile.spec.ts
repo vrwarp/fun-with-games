@@ -61,6 +61,41 @@ async function holdControl(page: Page, testId: string, holdMs: number, offset = 
   await page.mouse.up();
 }
 
+/**
+ * Waits for the SIMULATION to advance by `ticks`, however long that takes.
+ *
+ * Anything that measures how far a car moved has to be bounded in ticks rather
+ * than milliseconds. A wall-clock window holds however many ticks the machine
+ * can fit in it, so on a loaded CI runner the same test quietly measures a
+ * shorter drive — which is a flake, not a failure, and indistinguishable from
+ * one at the point it fires.
+ */
+async function advanceTicks(page: Page, ticks: number): Promise<void> {
+  const from = await page.evaluate(() => window.__FWG__.tick);
+  await expect
+    .poll(() => page.evaluate(() => window.__FWG__.tick), { timeout: 30_000 })
+    .toBeGreaterThanOrEqual(from + ticks);
+}
+
+/** `holdControl`, bounded in simulation ticks. */
+async function holdControlTicks(
+  page: Page,
+  testId: string,
+  ticks: number,
+  offset = 0,
+): Promise<void> {
+  const control = page.getByTestId(testId);
+  await expect(control).toBeVisible();
+
+  const box = await control.boundingBox();
+  if (!box) throw new Error(`${testId} has no bounding box`);
+
+  await page.mouse.move(box.x + box.width / 2 + (box.width / 2) * offset, box.y + box.height / 2);
+  await page.mouse.down();
+  await advanceTicks(page, ticks);
+  await page.mouse.up();
+}
+
 test.describe('on a phone', () => {
   test('starts and renders', async ({ page }) => {
     await launch(page);
@@ -368,10 +403,17 @@ test.describe('on a phone', () => {
     const rightEnd = box.x + box.width * 0.95;
     const midY = box.y + box.height / 2;
 
+    // Everything below is bounded in simulation ticks rather than wall-clock,
+    // because every assertion here is about how far the car turned. 36 ticks
+    // is a bit over a second at 30 Hz on an unloaded machine and exactly the
+    // same amount of driving on a busy one.
+    const BURST = 36;
+    const WINDOW = 15;
+
     /** How far the car rotates over a fixed window, wrapped to [-pi, pi]. */
-    const swingOver = async (ms: number): Promise<number> => {
+    const swingOver = async (ticks: number): Promise<number> => {
       const before = await heading();
-      await page.waitForTimeout(ms);
+      await advanceTicks(page, ticks);
       const after = await heading();
       return Math.abs(Math.atan2(Math.sin(after - before), Math.cos(after - before)));
     };
@@ -384,13 +426,13 @@ test.describe('on a phone', () => {
     // right because the grid faces +X against the near wall, and a car parked
     // on the boundary would be still for reasons that have nothing to do with
     // the wheel.
-    await holdControl(page, 'driving-throttle', 1200);
+    await holdControlTicks(page, 'driving-throttle', BURST);
 
     // Full left lock, thumb still down.
     await page.mouse.move(leftEnd, midY);
     await page.mouse.down();
-    await page.waitForTimeout(200);
-    const whileHeld = await swingOver(500);
+    await advanceTicks(page, 6);
+    const whileHeld = await swingOver(WINDOW);
     expect(whileHeld).toBeGreaterThan(0.2);
 
     // The interruption. No pointerup will ever arrive for that thumb.
@@ -406,16 +448,14 @@ test.describe('on a phone', () => {
     // so measuring the swing across the burst is a far better test than
     // watching a car that has coasted to a stop.
     const beforeBurst = await heading();
-    await holdControl(page, 'driving-throttle', 1200);
+    await holdControlTicks(page, 'driving-throttle', BURST);
     const afterBurst = await heading();
     const afterBlur = Math.abs(
       Math.atan2(Math.sin(afterBurst - beforeBurst), Math.cos(afterBurst - beforeBurst)),
     );
 
     // The wheel must have re-centred. Compared as a RATE rather than as an
-    // absolute angle: how many simulation ticks fit in a wall-clock window
-    // depends on how loaded the machine is, so an absolute threshold is a
-    // flake waiting for a busy CI runner.
+    // absolute angle, over an equal number of ticks either side.
     expect(afterBlur).toBeLessThan(whileHeld / 3);
 
     // And the driver must be able to take it back — the half that used to
@@ -423,7 +463,7 @@ test.describe('on a phone', () => {
     // while the car is still carrying speed to steer with.
     await page.mouse.move(rightEnd, midY);
     await page.mouse.down();
-    await page.waitForTimeout(700);
+    await advanceTicks(page, 21);
     await page.mouse.up();
 
     const recovered = await heading();

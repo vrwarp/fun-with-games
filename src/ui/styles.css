@@ -805,6 +805,9 @@ body {
 }
 
 .driving__pedal {
+  position: relative;
+  display: grid;
+  place-items: center;
   width: 5rem;
   height: 3.4rem;
   border-radius: 1.1rem;
@@ -818,23 +821,49 @@ body {
     0 0 0 1px rgba(0, 0, 0, 0.45),
     0 6px 18px rgba(0, 0, 0, 0.45);
   backdrop-filter: blur(6px);
+  overflow: hidden;
   touch-action: none;
+  user-select: none;
   pointer-events: auto;
 }
 
-/* The throttle is where the thumb lives, so it is the bigger target. */
+/* The throttle is where the thumb lives, so it is the bigger target — and it
+   is also the one with the most travel worth modulating. */
 .driving__pedal--throttle {
   height: 4.4rem;
 }
 
+/* How far the pedal is down, drawn rather than left to be felt. Grows from the
+   bottom edge, which is the direction the thumb travels to ask for more.
+   Transform-only so it costs no layout on a phone. */
+.driving__pedal-fill {
+  position: absolute;
+  inset: 0;
+  transform: scaleY(0);
+  transform-origin: bottom;
+  pointer-events: none;
+}
+
+.driving__pedal-label {
+  position: relative;
+  /* Above the fill, and legible over it either way. */
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85);
+}
+
+.driving__pedal--brake .driving__pedal-fill {
+  background: rgba(255, 107, 107, 0.42);
+}
+
+.driving__pedal--throttle .driving__pedal-fill {
+  background: rgba(76, 201, 240, 0.4);
+}
+
 .driving__pedal--brake.is-held {
   border-color: #ff6b6b;
-  background: rgba(255, 107, 107, 0.3);
 }
 
 .driving__pedal--throttle.is-held {
   border-color: var(--accent);
-  background: rgba(76, 201, 240, 0.28);
 }
 
 /* -------------------------------------------------------------- settings */

@@ -474,6 +474,30 @@ rather than fighting them for the corner. One stick cannot express two
 independent axes on a phone, because holding a steering angle while lifting off
 means pinning a thumb to a diagonal and keeping it there.
 
+**Both pedals are analog, and they read travel rather than pressure.** A screen
+has no pressure to sense, so asking for it would be a fiction — but a pedal was
+never really a pressure sensor either. It is a thing you push further or less
+far, and how far a thumb has slid up the control is exactly that: measurable,
+and drawn as a fill so the player can see what they are asking for. Pressing
+anywhere is worth a firm floor, so jabbing the throttle still just works;
+sliding to the far edge is worth all of it. In the simulation `brakeDecel` and
+the reverse creep scale with it, which is what makes trail braking real rather
+than a word in a comment — the friction circle spends the tyres on stopping
+first, so easing the brake hands the front end back the grip it was using.
+
+**The pedals also drive the phone's motor** (`src/render/haptics.ts`).
+`navigator.vibrate` has no amplitude — the motor is on or off — so intensity is
+a duty cycle: the throttle keeps one cadence and spends more of each period
+switched on the further it is down, while the brake is discrete knocks that get
+faster _and_ longer. Two different sensations on purpose, because a driver has
+to tell them apart without looking, and two weights of the same buzz are
+indistinguishable through a phone case. It is driven from the PEDALS rather
+than from the car's acceleration: what a driver feels through a pedal is their
+own foot, which answers the instant they press at the weight they pressed —
+reading it off the car would arrive late, say nothing during a wheelspin, and
+buzz through a shunt nobody asked for. Absent on desktop and on iOS Safari, so
+it fails soft, and the Settings toggle hides itself where there is no motor.
+
 **The stick sets the angle of the front wheels, not a rate of turn.** What the
 car then does about it is geometry — the standard kinematic bicycle model:
 

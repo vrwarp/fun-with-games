@@ -2,7 +2,13 @@ import { describe, expect, it } from 'vitest';
 import { makeSimConfig, tickDeltaSeconds, type SimConfigOverrides } from '@/sim/config.js';
 import { integratePlayer } from '@/sim/systems/movement.js';
 import { addEffect } from '@/sim/systems/effects.js';
-import { isInPitLane, tyreLife, vehicleGrip, vehicleTopSpeed } from '@/sim/systems/vehicle.js';
+import {
+  isInPitLane,
+  slipAngle,
+  tyreLife,
+  vehicleGrip,
+  vehicleTopSpeed,
+} from '@/sim/systems/vehicle.js';
 import { isOnTrack } from '@/sim/track.js';
 import { BUTTON_SECONDARY, type PlayerState } from '@/sim/types.js';
 import { makeInput, makePlayer } from '../../helpers/factories.js';
@@ -193,6 +199,56 @@ describe('vehicle handling', () => {
     expect(angleAt(fast)).toBeCloseTo(angleAt(slow) * (1 - config.vehicle.steerFalloff), 1);
   });
 
+  it('brakes in proportion to how far the pedal is pulled', () => {
+    // The pedal is analog on a phone now, and a brake that ignored that would
+    // make the travel decorative. Half the pedal is half the retardation.
+    const config = carConfig();
+    const light = drive(makePlayer({ heading: 0, vz: 18 }), config, makeInput({ moveZ: -0.4 }), 6);
+    const hard = drive(makePlayer({ heading: 0, vz: 18 }), config, makeInput({ moveZ: -1 }), 6);
+
+    expect(speedOf(light)).toBeGreaterThan(speedOf(hard));
+    expect(speedOf(light)).toBeLessThan(18);
+
+    // And it is proportional rather than merely ordered: what each shed over
+    // the same six ticks is in the ratio the two pedals were asking for.
+    expect((18 - speedOf(light)) / (18 - speedOf(hard))).toBeCloseTo(0.4, 1);
+  });
+
+  it('hands grip back to the front tyres as the brake is eased', () => {
+    // Trail braking, which is the point of an analog brake. The friction
+    // circle spends the tyres on stopping first, so the harder the brake the
+    // less of them is left to hold the line.
+    //
+    // Measured as SLIP rather than as heading, which is the obvious wrong
+    // measure and reverses the answer: a car braking hard is slower, a slower
+    // car gets more steering angle out of the same stick, so it swings its
+    // NOSE further while going straight on. Slip is the honest question — is
+    // the car going where it is pointed?
+    const config = carConfig({
+      vehicle: {
+        tyreGrip: 18,
+        frictionCircle: 1,
+        frontGrip: 1,
+        brakeDecel: 18,
+        steerFalloff: 0,
+        selfAlign: 0,
+      },
+    });
+    const dt = tickDeltaSeconds(config);
+
+    const slipUnder = (pedal: number): number => {
+      const car = makePlayer({ heading: 0, vx: 0, vz: 18 });
+      const input = makeInput({ moveX: 1, moveZ: pedal });
+      for (let i = 0; i < 4; i++) integratePlayer(car, input, config, [], dt, i, false);
+      return Math.abs(slipAngle(car));
+    };
+
+    // Standing on it washes wide; easing it in tracks the nose almost exactly.
+    expect(slipUnder(1 * -1)).toBeGreaterThan(slipUnder(-0.6) * 3);
+    expect(slipUnder(-0.6)).toBeGreaterThan(slipUnder(-0.3));
+    expect(slipUnder(-0.3)).toBeLessThan(0.02);
+  });
+
   it('brakes harder on the pedal than off the throttle', () => {
     const config = carConfig();
     const coasting = makePlayer({ heading: 0, vz: 18 });
@@ -235,6 +291,18 @@ describe('vehicle handling', () => {
     const forwards = makePlayer({ heading: 0 });
     drive(forwards, config, makeInput({ moveX: 1, moveZ: 1 }), 60);
     expect(forwards.heading).toBeGreaterThan(0.2);
+  });
+
+  it('backs out at the speed the pedal asks for', () => {
+    // Reverse is the way out of a barrier, so it is analog too: ease it to
+    // creep off, bury it to get out of the way of a train of cars.
+    const config = carConfig();
+    const creep = drive(makePlayer({ heading: 0 }), config, makeInput({ moveZ: -0.3 }), 90);
+    const quick = drive(makePlayer({ heading: 0 }), config, makeInput({ moveZ: -1 }), 90);
+
+    expect(creep.vz).toBeLessThan(0);
+    expect(Math.abs(creep.vz)).toBeLessThan(Math.abs(quick.vz));
+    expect(Math.abs(creep.vz)).toBeCloseTo(Math.abs(quick.vz) * 0.3, 1);
   });
 
   it('reverses on the brake pedal, capped well below the forward top speed', () => {

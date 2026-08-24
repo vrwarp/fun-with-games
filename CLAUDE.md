@@ -375,6 +375,24 @@ What this means in practice:
   horizontal-only (a thumb pivots on a knuckle, so it travels in an arc, and
   reading the vertical component would open the throttle every time you
   steered) and re-centres on release.
+- **Both pedals are analog, and they read _travel_, not pressure.** A screen
+  has no pressure to sense — but a pedal was never really a pressure sensor
+  either. It is a thing you push further or less far, and how far a thumb has
+  slid up the control is exactly that: measurable, and visible as a fill.
+  Pressing anywhere is worth a firm `PEDAL_FLOOR` so jabbing the throttle still
+  works; sliding to the far edge is worth all of it. It earns its keep at both
+  ends — easing the throttle on exit is how you drive out of a slide, and
+  easing the brake hands the front tyres back the grip the friction circle was
+  spending on stopping, which is what trail braking IS.
+- **The pedals drive the phone's motor** (`src/render/haptics.ts`).
+  `navigator.vibrate` has **no amplitude**, so intensity is faked with a duty
+  cycle: the throttle is a constant cadence with a longer on-time the further
+  it is down, and the brake is discrete knocks that get faster and longer. Two
+  different sensations on purpose, because a driver has to tell them apart
+  without looking. Driven from the PEDALS rather than from the car's
+  acceleration — what you feel through a pedal is your own foot, answering
+  instantly at the weight you pressed. Absent on desktop and on iOS Safari, so
+  it fails soft and the Settings toggle hides itself when there is no motor.
 - **A fixed camera is a broken control for a car.** Steering lives in the car's
   frame, so a camera that never moves inverts it every time the car drives back
   toward the viewer: press left, watch it go right. `first` and `iso` are
@@ -428,8 +446,8 @@ because what actually breaks on a phone is input, not layout.
 
 Analog stick magnitude is carried through: a half-pushed stick moves at half
 speed (`integratePlayer` scales acceleration and the speed cap by the input
-vector's length; keyboard input is always magnitude 1). Still open, if you
-want it: richer haptics and a service worker for offline play.
+vector's length; keyboard input is always magnitude 1). Still open, if you want
+it: a service worker for offline play.
 
 ---
 

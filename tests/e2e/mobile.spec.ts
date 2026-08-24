@@ -77,24 +77,30 @@ async function advanceTicks(page: Page, ticks: number): Promise<void> {
     .toBeGreaterThanOrEqual(from + ticks);
 }
 
-/** `holdControl`, bounded in simulation ticks. */
-async function holdControlTicks(
-  page: Page,
-  testId: string,
-  ticks: number,
-  offset = 0,
-): Promise<void> {
-  const control = page.getByTestId(testId);
-  await expect(control).toBeVisible();
+/**
+ * Presses one pedal at a chosen depth and holds it for `ticks`.
+ *
+ * `depth` is where along the pedal's travel the thumb lands: 0 is the bottom
+ * edge (the lightest press the control gives you) and 1 the top (everything
+ * it has). That is the whole analog gesture, so it is what the tests below
+ * have to be able to express.
+ */
+async function holdPedal(page: Page, testId: string, ticks: number, depth: number): Promise<void> {
+  const pedal = page.getByTestId(testId);
+  await expect(pedal).toBeVisible();
 
-  const box = await control.boundingBox();
+  const box = await pedal.boundingBox();
   if (!box) throw new Error(`${testId} has no bounding box`);
 
-  await page.mouse.move(box.x + box.width / 2 + (box.width / 2) * offset, box.y + box.height / 2);
+  // Inset a hair from each end so a rounding error cannot land outside.
+  const y = box.y + box.height * (1 - clampUnit(depth)) * 0.94 + box.height * 0.03;
+  await page.mouse.move(box.x + box.width / 2, y);
   await page.mouse.down();
   await advanceTicks(page, ticks);
   await page.mouse.up();
 }
+
+const clampUnit = (value: number): number => Math.min(1, Math.max(0, value));
 
 test.describe('on a phone', () => {
   test('starts and renders', async ({ page }) => {
@@ -426,7 +432,10 @@ test.describe('on a phone', () => {
     // right because the grid faces +X against the near wall, and a car parked
     // on the boundary would be still for reasons that have nothing to do with
     // the wheel.
-    await holdControlTicks(page, 'driving-throttle', BURST);
+    // Buried, not merely pressed — the pedal is analog now, and its centre is
+    // about two thirds. This test is about the wheel, so it wants the car at
+    // the speed a driver getting up to speed would actually be doing.
+    await holdPedal(page, 'driving-throttle', BURST, 1);
 
     // Full left lock, thumb still down.
     await page.mouse.move(leftEnd, midY);
@@ -448,7 +457,7 @@ test.describe('on a phone', () => {
     // so measuring the swing across the burst is a far better test than
     // watching a car that has coasted to a stop.
     const beforeBurst = await heading();
-    await holdControlTicks(page, 'driving-throttle', BURST);
+    await holdPedal(page, 'driving-throttle', BURST, 1);
     const afterBurst = await heading();
     const afterBlur = Math.abs(
       Math.atan2(Math.sin(afterBurst - beforeBurst), Math.cos(afterBurst - beforeBurst)),
@@ -506,6 +515,73 @@ test.describe('on a phone', () => {
     await holdControl(page, 'driving-throttle', 2500);
     const after = await self();
     expect(Math.hypot(after!.x - before!.x, after!.z - before!.z)).toBeGreaterThan(3);
+  });
+
+  test('the pedals are analog: how far you press is how hard it goes', async ({ page }) => {
+    // The property the travel exists for. A discrete pedal passes every other
+    // driving test in this file, so without this one the analog behaviour is
+    // untested on the only device that has it.
+    await page.goto(`/?net=broadcast&autojoin=1&room=${ROOM}-pedal&mode=grandprix&name=Driver`);
+    await expect(page.getByTestId('hud')).toBeVisible({ timeout: 30_000 });
+    await expect
+      .poll(() => page.evaluate(() => window.__FWG__.tick), { timeout: 30_000 })
+      .toBeGreaterThan(60);
+
+    const self = () =>
+      page.evaluate(() => {
+        const handle = window.__FWG__;
+        return handle.players.find((player) => player.id === handle.selfId)!;
+      });
+
+    /** How far the car travels over a fixed number of ticks at this depth. */
+    const drivenAt = async (depth: number): Promise<number> => {
+      const before = await self();
+      await holdPedal(page, 'driving-throttle', 30, depth);
+      const after = await self();
+      return Math.hypot(after.x - before.x, after.z - before.z);
+    };
+
+    // Feathered first, from a standstill, then buried from wherever that left
+    // it. Ordering it this way is deliberate: the light press starts with the
+    // least speed to carry, so if anything it is flattered.
+    const feathered = await drivenAt(0);
+    // Let it coast back down so the second run is not just carrying the first.
+    await advanceTicks(page, 90);
+    const buried = await drivenAt(1);
+
+    expect(feathered).toBeGreaterThan(0.5);
+    expect(buried).toBeGreaterThan(feathered * 1.3);
+  });
+
+  test('shows how far down a pedal is, rather than only whether', async ({ page }) => {
+    // A control whose state you cannot see is one you have to learn by
+    // crashing, and the whole point of travel is that there are now more than
+    // two states to show.
+    await page.goto(`/?net=broadcast&autojoin=1&room=${ROOM}-fill&mode=grandprix&name=Driver`);
+    await expect(page.getByTestId('hud')).toBeVisible({ timeout: 30_000 });
+
+    const throttle = page.getByTestId('driving-throttle');
+    await expect(throttle).toBeVisible();
+    // A slider, not a button: it has travel, and a screen reader saying
+    // "button" for it would be a lie.
+    await expect(throttle).toHaveAttribute('role', 'slider');
+    expect(await throttle.getAttribute('aria-valuenow')).toBe('0');
+
+    const box = (await throttle.boundingBox())!;
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height * 0.9);
+    await page.mouse.down();
+    const light = Number(await throttle.getAttribute('aria-valuenow'));
+
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height * 0.1);
+    const heavy = Number(await throttle.getAttribute('aria-valuenow'));
+    await page.mouse.up();
+
+    // Pressing at all is worth something; sliding up is worth more.
+    expect(light).toBeGreaterThan(0);
+    expect(heavy).toBeGreaterThan(light);
+    expect(heavy).toBeGreaterThan(90);
+    // And it lets go completely on release, rather than latching.
+    expect(await throttle.getAttribute('aria-valuenow')).toBe('0');
   });
 
   test('every setting is reachable and thumb-sized', async ({ page }) => {

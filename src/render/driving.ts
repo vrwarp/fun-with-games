@@ -16,6 +16,17 @@ import { IDLE_INTENT, type InputIntent } from './input.js';
 const STEER_DEADZONE = Math.max(0.06, INPUT_DEADZONE);
 
 /**
+ * What a pedal gives you for pressing it at all, before any travel.
+ *
+ * Analog travel must not cost a player the ability to simply jab the throttle
+ * and go — that is what the control is for most of the time, and a thumb that
+ * lands low on the pedal should not read as "barely move". So the bottom of
+ * the travel is a firm press rather than nothing, and the top half is the
+ * modulation. A thumb landing in the middle asks for about two thirds.
+ */
+const PEDAL_FLOOR = 0.35;
+
+/**
  * On-screen driving controls: a steering track for one thumb, pedals for the
  * other.
  *
@@ -43,11 +54,18 @@ const STEER_DEADZONE = Math.max(0.06, INPUT_DEADZONE);
  * it would need a deliberate straightening input after every corner, which is
  * one more thing to get wrong at 27 units per second.
  *
- * The pedals are discrete rather than analog. A tyre-limited car is controlled
- * by *when* you brake far more than by how hard, and a pressure-sensitive
- * pedal on a screen with no pressure to sense is a fiction. Analog throttle
- * survives on the keyboard and on a gamepad stick, where an axis actually
- * exists.
+ * **Both pedals are analog, and they read travel rather than pressure.** A
+ * screen has no pressure to sense, so asking for one would be a fiction — but
+ * a pedal has never really been a pressure sensor either. It is a thing you
+ * push further or less far, and how far your thumb has travelled down the
+ * control is exactly that, measurable and visible. Press anywhere for a usable
+ * amount and slide toward the far edge for all of it.
+ *
+ * It earns its keep at both ends. Easing the throttle on corner exit is the
+ * difference between driving out of a slide and spinning; easing the brake
+ * hands grip back to the front tyres through the friction circle, which is
+ * what trail braking IS. A binary pedal has two states and neither of those
+ * techniques exists.
  *
  * Like every other input device here it produces a plain `InputIntent`, so
  * nothing downstream — prediction, the wire protocol, the simulation — knows
@@ -67,16 +85,14 @@ export class TouchDriving {
 
   #track: HTMLElement;
   #knob: HTMLElement;
-  #throttle: HTMLElement;
-  #brake: HTMLElement;
+  #throttle: Pedal;
+  #brake: Pedal;
 
   #pointerId: number | null = null;
   #centerX = 0;
   #halfWidth = 1;
 
   #steer = 0;
-  #throttleHeld = false;
-  #brakeHeld = false;
 
   #enabled = false;
   #attached = false;
@@ -105,9 +121,9 @@ export class TouchDriving {
 
     // Brake above throttle: the thumb rests on the throttle, which is where it
     // spends most of a lap, and reaches up for the brake.
-    this.#brake = this.#createPedal('driving__pedal--brake', 'Brake', 'driving-brake');
-    this.#throttle = this.#createPedal('driving__pedal--throttle', 'Go', 'driving-throttle');
-    pedals.append(this.#brake, this.#throttle);
+    this.#brake = new Pedal('driving__pedal--brake', 'Brake', 'driving-brake');
+    this.#throttle = new Pedal('driving__pedal--throttle', 'Go', 'driving-throttle');
+    pedals.append(this.#brake.root, this.#throttle.root);
 
     this.root.append(this.#track, pedals);
     parent.append(this.root);
@@ -168,50 +184,29 @@ export class TouchDriving {
   read(): InputIntent {
     if (!this.#enabled) return IDLE_INTENT;
 
-    // Both pedals at once resolves to the brake. It is the answer that fails
-    // safe, and it is what a real car does with both feet down.
-    const pedal = this.#brakeHeld ? -1 : this.#throttleHeld ? 1 : 0;
+    // Both pedals at once resolves to the brake, at whatever it is asking for.
+    // It is the answer that fails safe, and it is what a real car does with
+    // both feet down.
+    const pedal = this.#brake.value > 0 ? -this.#brake.value : this.#throttle.value;
     if (this.#steer === 0 && pedal === 0) return IDLE_INTENT;
 
     return { moveX: this.#steer, moveZ: pedal, sprint: false, buttons: 0 };
   }
 
+  /**
+   * How far each pedal is currently pushed, 0-1.
+   *
+   * Read by the haptics, which is a rendering concern and has no business
+   * digging the numbers back out of an `InputIntent` — there the two pedals
+   * have already been folded into one signed axis, and a brake and a reverse
+   * request are indistinguishable.
+   */
+  get pedals(): { throttle: number; brake: number } {
+    if (!this.#enabled) return { throttle: 0, brake: 0 };
+    return { throttle: this.#throttle.value, brake: this.#brake.value };
+  }
+
   // -------------------------------------------------------------- internals
-
-  #createPedal(modifier: string, label: string, testId: string): HTMLElement {
-    const pedal = document.createElement('button');
-    pedal.type = 'button';
-    pedal.className = `driving__pedal ${modifier}`;
-    pedal.textContent = label;
-    pedal.dataset['testid'] = testId;
-
-    const press = (event: PointerEvent): void => {
-      pedal.setPointerCapture(event.pointerId);
-      this.#setPedal(pedal, true);
-      event.preventDefault();
-    };
-    const release = (event: PointerEvent): void => {
-      if (pedal.hasPointerCapture(event.pointerId)) pedal.releasePointerCapture(event.pointerId);
-      this.#setPedal(pedal, false);
-      event.preventDefault();
-    };
-
-    pedal.addEventListener('pointerdown', press);
-    pedal.addEventListener('pointerup', release);
-    pedal.addEventListener('pointercancel', release);
-    // Not `pointerleave`: boundary events are suppressed at a captured
-    // element, so it would never fire for the case it looks like it covers. A
-    // capture lost without a `pointerup` is the real way a held pedal gets
-    // stranded, and this is the event for it.
-    pedal.addEventListener('lostpointercapture', release);
-    return pedal;
-  }
-
-  #setPedal(pedal: HTMLElement, held: boolean): void {
-    if (pedal === this.#throttle) this.#throttleHeld = held;
-    else this.#brakeHeld = held;
-    pedal.classList.toggle('is-held', held);
-  }
 
   #onFirstTouch = (): void => {
     this.#show();
@@ -317,10 +312,136 @@ export class TouchDriving {
   #reset(): void {
     this.#pointerId = null;
     this.#steer = 0;
-    this.#throttleHeld = false;
-    this.#brakeHeld = false;
     this.#knob.style.transform = 'translateX(0px)';
-    this.#throttle.classList.remove('is-held');
-    this.#brake.classList.remove('is-held');
+    this.#throttle.release();
+    this.#brake.release();
+  }
+}
+
+/**
+ * One analog pedal: press it anywhere, slide toward the far edge for more.
+ *
+ * Travel is measured from the BOTTOM of the control upward, because that is
+ * the direction a thumb travels to push a pedal further — away from the palm.
+ * It reads the same on the brake and on the throttle, so there is one gesture
+ * to learn rather than two.
+ *
+ * The recovery rules are the steering track's, and for the same reason: a
+ * capture can be taken away without a `pointerup` ever arriving — the tab
+ * backgrounded mid-corner, an OS gesture cutting in — and a pedal stranded at
+ * full throttle is worse than a wheel stranded at full lock.
+ */
+class Pedal {
+  readonly root: HTMLElement;
+
+  #fill: HTMLElement;
+  #pointerId: number | null = null;
+  #value = 0;
+  #top = 0;
+  #height = 1;
+
+  constructor(modifier: string, label: string, testId: string) {
+    this.root = document.createElement('div');
+    this.root.className = `driving__pedal ${modifier}`;
+    this.root.dataset['testid'] = testId;
+    // A slider rather than a button, because that is now what it is. Screen
+    // readers announcing "button" for a control with travel would be a lie.
+    this.root.setAttribute('role', 'slider');
+    this.root.setAttribute('aria-label', label);
+    this.root.setAttribute('aria-valuemin', '0');
+    this.root.setAttribute('aria-valuemax', '100');
+    this.root.setAttribute('aria-valuenow', '0');
+
+    // Behind the label, so how far the pedal is down is visible rather than
+    // only felt. A control whose state you cannot see is one you have to learn
+    // by crashing.
+    this.#fill = document.createElement('div');
+    this.#fill.className = 'driving__pedal-fill';
+
+    const text = document.createElement('span');
+    text.className = 'driving__pedal-label';
+    text.textContent = label;
+
+    this.root.append(this.#fill, text);
+
+    this.root.addEventListener('pointerdown', this.#onDown);
+    this.root.addEventListener('pointermove', this.#onMove);
+    this.root.addEventListener('pointerup', this.#onUp);
+    this.root.addEventListener('pointercancel', this.#onUp);
+    // Not `pointerleave`: boundary events are suppressed at a captured
+    // element, so it would never fire for the case it looks like it covers.
+    this.root.addEventListener('lostpointercapture', this.#onLostCapture);
+  }
+
+  /** How far down this pedal is, 0-1. */
+  get value(): number {
+    return this.#value;
+  }
+
+  /** Lets go, whatever the pointer is doing. */
+  release(): void {
+    this.#pointerId = null;
+    this.#set(0);
+  }
+
+  #onDown = (event: PointerEvent): void => {
+    // Last touch wins, exactly as on the steering track: refusing a second
+    // pointer is how one missed `pointerup` strands a pedal for ever.
+    this.#pointerId = event.pointerId;
+    try {
+      this.root.setPointerCapture(event.pointerId);
+    } catch {
+      // A pointer the browser has already taken back. The value below is
+      // still worth setting — the press happened.
+    }
+    this.#measure();
+    this.#update(event);
+    event.preventDefault();
+  };
+
+  #onMove = (event: PointerEvent): void => {
+    if (event.pointerId !== this.#pointerId) return;
+    this.#update(event);
+    event.preventDefault();
+  };
+
+  #onUp = (event: PointerEvent): void => {
+    if (event.pointerId !== this.#pointerId) return;
+    try {
+      if (this.root.hasPointerCapture(event.pointerId)) {
+        this.root.releasePointerCapture(event.pointerId);
+      }
+    } catch {
+      // Already reclaimed; the release below is the part that matters.
+    }
+    this.release();
+    event.preventDefault();
+  };
+
+  #onLostCapture = (event: PointerEvent): void => {
+    if (event.pointerId !== this.#pointerId) return;
+    this.release();
+  };
+
+  #measure(): void {
+    const rect = this.root.getBoundingClientRect();
+    if (rect.height === 0) return;
+    this.#top = rect.top;
+    this.#height = rect.height;
+  }
+
+  #update(event: PointerEvent): void {
+    // 0 at the bottom edge, 1 at the top. Clamped rather than released at the
+    // ends so a thumb pushed past the pedal stays at full rather than silently
+    // letting go — the same rule the steering track follows at full lock.
+    const travel = clamp(1 - (event.clientY - this.#top) / this.#height, 0, 1);
+    this.#set(PEDAL_FLOOR + (1 - PEDAL_FLOOR) * travel);
+  }
+
+  #set(value: number): void {
+    this.#value = value;
+    this.root.classList.toggle('is-held', value > 0);
+    this.#fill.style.transform = `scaleY(${value})`;
+    this.root.setAttribute('aria-valuenow', String(Math.round(value * 100)));
   }
 }

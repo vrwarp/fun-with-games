@@ -137,6 +137,25 @@ export class CarFinishes {
   }
 
   /**
+   * One car's wheel rims.
+   *
+   * Per car for one reason only: the rims ARE the brake glow. Their emissive
+   * is driven frame by frame from that car's own deceleration, and a shared
+   * rim material would light every wheel on the grid whenever anyone braked.
+   * Owned by the caller, like the paint.
+   */
+  createWheelMetal(name: string): PBRMaterial {
+    const metal = new PBRMaterial(name, this.#scene);
+    metal.albedoColor = new Color3(0.5, 0.5, 0.53).toLinearSpace();
+    metal.metallic = 1;
+    metal.roughness = 0.3;
+    // Starts cold. The glow is written into emissiveColor every frame by the
+    // car's animation; this is only the resting state.
+    metal.emissiveColor = new Color3(0, 0, 0);
+    return metal;
+  }
+
+  /**
    * One car's livery.
    *
    * Handed over rather than kept: the colour is the one thing that is

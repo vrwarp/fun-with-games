@@ -12,7 +12,17 @@ import type { ShadowGenerator } from '@babylonjs/core/Lights/Shadows/shadowGener
 import type { SimConfig } from '../sim/config.js';
 import type { RenderPickup, RenderPlayer, RenderState } from '../net/view.js';
 import { createLabelTexture, createSpriteTexture } from './textures.js';
-import { buildCarMesh } from './carmesh.js';
+import { buildCarMesh, type CarMesh } from './carmesh.js';
+import {
+  angleDelta,
+  approach,
+  bodyAcceleration,
+  bodyAttitude,
+  brakeGlowStep,
+  steerFromYaw,
+  wheelSpinDelta,
+} from './cardynamics.js';
+import type { PBRMaterial } from '@babylonjs/core/Materials/PBR/pbrMaterial.js';
 import { CarFinishes, type FinishOptions } from './carmaterials.js';
 import { pbrSkin, standardSkin, type PlayerSkin } from './skin.js';
 
@@ -63,6 +73,30 @@ interface PlayerView {
   wing: Mesh | null;
   /** Extra meshes (wheels, wings) to dispose with the body. */
   parts: Mesh[];
+  /** The moving parts, when this body is a car. */
+  car: CarAnimation | null;
+}
+
+/**
+ * Everything a car visibly does between frames, and the state it needs.
+ *
+ * All of it is derived presentation-side from position, heading and velocity —
+ * see `cardynamics.ts` for why nothing here touches the wire.
+ */
+interface CarAnimation {
+  readonly mesh: CarMesh;
+  readonly wheelMetal: PBRMaterial;
+  /** Velocity and heading last frame, for differencing. */
+  previousVx: number;
+  previousVz: number;
+  previousHeading: number;
+  /** Smoothed state, so the body leans rather than twitching. */
+  steer: number;
+  pitch: number;
+  roll: number;
+  glow: number;
+  /** True until the first frame has primed the previous-values above. */
+  fresh: boolean;
 }
 
 interface PickupView {
@@ -207,7 +241,7 @@ export class EntityViews {
   /** Projects one frame of state onto the scene. */
   sync(state: RenderState, deltaSeconds: number): void {
     this.#spinRadians = (this.#spinRadians + deltaSeconds * 2) % (Math.PI * 2);
-    this.#syncPlayers(state.players);
+    this.#syncPlayers(state.players, deltaSeconds);
     this.#syncPickups(state.pickups);
   }
 
@@ -305,7 +339,7 @@ export class EntityViews {
     }
   }
 
-  #syncPlayers(players: readonly RenderPlayer[]): void {
+  #syncPlayers(players: readonly RenderPlayer[], deltaSeconds: number): void {
     const seen = new Set<string>();
 
     for (const player of players) {
@@ -327,6 +361,7 @@ export class EntityViews {
       // The wing lies flat when the driver opens it — visible from behind,
       // which is exactly who needs to know.
       if (view.wing) view.wing.rotation.x = player.effects.includes('drs') ? -1.15 : 0;
+      if (view.car) this.#animateCar(view.car, player, deltaSeconds);
 
       const inside = this.#firstPerson && player.isLocal;
       view.label.setEnabled(!inside);
@@ -402,6 +437,7 @@ export class EntityViews {
       baseEmissive,
       wing: null,
       parts: [],
+      car: null,
     };
   }
 
@@ -415,6 +451,7 @@ export class EntityViews {
   #createCar(player: RenderPlayer, root: TransformNode, baseColor: Color3): PlayerView {
     const finishes = (this.#finishes ??= new CarFinishes(this.#scene, this.#finish));
     const paint = finishes.createPaint(`player:${player.id}:paint`, baseColor);
+    const wheelMetal = finishes.createWheelMetal(`player:${player.id}:rims`);
     const car = buildCarMesh(
       this.#scene,
       `player:${player.id}`,
@@ -424,6 +461,7 @@ export class EntityViews {
         carbon: finishes.carbon,
         rubber: finishes.rubber,
         metal: finishes.metal,
+        wheelMetal,
       },
       this.#config.playerRadius,
     );
@@ -449,7 +487,93 @@ export class EntityViews {
       baseEmissive,
       wing: car.wing,
       parts,
+      car: {
+        mesh: car,
+        wheelMetal,
+        previousVx: 0,
+        previousVz: 0,
+        previousHeading: 0,
+        steer: 0,
+        pitch: 0,
+        roll: 0,
+        glow: 0,
+        fresh: true,
+      },
     };
+  }
+
+  /**
+   * One frame of a car's moving parts.
+   *
+   * Every number here is recovered from position, heading and velocity — see
+   * `cardynamics.ts`. The renderer differences state it already has; nothing
+   * new crosses the wire, and bots animate identically to humans because both
+   * are just cars with velocities.
+   */
+  #animateCar(car: CarAnimation, player: RenderPlayer, deltaSeconds: number): void {
+    if (deltaSeconds <= 0) return;
+    if (car.fresh) {
+      // Prime the differencing, or frame one manufactures a huge fake
+      // acceleration out of the spawn position.
+      car.previousVx = player.vx;
+      car.previousVz = player.vz;
+      car.previousHeading = player.heading;
+      car.fresh = false;
+      return;
+    }
+
+    const speed = Math.hypot(player.vx, player.vz);
+    // Signed along the nose, so reversing spins the wheels backward.
+    const forwardSpeed =
+      player.vx * Math.sin(player.heading) + player.vz * Math.cos(player.heading);
+
+    // Steering, recovered by running the bicycle model backward.
+    const yawRate = angleDelta(car.previousHeading, player.heading) / deltaSeconds;
+    const steerTarget = steerFromYaw(
+      yawRate,
+      speed,
+      this.#config.vehicle.wheelbase,
+      this.#config.vehicle.maxSteerAngle,
+    );
+    car.steer = approach(car.steer, steerTarget, 12, deltaSeconds);
+
+    // Body lean, from the acceleration the velocity implies.
+    const accel = bodyAcceleration(
+      player.heading,
+      player.vx,
+      player.vz,
+      car.previousVx,
+      car.previousVz,
+      deltaSeconds,
+    );
+    const attitude = bodyAttitude(accel.forward, accel.lateral);
+    car.pitch = approach(car.pitch, attitude.pitch, 8, deltaSeconds);
+    car.roll = approach(car.roll, attitude.roll, 8, deltaSeconds);
+    car.glow = brakeGlowStep(car.glow, accel.forward, speed, deltaSeconds);
+
+    car.previousVx = player.vx;
+    car.previousVz = player.vz;
+    car.previousHeading = player.heading;
+
+    // Apply. Wheels spin about their axle; fronts also steer, at a fraction of
+    // the estimated lock because full sim lock at walking pace looks like a
+    // broken axle at this wheel size.
+    const spin = wheelSpinDelta(forwardSpeed, 1, deltaSeconds);
+    for (const wheel of car.mesh.wheels) {
+      wheel.mesh.rotation.x += spin / wheel.radius;
+      if (wheel.front) wheel.pivot.rotation.y = car.steer * 0.7;
+    }
+    car.mesh.attitude.rotation.x = car.pitch;
+    // Negated at the apply, not in the model: `bodyAttitude` speaks in
+    // "positive rolls the body toward its right", and Babylon's positive
+    // rotation.z tilts the top toward -X, which is the car's LEFT.
+    car.mesh.attitude.rotation.z = -car.roll;
+    // The steering wheel turns further than the wheels, like a real rack.
+    car.mesh.steeringWheel.rotation.z = -car.steer * 3;
+
+    // Brake glow: rims heat instantly and cool slowly. Deep orange, kept off
+    // the red channel's ceiling so ACES does not push it to white.
+    car.wheelMetal.emissiveColor.set(car.glow * 0.9, car.glow * 0.18, car.glow * 0.03);
   }
 
   /**
@@ -543,6 +667,7 @@ export class EntityViews {
     view.label.material?.dispose(true, true);
     view.label.dispose();
     view.skin.dispose();
+    view.car?.wheelMetal.dispose();
     view.wing?.dispose();
     for (const part of view.parts) part.dispose();
     view.body.dispose();

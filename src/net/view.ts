@@ -93,6 +93,20 @@ export interface RenderBall {
   z: number;
 }
 
+/**
+ * One tyre stack, wherever the racing has left it. Velocity rides along so
+ * the renderer can lean a stack that is currently flying; everything else
+ * about the tumble is derived from how far `x/z` sit from the stack's home,
+ * which the renderer computes itself from the same config.
+ */
+export interface RenderTyreStack {
+  id: number;
+  x: number;
+  z: number;
+  vx: number;
+  vz: number;
+}
+
 export interface RenderProjectile {
   id: number;
   x: number;
@@ -138,6 +152,7 @@ export interface RenderState {
   projectiles: RenderProjectile[];
   zones: RenderZone[];
   items: RenderItem[];
+  tyreStacks: RenderTyreStack[];
   /** `combat.maxHp` when combat is enabled, else 0 (hide health UI). */
   maxHp: number;
   /**
@@ -170,6 +185,7 @@ export const EMPTY_RENDER_STATE: RenderState = Object.freeze({
   projectiles: [] as RenderProjectile[],
   zones: [] as RenderZone[],
   items: [] as RenderItem[],
+  tyreStacks: [] as RenderTyreStack[],
   maxHp: 0,
   totalLaps: 0,
 });

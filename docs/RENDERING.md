@@ -30,7 +30,8 @@ Nothing below quietly restyles them: every branch is on
 | ----------------- | ----------------------------------------------------------------------- |
 | `renderer.ts`     | Engine, scene, camera, lights, shadows, fog, arena, post                |
 | `environment.ts`  | The generated sky: sun, clouds, a reflection probe and a visible dome   |
-| `scenery.ts`      | Trees, tyre walls, guard posts, sponsor boards — thin instances         |
+| `scenery.ts`      | Trees, guard posts, sponsor boards — merged static meshes               |
+| `tyrestacks.ts`   | The tyre walls, drawn from simulation state — they are bodies now       |
 | `cardynamics.ts`  | Wheel spin, recovered steering, body lean, brake glow — pure            |
 | `smoke.ts`        | Tyre smoke and dust, gated by the same slip functions as the marks      |
 | `surfaces.ts`     | Procedural albedo + height patterns, and the normal maps made from them |

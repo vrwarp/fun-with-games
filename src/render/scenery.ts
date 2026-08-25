@@ -2,7 +2,6 @@ import { Mesh } from '@babylonjs/core/Meshes/mesh.js';
 import { CreateBox } from '@babylonjs/core/Meshes/Builders/boxBuilder.js';
 import { CreateCylinder } from '@babylonjs/core/Meshes/Builders/cylinderBuilder.js';
 import { CreatePlane } from '@babylonjs/core/Meshes/Builders/planeBuilder.js';
-import { CreateTorus } from '@babylonjs/core/Meshes/Builders/torusBuilder.js';
 import { PBRMaterial } from '@babylonjs/core/Materials/PBR/pbrMaterial.js';
 import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial.js';
 import { Color3 } from '@babylonjs/core/Maths/math.color.js';
@@ -498,23 +497,10 @@ export class Scenery {
       if (pines) this.#casters.push(this.#keep(pines));
     });
 
-    // Tyre walls on the outside of every real corner — and PAINTED, in the
-    // red/white/blue bundles a real circuit wraps them in. All black they
-    // read as licorice; the paint is what says "safety equipment".
-    const bundleColours = [
-      new Color3(0.55, 0.12, 0.1),
-      new Color3(0.78, 0.78, 0.74),
-      new Color3(0.09, 0.09, 0.1),
-    ];
-    const stacks = tyreWalls(path, lap, barrier - 0.6, 2.2);
-    bundleColours.forEach((colour, index) => {
-      const share = stacks.filter((_, i) => i % bundleColours.length === index);
-      const bundle = instance(
-        this.#tyreStack(scene, this.#material(scene, `scenery:tyres${index}`, colour, 0.75), index),
-        share,
-      );
-      if (bundle) this.#casters.push(this.#keep(bundle));
-    });
+    // The tyre walls are NOT here any more. A stack is a body the cars can
+    // hit — simulated, snapshotted, and drawn by `TyreStackView` from the
+    // live state on every device — so it cannot live behind the dressing
+    // gate with the props that are only ever looked at.
 
     // Guardrail posts, one every few metres on both sides. They are what stop
     // a hundred-metre barrier reading as one extruded slab.
@@ -568,7 +554,6 @@ export class Scenery {
     // depends on a screen-space pass finding the geometry.
     this.#contacts(scene, [
       ...trees.map((tree) => ({ ...tree, radius: 1.7 * tree.scale })),
-      ...stacks.map((stack) => ({ ...stack, radius: 1.4 })),
       ...posts.map((post) => ({ ...post, radius: 0.4 })),
       ...runs.map((run) => ({ ...run, radius: 2.6 })),
       ...marshalSpots.map((spot) => ({ ...spot, radius: 0.9 })),
@@ -752,24 +737,6 @@ export class Scenery {
     material.specularIntensity = 0.05;
     this.#materials.push(material);
     return material;
-  }
-
-  /** Three tyres on their side, stacked, with a soft paint-band variation. */
-  #tyreStack(scene: Scene, material: Material, index: number): Mesh {
-    const parts = [0.35, 0.95, 1.55].map((y, tier) => {
-      const tyre = CreateTorus(
-        `scenery:tyre${index}:${tier}`,
-        { diameter: 1.15, thickness: 0.42, tessellation: 10 },
-        scene,
-      );
-      tyre.position.y = y;
-      return tyre;
-    });
-    const merged = Mesh.MergeMeshes(parts, true, true, undefined, false, false);
-    if (!merged) return this.#keep(parts[0] as Mesh);
-    merged.name = `scenery:tyres${index}`;
-    merged.material = material;
-    return this.#keep(merged);
   }
 
   /** One guardrail post: a dark upright with a shallow cap. */

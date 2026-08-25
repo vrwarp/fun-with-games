@@ -74,6 +74,7 @@ export function makeSnapshot(
     projectiles: [],
     items: [],
     zones: [],
+    tyreStacks: [],
     ...extra,
   };
 }
@@ -104,7 +105,15 @@ export interface StepContextOverrides {
   ctx?: Partial<
     Pick<
       StepContext,
-      'pickups' | 'phase' | 'teamScores' | 'ball' | 'projectiles' | 'items' | 'zones' | 'obstacles'
+      | 'pickups'
+      | 'phase'
+      | 'teamScores'
+      | 'ball'
+      | 'projectiles'
+      | 'items'
+      | 'zones'
+      | 'obstacles'
+      | 'tyreStacks'
     >
   >;
 }
@@ -128,6 +137,7 @@ export function makeStepContext(overrides: StepContextOverrides = {}): StepConte
     projectiles: overrides.ctx?.projectiles ?? [],
     items: overrides.ctx?.items ?? [],
     zones: overrides.ctx?.zones ?? [],
+    tyreStacks: overrides.ctx?.tyreStacks ?? [],
     out: [],
   };
 }

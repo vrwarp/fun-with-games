@@ -129,6 +129,13 @@ current lap started, the last lap, the best lap). Nothing else about the
 racing needed a version — the slipstream, the wing and the tyres are all
 timed effects, and the effects map has always travelled whole.
 
+Protocol **v5** adds the tyre stacks: the trackside walls became bodies the
+cars exchange momentum with, so their positions and velocities are mutable
+state and travel in every snapshot (`tyreStacks`, index-identified — the
+roster is fixed by the circuit, so homes never need to travel, only where
+the racing has since shoved each stack). Quantized to centimetres; a parked
+wall is rows of short zeroes.
+
 New abilities that only need a button do **not** bump the version: both
 button bits already travel. Camera view and sprite style never touch the wire
 at all, which is precisely why two players can watch the same match in

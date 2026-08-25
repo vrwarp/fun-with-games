@@ -2,6 +2,7 @@ import type { SimConfig } from '../config.js';
 import type { StepContext } from '../step.js';
 import { ROLE_NONE, TEAM_NONE, type PhaseId, type PhaseState } from '../types.js';
 import { spawnHeading, spawnPosition } from './arena.js';
+import { resetTyreStacks } from './tyrestacks.js';
 
 /**
  * The match state machine:
@@ -129,6 +130,7 @@ function resetRound(ctx: StepContext): void {
   }
 
   ctx.projectiles.length = 0;
+  resetTyreStacks(ctx);
 
   ctx.items.forEach((item, index) => {
     const spec = config.items[index];

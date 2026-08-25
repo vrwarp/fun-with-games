@@ -15,6 +15,7 @@ import {
   type RenderPickup,
   type RenderProjectile,
   type RenderState,
+  type RenderTyreStack,
   type RenderZone,
 } from './view.js';
 
@@ -264,6 +265,7 @@ export class ClientView {
       projectiles: this.#projectileViews(from.snapshot, to.snapshot, alpha),
       zones: this.#zoneViews(latest.snapshot),
       items: this.#itemViews(latest.snapshot),
+      tyreStacks: this.#tyreStackViews(from.snapshot, to.snapshot, alpha),
       maxHp: this.#config.combat.enabled ? this.#config.combat.maxHp : 0,
       totalLaps: this.#isRace ? this.#config.phases.targetScore : 0,
     };
@@ -297,6 +299,23 @@ export class ClientView {
       winnerName: winner?.name ?? '',
       winnerTeam: phase.winnerTeam,
     };
+  }
+
+  /**
+   * Stacks are index-identified (the roster is fixed by the circuit), so the
+   * pairing for interpolation is positional — no id search needed.
+   */
+  #tyreStackViews(from: WorldSnapshot, to: WorldSnapshot, alpha: number): RenderTyreStack[] {
+    return to.tyreStacks.map((stack, id) => {
+      const previous = from.tyreStacks[id];
+      return {
+        id,
+        x: previous ? lerp(previous.x, stack.x, alpha) : stack.x,
+        z: previous ? lerp(previous.z, stack.z, alpha) : stack.z,
+        vx: stack.vx,
+        vz: stack.vz,
+      };
+    });
   }
 
   #ballView(from: WorldSnapshot, to: WorldSnapshot, alpha: number): RenderBall | null {

@@ -44,6 +44,7 @@ import { TrackView } from './trackview.js';
 import { Scenery } from './scenery.js';
 import {
   applyView,
+  groundFootprint,
   viewFollowsHeading,
   viewSpec,
   type EyeSpec,
@@ -66,6 +67,31 @@ export interface RendererOptions {
 }
 
 const log = createLogger('render:renderer');
+
+/**
+ * How far the drawn ground reaches, as world half-extents.
+ *
+ * One definition, used both to build the ground and to decide how far the
+ * camera may pan. They were separate, and the camera clamp was written against
+ * the ARENA — which stopped being the edge of the world the moment a circuit's
+ * ground was extended past it.
+ */
+function groundExtent(config: SimConfig): { x: number; z: number } {
+  const racing = config.track.enabled && config.trackPath.length >= 2;
+  if (!racing) return { x: config.arenaHalfExtentX, z: config.arenaHalfExtentZ };
+  const outer = Math.max(config.arenaHalfExtentX, config.arenaHalfExtentZ) * GROUND_REACH;
+  return { x: outer, z: outer };
+}
+
+/**
+ * How far a circuit's ground runs past its arena, as a multiple of the arena's
+ * larger half-extent.
+ *
+ * Five puts the edge well beyond `fogEnd`, so the world fades out rather than
+ * stopping. The arena walls still mark the play area; this is only about where
+ * the LAND ends.
+ */
+const GROUND_REACH = 5;
 
 /** Texels per side of the generated grass. */
 const GRASS_TEXTURE_SIZE = 256;
@@ -399,11 +425,37 @@ export class Renderer {
   /**
    * Keeps an orthographic camera from panning off the edge of the world.
    *
-   * A fixed 2D camera that scrolls past the arena shows a band of void, which
-   * reads as a bug even though nothing is wrong. Where the arena is smaller
+   * A fixed 2D camera that scrolls past the ground shows a band of void, which
+   * reads as a bug even though nothing is wrong. Where the world is smaller
    * than the frustum the view simply centres instead — the classic 2D
    * camera-bounds rule. The perspective follow camera is left alone: it
    * orbits, so it has no stable notion of a screen edge.
+   *
+   * ## Two things this used to get wrong
+   *
+   * It compared the frustum's SCREEN half-extents against the ARENA, and both
+   * halves of that were wrong once a circuit existed.
+   *
+   * Screen is not ground. The old code used the ortho box's width and height
+   * as if they were world X and Z. That holds for `topdown`, which looks
+   * straight down a world axis — and it was clearly written for `topdown`.
+   * It does not hold for `iso`, which is rotated 45 degrees and tilted 37
+   * above the horizon: measured, the frustum covers 58 x 58 world units where
+   * the old arithmetic assumed 40 x 25. `groundFootprint` does the
+   * trigonometry properly, from the camera's LIVE alpha, because a view that
+   * chases a car's heading orbits and has no fixed angle to assume.
+   *
+   * The arena is not the edge of the world. A circuit's ground now runs five
+   * times past it, so clamping to the arena was defending a boundary that had
+   * stopped being one — while still paying the cost, pinning the camera off
+   * the car near the arena edge for no benefit at all. It clamps to
+   * `groundExtent` now, which on a circuit is far enough away that the camera
+   * simply follows the car, and in an arena mode is exactly the old behaviour.
+   *
+   * Worth noting what the honest arithmetic implies: for `iso` the true
+   * footprint is bigger than most arenas, so `slack` goes negative and the
+   * rule above centres the view — which is right, because if the whole world
+   * is on screen there is nothing to pan toward.
    */
   #clampTargetToArena(spec: ReturnType<typeof viewSpec>): void {
     const halfHeight = spec.orthoHalfHeight;
@@ -414,21 +466,27 @@ export class Renderer {
     if (width === 0 || height === 0) return;
 
     // Must match `applyView`'s framing exactly: a clamp computed from the
-    // unscaled spec would let a pulled-back camera see past the arena walls.
+    // unscaled spec would let a pulled-back camera see past the world's edge.
     const viewHalfHeight = halfHeight * this.#framingScale * (this.#isPortrait ? 1.25 : 1);
     const viewHalfWidth = viewHalfHeight * (width / height);
+    // Live alpha, not the spec's: `#followHeading` orbits it. One frame stale,
+    // since that runs after this — which at any plausible turn rate is a
+    // fraction of a degree.
+    const reach = groundFootprint(
+      this.camera.alpha,
+      this.camera.beta,
+      viewHalfWidth,
+      viewHalfHeight,
+    );
+    const world = groundExtent(this.#config);
 
-    const clampAxis = (value: number, arenaHalf: number, viewHalf: number): number => {
-      const slack = arenaHalf - viewHalf;
-      if (slack <= 0) return 0; // arena narrower than the view: centre it
+    const clampAxis = (value: number, worldHalf: number, viewHalf: number): number => {
+      const slack = worldHalf - viewHalf;
+      if (slack <= 0) return 0; // world narrower than the view: centre it
       return Math.max(-slack, Math.min(slack, value));
     };
 
-    this.#cameraTarget.x = clampAxis(
-      this.#cameraTarget.x,
-      this.#config.arenaHalfExtentX,
-      viewHalfWidth,
-    );
+    this.#cameraTarget.x = clampAxis(this.#cameraTarget.x, world.x, reach.x);
 
     if (this.#view === 'side') {
       // A side-scroller scrolls along X and climbs with the player, but never
@@ -440,11 +498,7 @@ export class Renderer {
       return;
     }
 
-    this.#cameraTarget.z = clampAxis(
-      this.#cameraTarget.z,
-      this.#config.arenaHalfExtentZ,
-      viewHalfHeight,
-    );
+    this.#cameraTarget.z = clampAxis(this.#cameraTarget.z, world.z, reach.z);
   }
 
   /**
@@ -868,16 +922,15 @@ export class Renderer {
   }
 
   #createArena(config: SimConfig, obstacles: readonly Obstacle[]): void {
-    const racingGround = config.track.enabled && config.trackPath.length >= 2;
     // A circuit's ground runs well past the arena, out beyond where the fog
     // has finished. The arena walls still mark the play area; what changes is
     // that the WORLD no longer stops there. From any raised camera the old
     // ground read as a slab floating in space, with a cliff edge and sky
     // underneath it — which is the single fastest way to make a landscape look
     // like a diorama. Land that fades into haze reads as land that continues.
-    const outer = Math.max(config.arenaHalfExtentX, config.arenaHalfExtentZ) * 5;
-    const width = racingGround ? outer * 2 : config.arenaHalfExtentX * 2;
-    const depth = racingGround ? outer * 2 : config.arenaHalfExtentZ * 2;
+    const groundHalf = groundExtent(config);
+    const width = groundHalf.x * 2;
+    const depth = groundHalf.z * 2;
 
     // A deep slab, not a plane. A zero-thickness ground is invisible to the
     // side-on camera, which would leave a platformer's characters standing on

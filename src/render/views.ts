@@ -251,3 +251,62 @@ export function applyView(
   camera.orthoLeft = -halfWidth;
   camera.orthoRight = halfWidth;
 }
+
+/**
+ * Elevation below which a camera is treated as looking at the horizon.
+ *
+ * `cos(beta)` is the sine of the angle the camera looks down at, so it is the
+ * divisor that turns screen height into ground depth. As the camera levels out
+ * that divisor goes to zero and the ground reach goes to infinity — correctly,
+ * because a level camera really does see to the horizon. About one degree is
+ * where the number stops meaning anything useful.
+ */
+const MIN_ELEVATION = 0.02;
+
+/**
+ * How much GROUND an orthographic view covers, as world-axis half-extents.
+ *
+ * This is not the same as the frustum's width and height, and assuming it was
+ * is a mistake worth spelling out because it looked right for a year:
+ *
+ * 1. **The screen axes are not the world axes.** They only line up when the
+ *    camera looks down a world axis. `iso` sits at `alpha = -PI/4`, so both
+ *    screen axes are 45-degree diagonals and each one contributes to X *and*
+ *    Z. And a view that chases a car's heading orbits, so its alpha is
+ *    whatever the driver last did — there is no fixed answer to bake in.
+ * 2. **A tilted camera sees more ground than it is tall.** Screen height `h`
+ *    covers `h / cos(beta)` of ground. At `iso`'s 37 degrees above the
+ *    horizon that is 1.66x, and it only grows as the camera drops.
+ *
+ * For `iso` at a typical desktop size the two together turn an assumed
+ * 40 x 25 into an actual 58 x 58 — the difference between a camera that stays
+ * inside the arena and one that shows the far wall from anywhere in it.
+ *
+ * Pure, and exported for that reason: it is a piece of trigonometry that is
+ * invisible when wrong.
+ */
+export function groundFootprint(
+  alpha: number,
+  beta: number,
+  halfWidth: number,
+  halfHeight: number,
+): { x: number; z: number } {
+  // The camera sits at `target + r * (cos a sin b, cos b, sin a sin b)` and
+  // looks back along it. Dropping `sin b` normalises the horizontal part,
+  // which is the direction the screen's vertical axis runs along the ground.
+  const forwardX = -Math.cos(alpha);
+  const forwardZ = -Math.sin(alpha);
+  // Screen-right is perpendicular to it, in the ground plane.
+  const rightX = -forwardZ;
+  const rightZ = forwardX;
+
+  const depth = halfHeight / Math.max(Math.abs(Math.cos(beta)), MIN_ELEVATION);
+
+  // Axis-aligned bounds of a rectangle rotated by alpha: each world axis takes
+  // a share of both screen axes, and the shares are absolute because the box
+  // extends in both directions along each.
+  return {
+    x: Math.abs(rightX) * halfWidth + Math.abs(forwardX) * depth,
+    z: Math.abs(rightZ) * halfWidth + Math.abs(forwardZ) * depth,
+  };
+}

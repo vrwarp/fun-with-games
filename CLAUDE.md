@@ -497,6 +497,12 @@ Full guidance, including where to find CC0 art and how to generate it:
   arena and leave each car a handful of texels. `scenery.ts`, and the placement
   half of it is pure so a tyre wall on the wrong side of a corner is a unit
   test rather than a squint.
+- **A camera's screen box is not its ground footprint.** Screen axes are world
+  axes only when the camera looks down one, and a tilted camera covers
+  `height / cos(beta)` of ground. For `iso` that is 58x58 world units where the
+  box says 40x25. Use `groundFootprint()` rather than the ortho extents, and
+  clamp against `groundExtent()` — the arena stopped being the edge of the
+  world when a circuit's ground grew past it. `docs/RENDERING.md` §9.
 - **A browser with no GPU opens on the cheapest tier.** `isSoftwareRenderer()`
   reads the WebGL renderer string; a software rasteriser is a different order
   of magnitude from a slow GPU, not a slower one. This is also why the e2e

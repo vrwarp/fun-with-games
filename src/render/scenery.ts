@@ -248,12 +248,21 @@ function instance(mesh: Mesh, placements: readonly Placement[], lift = 0): void 
     placed.copyToArray(buffer, index * 16);
   });
   mesh.thinInstanceSetBuffer('matrix', buffer, 16);
-  // The prototype's own bounds are one tree; the instances span the arena, and
+  // The prototype's own bounds are one tree; the instances span the world, and
   // a mesh culled by the wrong bounds pops in and out as the camera turns.
+  //
+  // This used to also set `alwaysSelectAsActiveMesh`, which made the line above
+  // pointless — asserting "never cull me" while carefully computing the bounds
+  // culling would have used. Both were defensible on their own and together
+  // they were just contradictory. The bounds win: a thin-instance batch is
+  // culled all or nothing, and one that spans the world never will be, so the
+  // frustum test costs a comparison per batch per frame and keeps the mesh
+  // honest about where it is. (If the tree count ever justified it, the real
+  // win would be splitting the scatter into spatial buckets so culling could
+  // actually bite.)
   mesh.thinInstanceRefreshBoundingInfo(true);
   mesh.isPickable = false;
   mesh.receiveShadows = false;
-  mesh.alwaysSelectAsActiveMesh = true;
 }
 
 /**

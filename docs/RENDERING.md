@@ -298,7 +298,58 @@ racing line, it is a wall-follower.
 
 ---
 
-## 9. Quality tiers
+## 9. What the camera actually sees
+
+Nothing is streamed or progressively loaded — the whole circuit exists from
+startup. How much of it is on screen is decided in `applyView` (`views.ts`),
+and for the orthographic views it is an absolute box: `orthoHalfHeight` from
+the view's spec, multiplied by `#framingScale`, with the width derived from the
+aspect ratio. Babylon's ortho box is not aspect-derived, so it has to be
+recomputed on every resize or a phone rotating to landscape squashes the world.
+
+`#framingScale` is `min(1.7, max(1, playerMaxSpeed / 14))` — a car at 27 units
+a second would cross a frame framed for a runner in well under a second, which
+is not enough road to plan a corner from. It only ever widens the shot.
+
+Then the frame follows the player (eased at `dt * 8`), the target is clamped so
+the view cannot pan off the world, fog closes at `span * 3`, and the far plane
+sits at `span * 8`.
+
+### The trap: screen extents are not ground extents
+
+`groundFootprint` exists because the clamp used to compare the ortho box's
+width and height directly against the arena, and both halves of that were
+wrong.
+
+**Screen axes are not world axes.** They line up only when the camera looks
+down a world axis. `topdown` does — and the old arithmetic was clearly written
+for it, where it is exactly right. `iso` sits at `alpha = -PI/4`, so both screen
+axes are diagonals and each contributes to X _and_ Z. Worse, a view that chases
+a car's heading **orbits**, so there is no fixed alpha to assume at all.
+
+**A tilted camera sees more ground than it is tall.** Screen height `h` covers
+`h / cos(beta)` of ground — 1.66x at `iso`'s 37 degrees above the horizon.
+
+Together, for `iso` on a desktop frame: assumed 40 x 25, actually **58 x 58**.
+The arena is 42 deep, so the frustum overspilled the far wall _from the dead
+centre of the map_ — no clamp value could have prevented it. Meanwhile the
+clamp still bound, pinning the camera 14 units off the car near the grid. It
+paid the cost without buying the benefit.
+
+**The arena is not the edge of the world**, either, not since a circuit's ground
+started running five times past it. `groundExtent` is now the single definition
+of where the land stops, used both to build the ground and to clamp the camera.
+On a circuit it is far enough away that the camera simply follows the car; in an
+arena mode it is the arena, exactly as before.
+
+One consequence worth expecting: with honest arithmetic the `iso` footprint is
+larger than most arenas, so `slack` goes negative and the view centres. That is
+the right answer — if the whole world is on screen there is nothing to pan
+toward — and it is what the "classic 2D camera-bounds rule" always said.
+
+---
+
+## 10. Quality tiers
 
 `quality.ts` is pure policy, and pure on purpose: CI runs headless software
 rendering at single-digit frame rates whatever the settings, so a browser test
@@ -340,7 +391,7 @@ it describes a device, not the game somebody was invited to.
 
 ---
 
-## 10. The car
+## 11. The car
 
 `carmesh.ts` builds about forty primitives — tapered nose, six-sided monocoque,
 tapering sidepods, airbox and engine cover, halo, floor and raked diffuser,
@@ -365,7 +416,7 @@ way reads as one moulded object, and no amount of shaping fixes that.
 
 ---
 
-## 11. Status effects across material types
+## 12. Status effects across material types
 
 `skin.ts` exists because a body is no longer always a `StandardMaterial`. A car
 is `PBRMaterial`, a sprite is a `StandardMaterial` with lighting off, and the
@@ -379,7 +430,7 @@ growing a branch.
 
 ---
 
-## 12. How to check a change
+## 13. How to check a change
 
 Headless tests cover the pure parts (`surfaces.ts`, `quality.ts`,
 `environment.ts`, `marks.ts`). Everything else needs eyes, and **screenshots

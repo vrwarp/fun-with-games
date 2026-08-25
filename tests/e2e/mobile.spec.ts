@@ -411,14 +411,24 @@ test.describe('on a phone', () => {
 
     const track = page.getByTestId('driving-steer');
     await expect(track).toBeVisible();
-    const knob = page.locator('.driving__knob');
 
-    /** How far the knob sits from centre, in pixels. */
-    const offset = async (): Promise<number> => {
-      const box = (await track.boundingBox())!;
-      const knobBox = (await knob.boundingBox())!;
-      return knobBox.x + knobBox.width / 2 - (box.x + box.width / 2);
-    };
+    /**
+     * How far the knob sits from centre, in pixels.
+     *
+     * One `evaluate` rather than two `boundingBox` calls, and not for
+     * elegance: each protocol round-trip has to wait for SwiftShader to
+     * finish a frame, so on a pegged CI runner a single sample of a
+     * two-round-trip version costs several seconds — which is how this
+     * test once timed out with the wheel behaving perfectly.
+     */
+    const offset = (): Promise<number> =>
+      page.evaluate(() => {
+        const trackEl = document.querySelector('[data-testid="driving-steer"]')!;
+        const knobEl = trackEl.querySelector('.driving__knob')!;
+        const trackBox = trackEl.getBoundingClientRect();
+        const knobBox = knobEl.getBoundingClientRect();
+        return knobBox.x + knobBox.width / 2 - (trackBox.x + trackBox.width / 2);
+      });
 
     const box = (await track.boundingBox())!;
     const midY = box.y + box.height / 2;
@@ -437,7 +447,14 @@ test.describe('on a phone', () => {
     await page.evaluate(() => window.dispatchEvent(new Event('blur')));
 
     // Half one: the wheel let go. Without this the car steers for ever.
-    await expect.poll(async () => Math.abs(await offset()), { timeout: 5_000 }).toBeLessThan(2);
+    //
+    // No tightened timeout, on purpose. The blur handler resets the knob
+    // transform synchronously — by the time the dispatch above returns, a
+    // healthy wheel is already centred — so this poll is not waiting on the
+    // game at all; it is absorbing protocol latency (see `offset`). A
+    // genuinely stuck wheel never re-centres, so the config's generous
+    // expect budget detects it just as surely as a tight one did.
+    await expect.poll(async () => Math.abs(await offset())).toBeLessThan(2);
 
     // Lift the synthetic thumb so the next press can reach the track again.
     // The blur re-centred the wheel; this undoes the browser-level capture.
@@ -453,8 +470,10 @@ test.describe('on a phone', () => {
 
     expect(retaken).toBeGreaterThan(box.width * 0.3);
 
-    // And it releases again, rather than latching on the way back.
-    await expect.poll(async () => Math.abs(await offset()), { timeout: 5_000 }).toBeLessThan(2);
+    // And it releases again, rather than latching on the way back. Config
+    // budget for the same reason as the poll above: the release is
+    // synchronous, the wait is pure protocol latency.
+    await expect.poll(async () => Math.abs(await offset())).toBeLessThan(2);
   });
 
   test('the throttle drives and the wheel only steers', async ({ page }) => {

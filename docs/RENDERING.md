@@ -26,19 +26,21 @@ Nothing below quietly restyles them: every branch is on
 
 ## 2. Files
 
-| File              | Owns                                                                     |
-| ----------------- | ------------------------------------------------------------------------ |
-| `renderer.ts`     | Engine, scene, camera, lights, fog, arena, post-processing, quality tier |
-| `environment.ts`  | The generated sky: sun, clouds, a reflection probe and a visible dome    |
-| `scenery.ts`      | Trees, tyre walls and marshal posts, as thin instances                   |
-| `surfaces.ts`     | Procedural albedo + height patterns, and the normal maps made from them  |
-| `carmesh.ts`      | The car's geometry                                                       |
-| `carmaterials.ts` | The car's substances (paint, carbon, rubber, metal)                      |
-| `skin.ts`         | The seam status effects use to paint a body of any material type         |
-| `quality.ts`      | Which tier a device starts on, and when to give one up                   |
-| `entities.ts`     | Player and pickup meshes                                                 |
-| `trackview.ts`    | Tarmac, kerbs, start line, zone marks, barriers, gantry                  |
-| `marks.ts`        | Tyre marks and dust                                                      |
+| File              | Owns                                                                    |
+| ----------------- | ----------------------------------------------------------------------- |
+| `renderer.ts`     | Engine, scene, camera, lights, shadows, fog, arena, post, lens flare    |
+| `environment.ts`  | The generated sky: sun, clouds, a reflection probe and a visible dome   |
+| `scenery.ts`      | Trees, tyre walls, guard posts, sponsor boards — thin instances         |
+| `cardynamics.ts`  | Wheel spin, recovered steering, body lean, brake glow — pure            |
+| `smoke.ts`        | Tyre smoke and dust, gated by the same slip functions as the marks      |
+| `surfaces.ts`     | Procedural albedo + height patterns, and the normal maps made from them |
+| `carmesh.ts`      | The car's geometry                                                      |
+| `carmaterials.ts` | The car's substances (paint, carbon, rubber, metal)                     |
+| `skin.ts`         | The seam status effects use to paint a body of any material type        |
+| `quality.ts`      | Which tier a device starts on, and when to give one up                  |
+| `entities.ts`     | Player and pickup meshes                                                |
+| `trackview.ts`    | Tarmac, kerbs, start line, zone marks, barriers, gantry                 |
+| `marks.ts`        | Tyre marks and dust                                                     |
 
 ---
 
@@ -217,6 +219,51 @@ how it looks over a mid-grey.
 
 ---
 
+## 6b. The car moves, and the shadows are tiered
+
+Two systems that arrived together, because both answer the same review: a
+scene can be materially perfect and still read as a video game if the car is a
+statue and the light is flat.
+
+**Car motion is derived, never transmitted** (`cardynamics.ts`). The renderer
+already receives position, heading and velocity; wheel spin is distance over
+radius, the steering angle is the sim's own bicycle model run backward from
+the yaw rate, body pitch/roll is the differenced acceleration leaned AGAINST,
+and brake glow heats the rims instantly and cools slowly. Bots animate
+identically to humans because both are just cars with velocities. The signs
+are the entire hazard — a body leaning INTO a corner looks off without looking
+broken — so all of them are pinned by pure tests, including one caught by
+arithmetic: Babylon's positive `rotation.z` tilts the top toward −X, the car's
+LEFT, so the roll negates at its single apply site.
+
+**Shadows are three genuinely different rigs**, keyed by `quality.shadowMapSize`
+and `quality.cascadedShadows` (the former was defined and unread for a while —
+the constructor sniffed pointer type instead; the tier decides now):
+
+```
+low     512 blurred exponential map: soft blobs under the cars.
+medium  1024, same technique, sharper.
+high    2048 CASCADED maps: treeline, tyre stacks, posts and boards all
+        cast, PCF filtered, alpha-tested so the pine cards punch
+        tree-shaped holes in the light.
+```
+
+Generators rebuild on tier change; `EntityViews` rebuilds its bodies against
+the new one, `KitViews` re-registers its static casters, `Scenery` re-adds on
+the cascade tier. Ambient sits at 0.38 against a 2.8 sun on a circuit, because
+the ambient:sun ratio IS the darkest a shadow can be — at the old near-1:4 the
+scene could never contrast, which read as "evenly lit from everywhere", which
+read as N64.
+
+**Tyre smoke** (`smoke.ts`) puts the slide in the air above the streak the
+marks put on the ground — one particle system per car, gated by the same
+`marksGround`/`slipOf` the marks use so the two can never disagree, white on
+the limit and brown dust off it. **The lens flare** rides the bloom flag and
+its emitter sits along `SUN_TRAVEL`, so the flare, the drawn disc and the key
+light stay one fact.
+
+---
+
 ## 7. The world beyond the kerb
 
 The scene used to end at the kerb: grass, then a grey wall, then sky. A circuit
@@ -245,12 +292,23 @@ Candidates that land near the road are dropped rather than nudged, because a
 circuit folds back on itself and nudging produces a suspicious ring hugging the
 barrier.
 
-There are **three species**, differing in silhouette more than in hue. A single
-prototype repeated hundreds of times is found out immediately: the eye is very
-good at spotting a repeated shape and rather bad at measuring a tree. (The
-cheaper fix — one mesh with a colour per instance — did not take: a
-thin-instance colour buffer needs the material set up to read it. Two extra
-draw calls buy shape variation as well, which is the stronger signal.)
+Trees are **drawn, not lathed**: each of three species paints its own conifer
+— drooping frond strokes with jittered lengths, missing branches, darker
+interiors — onto three alpha-cut cards at sixty degrees. A cone is geometry
+pretending to be a tree; a card carries the actual ragged outline, which is
+the part the eye reads. A horizontal cap card for top-down cameras was tried
+and removed: seen from anywhere near the ground it smears into a line slicing
+every tree in half, and this game's cameras live near the ground — the
+isometric one looks down at 53 degrees, not 90, so three oblique cards keep
+their volume there too.
+
+The dressing around them: corrugated guardrail (a normal-mapped wave profile;
+corrugation reads as light rolling across ridges), guard posts every four
+metres so a hundred-metre barrier stops reading as one extrusion, tyre stacks
+painted in red/white/black bundles, invented-sponsor boards along the
+straights — built as two one-sided planes, because a two-sided plane shows its
+text MIRRORED to the half of the circuit behind it — and painted pit bays
+where the pit zones' literal trigger circles used to float like crop circles.
 
 Tyre walls go where the road actually **bends**, measured as the turn in
 heading over a fixed chord rather than from the path's own vertices, which

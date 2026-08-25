@@ -8,6 +8,13 @@ import { CascadedShadowGenerator } from '@babylonjs/core/Lights/Shadows/cascaded
 import { Color3 } from '@babylonjs/core/Maths/math.color.js';
 import { createLogger } from '../shared/logger.js';
 import { SurfaceMarks } from './marks.js';
+import { TyreSmoke } from './smoke.js';
+import { LensFlareSystem } from '@babylonjs/core/LensFlares/lensFlareSystem.js';
+import { LensFlare } from '@babylonjs/core/LensFlares/lensFlare.js';
+import '@babylonjs/core/LensFlares/lensFlareSystemSceneComponent.js';
+import { DynamicTexture } from '@babylonjs/core/Materials/Textures/dynamicTexture.js';
+import { ColorCurves } from '@babylonjs/core/Materials/colorCurves.js';
+import { TransformNode } from '@babylonjs/core/Meshes/transformNode.js';
 import { SUN_TRAVEL, createSkyDome, createSkyEnvironment } from './environment.js';
 import { corrugation, createSurface, grass } from './surfaces.js';
 import { PBRMaterial } from '@babylonjs/core/Materials/PBR/pbrMaterial.js';
@@ -153,6 +160,9 @@ export class Renderer {
   #shadows: ShadowGenerator | null = null;
   #localId: string | null = null;
   #marks: SurfaceMarks | null = null;
+  #smoke: TyreSmoke | null = null;
+  #flare: LensFlareSystem | null = null;
+  #flareTextures: DynamicTexture[] = [];
   /** Cars get a field of view that opens with speed; runners do not. */
   #speedFov = false;
   #baseFov = 0;
@@ -215,6 +225,7 @@ export class Renderer {
     const racingScene = options.config.track.enabled && options.config.trackPath.length >= 2;
     if (racingScene) {
       this.#marks = new SurfaceMarks(this.scene, options.config.playerRadius * 1.8);
+      this.#smoke = new TyreSmoke(this.scene);
       this.#speedFov = options.config.vehicle.enabled;
       this.#baseFov = this.camera.fov;
     }
@@ -282,19 +293,21 @@ export class Renderer {
     this.#kit.sync(state, deltaSeconds);
     this.#sinceManualCamera += deltaSeconds;
 
-    if (this.#marks) {
-      this.#marks.update(
-        state.players.map((player) => ({
-          id: player.id,
-          x: player.x,
-          z: player.z,
-          heading: player.heading,
-          vx: player.vx,
-          vz: player.vz,
-          onTrack: isOnTrack(this.#config, player.x, player.z),
-        })),
-        deltaSeconds,
-      );
+    if (this.#marks || this.#smoke) {
+      // One source list for the ground story and the air story: the streaks
+      // and the smoke are gated by the same functions, so they can never
+      // disagree about whether a car is in trouble.
+      const sources = state.players.map((player) => ({
+        id: player.id,
+        x: player.x,
+        z: player.z,
+        heading: player.heading,
+        vx: player.vx,
+        vz: player.vz,
+        onTrack: isOnTrack(this.#config, player.x, player.z),
+      }));
+      this.#marks?.update(sources, deltaSeconds);
+      this.#smoke?.update(sources);
     }
 
     const local = state.players.find((player) => player.id === this.#localId);
@@ -373,6 +386,9 @@ export class Renderer {
 
   dispose(): void {
     this.#marks?.dispose();
+    this.#smoke?.dispose();
+    this.#flare?.dispose();
+    for (const texture of this.#flareTextures) texture.dispose();
     if (this.#disposed) return;
     this.#disposed = true;
     this.#canvas.removeEventListener('pointerdown', this.#onManualCamera);
@@ -753,6 +769,7 @@ export class Renderer {
     this.#pipeline = null;
     this.#ssao?.dispose();
     this.#ssao = null;
+    this.#applyLensFlare(quality.bloom);
 
     // Nothing at all on the cheapest tier. Not a pipeline with everything
     // switched off: an empty `DefaultRenderingPipeline` still costs a
@@ -800,6 +817,70 @@ export class Renderer {
   }
 
   /**
+   * The sun's lens flare: a warm glow on the disc and a few ghosts down the
+   * optical axis. Nothing says "footage" rather than "render" more cheaply —
+   * a flare is an artefact of a CAMERA, and implying a camera implies a
+   * world in front of it. Generated textures, like everything else here.
+   *
+   * Rides the bloom flag: it is a screen-space luxury with the same budget
+   * profile, so the tier that can afford one can afford the other.
+   */
+  #applyLensFlare(enabled: boolean): void {
+    const racing = this.#config.track.enabled && this.#config.trackPath.length >= 2;
+    if (!enabled || !racing) {
+      this.#flare?.dispose();
+      this.#flare = null;
+      for (const texture of this.#flareTextures) texture.dispose();
+      this.#flareTextures = [];
+      return;
+    }
+    if (this.#flare) return;
+
+    const glow = this.#flareTexture('flare:glow', 1, 0.95, 0.82, 0.5);
+    const ghost = this.#flareTexture('flare:ghost', 0.7, 0.85, 1, 0.16);
+
+    // The emitter sits far along the sun's own direction, so the flare and
+    // the drawn disc in the sky are the same fact — SUN_TRAVEL again.
+    const emitter = new TransformNode('flare:emitter', this.scene);
+    emitter.position.set(-SUN_TRAVEL.x * 380, -SUN_TRAVEL.y * 380, -SUN_TRAVEL.z * 380);
+
+    const system = new LensFlareSystem('flare', emitter, this.scene);
+    const elements: Array<[number, number, Color3, DynamicTexture]> = [
+      [0.35, 0, new Color3(1, 0.97, 0.9), glow],
+      [0.11, 0.25, new Color3(0.75, 0.85, 1), ghost],
+      [0.06, 0.5, new Color3(0.8, 1, 0.85), ghost],
+      [0.16, 0.85, new Color3(1, 0.85, 0.75), ghost],
+    ];
+    for (const [flareSize, position, color, texture] of elements) {
+      // Babylon resolves flare textures by URL; hand each the live texture
+      // instead, since these were never files.
+      const flare = new LensFlare(flareSize, position, color, texture.name, system);
+      flare.texture = texture;
+    }
+    this.#flare = system;
+  }
+
+  /** A soft radial disc for a flare element, drawn once. */
+  #flareTexture(name: string, r: number, g: number, b: number, alpha: number): DynamicTexture {
+    const size = 128;
+    const texture = new DynamicTexture(name, { width: size, height: size }, this.scene, false);
+    texture.hasAlpha = true;
+    const ctx = texture.getContext() as unknown as CanvasRenderingContext2D;
+    const half = size / 2;
+    const gradient = ctx.createRadialGradient(half, half, 1, half, half, half);
+    const rgb = `${Math.round(r * 255)}, ${Math.round(g * 255)}, ${Math.round(b * 255)}`;
+    gradient.addColorStop(0, `rgba(${rgb}, ${alpha})`);
+    gradient.addColorStop(0.5, `rgba(${rgb}, ${alpha * 0.4})`);
+    gradient.addColorStop(1, `rgba(${rgb}, 0)`);
+    ctx.clearRect(0, 0, size, size);
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, size, size);
+    texture.update();
+    this.#flareTextures.push(texture);
+    return texture;
+  }
+
+  /**
    * Filmic tone mapping, on every tier including the cheapest.
    *
    * This is the single largest difference between a render and a photograph
@@ -831,7 +912,18 @@ export class Renderer {
     // Exposure is the right dial for that: the materials stay honest and the
     // camera is opened up, which is exactly what a photographer would do.
     image.exposure = 1.35;
-    image.contrast = 1.05;
+    image.contrast = 1.08;
+    // The grade, and it is one step: pull global saturation DOWN a notch.
+    // Everything in the frame is authored a little too pure — the eye of a
+    // procedural palette always is — and a uniform pull toward neutral is
+    // what a colourist would reach for first. Shadows lose slightly more
+    // than highlights, which cools them the way open-sky shade actually is.
+    const curves = new ColorCurves();
+    curves.globalSaturation = -8;
+    curves.shadowsSaturation = -14;
+    curves.highlightsSaturation = -4;
+    image.colorCurves = curves;
+    image.colorCurvesEnabled = true;
     // No vignette, and I tried one. In the isometric view the corners of the
     // frame are SKY, and darkening the sky does not read as a lens — it reads
     // as a dirty screen. A vignette wants a camera pointed at a subject, and

@@ -61,7 +61,8 @@ export class KitViews {
     // drawing that honestly as a disc would bury the whole circuit.
     const onTrack = config.track.enabled && config.trackPath.length >= 2;
     const drawn = config.zones.filter(
-      (spec) => !(onTrack && (spec.kind === 'checkpoint' || spec.kind === 'drs')),
+      (spec) =>
+        !(onTrack && (spec.kind === 'checkpoint' || spec.kind === 'drs' || spec.kind === 'pit')),
     );
 
     config.zones.forEach((spec, id) => {

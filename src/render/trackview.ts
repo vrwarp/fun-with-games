@@ -5,6 +5,8 @@ import { PBRMaterial } from '@babylonjs/core/Materials/PBR/pbrMaterial.js';
 import type { Material } from '@babylonjs/core/Materials/material.js';
 import { Texture } from '@babylonjs/core/Materials/Textures/texture.js';
 import { CreateRibbon } from '@babylonjs/core/Meshes/Builders/ribbonBuilder.js';
+import { CreatePlane } from '@babylonjs/core/Meshes/Builders/planeBuilder.js';
+import { DynamicTexture } from '@babylonjs/core/Materials/Textures/dynamicTexture.js';
 import { VertexBuffer } from '@babylonjs/core/Buffers/buffer.js';
 import { CreateBox } from '@babylonjs/core/Meshes/Builders/boxBuilder.js';
 import type { Mesh } from '@babylonjs/core/Meshes/mesh.js';
@@ -186,6 +188,7 @@ export class TrackView {
   readonly #scene: Scene;
   readonly #normalMaps: boolean;
   #meshes: Mesh[] = [];
+  #pitMaterial: StandardMaterial | null = null;
   #materials: Material[] = [];
   #surfaces: Surface[] = [];
   #textures: Texture[] = [];
@@ -381,6 +384,10 @@ export class TrackView {
     const drs = this.#flatMaterial('track:drs', '#06d6a0', 0.006, LAYER_BIAS.drs);
 
     config.zones.forEach((zone, index) => {
+      if (zone.kind === 'pit') {
+        this.#pitBox(zone, index, path);
+        return;
+      }
       if (zone.kind !== 'checkpoint' && zone.kind !== 'drs') return;
       const at = sampleTrack(path, zone.x, zone.z).progress;
 
@@ -433,6 +440,65 @@ export class TrackView {
         edge,
       );
     });
+  }
+
+  /**
+   * One pit box: a painted white bay on the pit lane.
+   *
+   * The zone used to be drawn as its literal trigger circle, and four
+   * overlapping nine-metre hoops on the grass read as crop circles, not as a
+   * pit lane. The circle is gameplay geometry; the PAINT is a bay outline the
+   * size of a car, oriented along the lane — which runs parallel to the main
+   * straight beside it, so the nearest track direction is the lane's.
+   */
+  #pitBox(zone: { x: number; z: number }, index: number, path: readonly TrackPoint[]): void {
+    const sample = sampleTrack(path, zone.x, zone.z);
+    const heading = Math.atan2(sample.dirX, sample.dirZ);
+
+    const mesh = CreatePlane(`track:pit:${index}`, { width: 2.4, height: 4 }, this.#scene);
+    mesh.rotation.x = Math.PI / 2;
+    mesh.rotation.y = heading;
+    mesh.position.set(zone.x, KERB_Y, zone.z);
+    mesh.material = this.#pitPaint();
+    mesh.isPickable = false;
+    this.#meshes.push(mesh);
+  }
+
+  /** The paint a pit bay is outlined with: white border, open middle. */
+  #pitPaint(): StandardMaterial {
+    if (this.#pitMaterial) return this.#pitMaterial;
+    const size = 128;
+    const texture = new DynamicTexture(
+      'track:pit:paint',
+      { width: size, height: size },
+      this.#scene,
+      false,
+    );
+    texture.hasAlpha = true;
+    const ctx = texture.getContext() as unknown as CanvasRenderingContext2D;
+    ctx.clearRect(0, 0, size, size);
+    ctx.strokeStyle = 'rgba(235, 238, 240, 0.85)';
+    ctx.lineWidth = 7;
+    // Open at the lane side (top edge undrawn): a bay is a slot, not a cage.
+    ctx.beginPath();
+    ctx.moveTo(4, 4);
+    ctx.lineTo(4, size - 4);
+    ctx.lineTo(size - 4, size - 4);
+    ctx.lineTo(size - 4, 4);
+    ctx.stroke();
+    texture.update();
+    this.#textures.push(texture);
+
+    const material = new StandardMaterial('track:pit:mat', this.#scene);
+    material.diffuseTexture = texture;
+    material.useAlphaFromDiffuseTexture = true;
+    material.emissiveColor = new Color3(0.8, 0.8, 0.82);
+    material.disableLighting = true;
+    material.zOffset = LAYER_BIAS.sector;
+    material.backFaceCulling = false;
+    this.#materials.push(material);
+    this.#pitMaterial = material;
+    return material;
   }
 
   /**

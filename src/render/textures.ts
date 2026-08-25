@@ -291,65 +291,162 @@ export function createPineTexture(
   const centre = width / 2;
   const crownY = 14;
   const skirtY = height - 44;
+  const paint = (lum: number): string =>
+    `rgb(${Math.round(base.r * lum * 255)}, ${Math.round(base.g * lum * 255)}, ${Math.round(
+      base.b * lum * 255,
+    )})`;
 
-  // Trunk first, so fronds overlap it.
-  ctx.fillStyle = 'rgb(52, 38, 26)';
-  ctx.fillRect(centre - 5, height - 90, 10, 90);
+  // No painted trunk any more: the assembled tree carries a real bark
+  // cylinder, and the painted one — visible at each offset card's base —
+  // read as a clutter of extra stumps beside it.
+
+  const rows = 30;
+  const pitch = (skirtY - crownY) / (rows - 1);
+  const reachAt = (t: number): number => (1 - t * 0.92) * (width * 0.46);
+  const coreHalfAt = (row: number, t: number): number =>
+    0.6 * reachAt(t) * (1 + 0.1 * jitter(seed * 7 + row, 1));
+
+  // THE CORE — an opaque, dark, scalloped spire under the fronds, one tooth
+  // per whorl. This is what makes the tree a tree instead of lace: measured,
+  // the old card was 15% opaque along its own axis, so the crown's interior
+  // was mostly sky and the trunk showed all the way up through it. A spruce
+  // is optically dense to about six tenths of its reach; this core is
+  // exactly that wide, which keeps it a strict subset of the frond outline —
+  // the ragged silhouette stays byte-for-byte the fronds' own. Filled with a
+  // vertical gradient, light crown to dark skirt: baked ambient occlusion,
+  // sun-independent, so it never fights the real light. Every frond drawn
+  // over it then reads as a lit branch against canopy shade.
+  const core = ctx.createLinearGradient(0, crownY, 0, skirtY);
+  core.addColorStop(0, paint(0.38));
+  core.addColorStop(1, paint(0.26));
+  ctx.fillStyle = core;
+  ctx.beginPath();
+  ctx.moveTo(centre, crownY - 8);
+  for (let row = 0; row < rows; row++) {
+    const t = 1 - row / (rows - 1);
+    const y = skirtY - t * (skirtY - crownY);
+    const half = coreHalfAt(row, t);
+    ctx.lineTo(centre + half * 0.62, y - pitch * 0.3);
+    ctx.lineTo(centre + half, y + pitch * 0.5);
+  }
+  ctx.lineTo(centre, skirtY + pitch * 0.9);
+  for (let row = rows - 1; row >= 0; row--) {
+    const t = 1 - row / (rows - 1);
+    const y = skirtY - t * (skirtY - crownY);
+    const half = coreHalfAt(row, t);
+    ctx.lineTo(centre - half, y + pitch * 0.5);
+    ctx.lineTo(centre - half * 0.62, y - pitch * 0.3);
+  }
+  ctx.closePath();
+  ctx.fill();
 
   // Fronds, in rows from the skirt up to the crown. Painter's order matters:
   // lower (wider, darker) rows first, so upper rows overlap them the way real
-  // branches sit in front of the ones below.
-  const rows = 24;
+  // branches sit in front of the ones below. Each frond starts a little way
+  // ACROSS the axis before travelling out — branches meet at the trunk, and
+  // the old strokes only ever grew outward, which is half of how the middle
+  // ended up empty.
   for (let row = 0; row < rows; row++) {
     const t = row / (rows - 1); // 0 at skirt, 1 at crown
     const y = skirtY - t * (skirtY - crownY);
-    const reach = (1 - t * 0.92) * (width * 0.46);
-    const strokes = Math.max(3, Math.round((1 - t) * 9) + 3);
+    const reach = reachAt(t);
+    const strokes = Math.max(4, Math.round((1 - t) * 13) + 5);
 
     for (let i = 0; i < strokes; i++) {
       const u = strokes === 1 ? 0 : (i / (strokes - 1)) * 2 - 1;
-      // Gaps: a few percent of branches simply are not there.
-      if (jitter(seed * 91 + row, i * 7) < 0.06) continue;
+      // Gaps: some branches simply are not there — and the dropout is
+      // concentrated on the OUTER strokes, where a missing branch notches
+      // the silhouette, rather than the interior, where it punched a hole
+      // of daylight through the crown.
+      if (jitter(seed * 91 + row, i * 7) < (Math.abs(u) > 0.6 ? 0.16 : 0.06)) continue;
 
       const droop = 10 + jitter(seed + row, i) * 14;
       const length = reach * (0.55 + jitter(seed * 3 + row, i * 5) * 0.6);
-      const x = centre + u * reach * 0.55;
-      const tipX = x + Math.sign(u || jitter(row, i) - 0.5) * length * 0.55;
+      const sign = Math.sign(u || jitter(row, i) - 0.5);
+      const xBase = centre + u * reach * 0.55;
+      const x = xBase - sign * reach * 0.12;
+      const tipX = xBase + sign * length * 0.55;
 
-      // Interior fronds darker, outer tips lighter and warmer — the two-tone
-      // that makes a canopy read as lit volume rather than flat card.
-      const out = Math.min(1, Math.abs(u) * 0.8 + jitter(seed + i, row * 3) * 0.35);
-      // Capped low: brighter tips sparkle into white flecks once the texture
-      // is minified across a whole forest, and a forest full of glitter reads
-      // as aliasing, not light.
-      const lum = 0.55 + out * 0.5;
-      const r = Math.round(base.r * lum * 255);
-      const g = Math.round(base.g * lum * 255);
-      const b = Math.round(base.b * lum * 255);
-      ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
+      // Two-tone by POSITION, not chance: interior shade to lit tips, upper
+      // canopy lighter than the skirt (it genuinely sees more sky). The old
+      // term was a third random, which scattered bright flecks into the
+      // interior — sparkle, not light. Capped at 0.82 so the brightest
+      // foliage stays a clear step below the turf it stands on.
+      const lum = Math.min(
+        0.82,
+        0.4 + 0.26 * Math.abs(u) + 0.16 * t + 0.08 * jitter(seed + i, row * 3),
+      );
+      ctx.fillStyle = paint(lum);
 
       ctx.beginPath();
       ctx.moveTo(x, y - 6 - jitter(row, seed + i) * 6);
       ctx.lineTo(tipX, y + droop);
-      ctx.lineTo(x + (tipX - x) * 0.35, y + droop * 0.35);
+      ctx.lineTo(x + (tipX - x) * 0.5, y + droop * 0.35);
       ctx.closePath();
       ctx.fill();
     }
   }
 
-  // The leader — the single vertical tip every conifer has.
-  ctx.fillStyle = `rgb(${Math.round(base.r * 150)}, ${Math.round(base.g * 165)}, ${Math.round(
-    base.b * 140,
-  )})`;
+  // The leader — the single vertical tip every conifer has. Wide and deep
+  // enough to sink into the crown, and tinted like the core, so it reads as
+  // the top of the mass rather than a dark fin balanced on lace.
+  ctx.fillStyle = paint(0.44);
   ctx.beginPath();
   ctx.moveTo(centre, 2);
-  ctx.lineTo(centre + 7, crownY + 26);
-  ctx.lineTo(centre - 7, crownY + 26);
+  ctx.lineTo(centre + 10, crownY + 34);
+  ctx.lineTo(centre - 10, crownY + 34);
   ctx.closePath();
   ctx.fill();
 
+  // Bleed each opaque texel's colour into the transparent field around it.
+  // The canvas's cleared texels are black-with-zero-alpha, and the mip chain
+  // averages that black INTO the visible colour — a third of the green was
+  // gone by the third mip, which is why a distant stand went grey-blue.
+  bleedColour(ctx, width, height);
+
   texture.update();
   return texture;
+}
+
+/**
+ * Flood the colour of the nearest opaque texel into every transparent one,
+ * leaving alpha untouched. A breadth-first pass from all opaque texels at
+ * once, so each transparent texel takes its colour from its nearest opaque
+ * neighbour in ring order.
+ */
+function bleedColour(ctx: CanvasRenderingContext2D, width: number, height: number): void {
+  const image = ctx.getImageData(0, 0, width, height);
+  const data = image.data;
+  const queue: number[] = [];
+  for (let i = 0; i < width * height; i++) {
+    if ((data[i * 4 + 3] ?? 0) > 0) queue.push(i);
+  }
+  const filled = new Uint8Array(width * height);
+  for (const i of queue) filled[i] = 1;
+
+  for (let head = 0; head < queue.length; head++) {
+    const at = queue[head] ?? 0;
+    const x = at % width;
+    const y = (at - x) / width;
+    for (const [dx, dy] of [
+      [1, 0],
+      [-1, 0],
+      [0, 1],
+      [0, -1],
+    ] as const) {
+      const nx = x + dx;
+      const ny = y + dy;
+      if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
+      const next = ny * width + nx;
+      if (filled[next]) continue;
+      filled[next] = 1;
+      data[next * 4] = data[at * 4] ?? 0;
+      data[next * 4 + 1] = data[at * 4 + 1] ?? 0;
+      data[next * 4 + 2] = data[at * 4 + 2] ?? 0;
+      queue.push(next);
+    }
+  }
+  ctx.putImageData(image, 0, 0);
 }
 
 /**

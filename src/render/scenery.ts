@@ -7,6 +7,7 @@ import { PBRMaterial } from '@babylonjs/core/Materials/PBR/pbrMaterial.js';
 import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial.js';
 import { Color3 } from '@babylonjs/core/Maths/math.color.js';
 import { DynamicTexture } from '@babylonjs/core/Materials/Textures/dynamicTexture.js';
+import { VertexBuffer } from '@babylonjs/core/Buffers/buffer.js';
 import type { Material } from '@babylonjs/core/Materials/material.js';
 import type { Scene } from '@babylonjs/core/scene.js';
 import type { SimConfig } from '../sim/config.js';
@@ -65,16 +66,21 @@ const SCENERY_REACH = 30;
  * trees at the distance these are seen from. Each species draws its own card
  * texture, so the outlines differ too, not just the proportions.
  */
+// The whole ramp sits ~25% LOWER than it first did, measured against the
+// turf: the palest species used to reach 1.6x the grass value, so from the
+// isometric camera a crown dissolved into the ground it stood on — what
+// read as "see-through" up there was grass through a canopy with no value
+// separation. A real treeline's canopy runs about half the turf's value.
 const TREE_SPECIES: ReadonlyArray<{ leaf: Color3; height: number; width: number }> = [
-  { leaf: new Color3(0.16, 0.3, 0.14), height: 8.4, width: 4.4 },
-  { leaf: new Color3(0.22, 0.34, 0.13), height: 6.2, width: 5.2 },
-  { leaf: new Color3(0.18, 0.28, 0.17), height: 7.2, width: 4.8 },
-  // Two more buckets whose job is VALUE, not shape: a markedly darker tall
+  { leaf: new Color3(0.12, 0.23, 0.11), height: 8.4, width: 4.4 },
+  { leaf: new Color3(0.17, 0.26, 0.1), height: 6.2, width: 5.2 },
+  { leaf: new Color3(0.14, 0.21, 0.13), height: 7.2, width: 4.8 },
+  // Two buckets whose job is VALUE, not shape: a markedly darker tall
   // spruce and a paler yellow-green mid. Five value steps across the stand
   // is what stops a hillside of trees averaging into one flat green — each
   // tree next to a different-toned neighbour reads as its own object.
-  { leaf: new Color3(0.11, 0.22, 0.11), height: 9, width: 4.2 },
-  { leaf: new Color3(0.27, 0.38, 0.16), height: 6.8, width: 5 },
+  { leaf: new Color3(0.08, 0.16, 0.08), height: 9, width: 4.2 },
+  { leaf: new Color3(0.2, 0.28, 0.12), height: 6.8, width: 5 },
 ];
 
 /** One instance: where it stands, which way it faces, how big it is. */
@@ -300,6 +306,112 @@ export function boardRun(
     });
   }
   return out;
+}
+
+/**
+ * One pine, assembled: three alpha-cut cards over a bark trunk, merged.
+ *
+ * Exported so the dev inspection stage (`src/probe.ts`) builds EXACTLY the
+ * tree the game plants — the stage exists to diagnose this assembly, and a
+ * stage running a hand-copied variant would diagnose nothing.
+ *
+ * Two quiet decisions here, both measured on that stage:
+ *
+ * The cards are NOT the naive 0/60/120 fan. Three cards sharing one texture
+ * on one axis collapse whenever two project at the same horizontal scale —
+ * at bearings every 30 degrees the "three" cards sample identical texels
+ * and become two, or one. So the second card is mirrored in U and the outer
+ * two are nudged off-axis and off-height, which breaks the symmetry that
+ * caused the collapse without adding a single fragment of fill.
+ *
+ * The card normals are blended toward a point on the trunk axis, so the
+ * three flat planes shade like one rounded crown instead of three walls at
+ * three brightnesses — the tiers without self-shadowing have nothing else
+ * to round them.
+ */
+export function assemblePine(
+  scene: Scene,
+  index: number,
+  species: { leaf: Color3; height: number; width: number },
+  foliage: Material,
+  bark: Material,
+): Mesh | null {
+  const cards = [0, Math.PI / 3, (Math.PI * 2) / 3].map((yaw, i) => {
+    const card = CreatePlane(
+      `scenery:pinecard${index}:${i}`,
+      { width: species.width, height: species.height },
+      scene,
+    );
+    card.rotation.y = yaw;
+    // The outer two cards sit slightly SHORTER, not higher and lower:
+    // vertical offsets were tried first and every tree grew a second and
+    // third leader poking out beside the real one like antennae. Scaled
+    // down, their tips tuck inside the crown and the off-height variation
+    // survives where it helps — in the body.
+    if (i > 0) card.scaling.y = 0.95;
+    card.position.y = (species.height * (i > 0 ? 0.95 : 1)) / 2;
+    if (i === 1) card.position.x += species.width * 0.1;
+    if (i === 2) card.position.x -= species.width * 0.1;
+    card.bakeCurrentTransformIntoVertices();
+    if (i === 1) mirrorU(card);
+    roundNormals(card, species.height);
+    card.material = foliage;
+    return card;
+  });
+
+  const trunk = CreateCylinder(
+    `scenery:pinetrunk${index}`,
+    {
+      // Short: the skirt of the drawn canopy hangs to about a tenth of the
+      // tree's height, and a trunk any taller pokes a brown pole up through
+      // the crown — worst from the isometric camera, where it lay
+      // diagonally across every tree.
+      height: species.height * 0.22,
+      diameterBottom: species.height * 0.055,
+      diameterTop: species.height * 0.03,
+      tessellation: 7,
+    },
+    scene,
+  );
+  trunk.position.y = species.height * 0.11;
+  trunk.bakeCurrentTransformIntoVertices();
+  trunk.material = bark;
+
+  return Mesh.MergeMeshes([...cards, trunk], true, true, undefined, false, true);
+}
+
+/** Flips a mesh's U coordinates, so a shared texture reads mirrored. */
+function mirrorU(mesh: Mesh): void {
+  const uvs = mesh.getVerticesData(VertexBuffer.UVKind);
+  if (!uvs) return;
+  const flipped = Float32Array.from(uvs);
+  for (let i = 0; i < flipped.length; i += 2) flipped[i] = 1 - (flipped[i] ?? 0);
+  mesh.setVerticesData(VertexBuffer.UVKind, flipped);
+}
+
+/** Blends a card's normals toward radial-from-the-axis, rounding the shading. */
+function roundNormals(mesh: Mesh, height: number): void {
+  const positions = mesh.getVerticesData(VertexBuffer.PositionKind);
+  const normals = mesh.getVerticesData(VertexBuffer.NormalKind);
+  if (!positions || !normals) return;
+  const blended = Float32Array.from(normals);
+  for (let i = 0; i < positions.length; i += 3) {
+    const px = positions[i] ?? 0;
+    const py = positions[i + 1] ?? 0;
+    const pz = positions[i + 2] ?? 0;
+    const rx = px;
+    const ry = (py - height * 0.45) * 0.4;
+    const rz = pz;
+    const radial = Math.hypot(rx, ry, rz) || 1;
+    const nx = (normals[i] ?? 0) * 0.4 + (rx / radial) * 0.6;
+    const ny = (normals[i + 1] ?? 0) * 0.4 + (ry / radial) * 0.6;
+    const nz = (normals[i + 2] ?? 1) * 0.4 + (rz / radial) * 0.6;
+    const length = Math.hypot(nx, ny, nz) || 1;
+    blended[i] = nx / length;
+    blended[i + 1] = ny / length;
+    blended[i + 2] = nz / length;
+  }
+  mesh.setVerticesData(VertexBuffer.NormalKind, blended);
 }
 
 /**
@@ -601,44 +713,23 @@ export class Scenery {
     // cards stay oblique from the isometric camera too (it looks down at 53
     // degrees, not 90), which is volume enough.
     const material = this.#foliage(scene, `scenery:pine${index}`, side);
-    const cards = [0, Math.PI / 3, (Math.PI * 2) / 3].map((yaw, i) => {
-      const card = CreatePlane(
-        `scenery:pinecard${index}:${i}`,
+    // Dark bark: once the canopy dropped below the turf's value, the old
+    // brown was the brightest thing on the tree.
+    if (!this.#bark) {
+      this.#bark = this.#material(scene, 'scenery:bark', new Color3(0.14, 0.1, 0.07), 0.95);
+    }
+    const merged = assemblePine(scene, index, species, material, this.#bark);
+    if (!merged) {
+      const fallback = CreatePlane(
+        `scenery:pine${index}`,
         { width: species.width, height: species.height },
         scene,
       );
-      card.rotation.y = yaw;
-      card.position.y = species.height / 2;
-      card.bakeCurrentTransformIntoVertices();
-      card.material = material;
-      return card;
-    });
-
-    // A real trunk under the cards. The texture draws one, but a card's
-    // trunk vanishes the moment the card turns edge-on — walk around a tree
-    // and its base flickered between "trunk" and "daylight straight
-    // through". A seven-sided cylinder is the cheapest object in the scene
-    // and the only honest fix: solid from every bearing, and it carries the
-    // canopy visually where the alpha cutout thins.
-    if (!this.#bark) {
-      this.#bark = this.#material(scene, 'scenery:bark', new Color3(0.21, 0.15, 0.1), 0.95);
+      fallback.position.y = species.height / 2;
+      fallback.bakeCurrentTransformIntoVertices();
+      fallback.material = material;
+      return this.#keep(fallback);
     }
-    const trunk = CreateCylinder(
-      `scenery:pinetrunk${index}`,
-      {
-        height: species.height * 0.36,
-        diameterBottom: species.height * 0.055,
-        diameterTop: species.height * 0.03,
-        tessellation: 7,
-      },
-      scene,
-    );
-    trunk.position.y = species.height * 0.18;
-    trunk.bakeCurrentTransformIntoVertices();
-    trunk.material = this.#bark;
-
-    const merged = Mesh.MergeMeshes([...cards, trunk], true, true, undefined, false, true);
-    if (!merged) return this.#keep(cards[0] as Mesh);
     merged.name = `scenery:pine${index}`;
     return this.#keep(merged);
   }

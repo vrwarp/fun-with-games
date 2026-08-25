@@ -22,14 +22,12 @@ import { ArcRotateCamera } from '@babylonjs/core/Cameras/arcRotateCamera.js';
 import { DirectionalLight } from '@babylonjs/core/Lights/directionalLight.js';
 import { HemisphericLight } from '@babylonjs/core/Lights/hemisphericLight.js';
 import { CreateGround } from '@babylonjs/core/Meshes/Builders/groundBuilder.js';
-import { CreatePlane } from '@babylonjs/core/Meshes/Builders/planeBuilder.js';
-import { CreateCylinder } from '@babylonjs/core/Meshes/Builders/cylinderBuilder.js';
-import { Mesh } from '@babylonjs/core/Meshes/mesh.js';
 import { PBRMaterial } from '@babylonjs/core/Materials/PBR/pbrMaterial.js';
 import { Color3 } from '@babylonjs/core/Maths/math.color.js';
 import { Vector3 } from '@babylonjs/core/Maths/math.vector.js';
 import { createSkyDome, createSkyEnvironment, SUN_TRAVEL } from './render/environment.js';
 import { createPineTexture } from './render/textures.js';
+import { assemblePine } from './render/scenery.js';
 
 const q = new URLSearchParams(location.search);
 const canvas = document.querySelector('#c') as HTMLCanvasElement;
@@ -69,18 +67,20 @@ grass.metallic = 0;
 grass.roughness = 0.95;
 ground.material = grass;
 
-// The game's five species, duplicated from scenery.ts for the stage.
+// The game's five species — mirror TREE_SPECIES in scenery.ts. Kept as a
+// copy only because that constant is private; the ASSEMBLY comes from the
+// real `assemblePine`, so geometry and arrangement can never drift.
 const SPECIES = [
-  { leaf: new Color3(0.16, 0.3, 0.14), height: 8.4, width: 4.4 },
-  { leaf: new Color3(0.22, 0.34, 0.13), height: 6.2, width: 5.2 },
-  { leaf: new Color3(0.18, 0.28, 0.17), height: 7.2, width: 4.8 },
-  { leaf: new Color3(0.11, 0.22, 0.11), height: 9, width: 4.2 },
-  { leaf: new Color3(0.27, 0.38, 0.16), height: 6.8, width: 5 },
+  { leaf: new Color3(0.12, 0.23, 0.11), height: 8.4, width: 4.4 },
+  { leaf: new Color3(0.17, 0.26, 0.1), height: 6.2, width: 5.2 },
+  { leaf: new Color3(0.14, 0.21, 0.13), height: 7.2, width: 4.8 },
+  { leaf: new Color3(0.08, 0.16, 0.08), height: 9, width: 4.2 },
+  { leaf: new Color3(0.2, 0.28, 0.12), height: 6.8, width: 5 },
 ];
 
 const cutoff = Number(q.get('alpha') ?? 0.4);
 const bark = new PBRMaterial('bark', scene);
-bark.albedoColor = new Color3(0.21, 0.15, 0.1).toLinearSpace();
+bark.albedoColor = new Color3(0.14, 0.1, 0.07).toLinearSpace();
 bark.metallic = 0;
 bark.roughness = 0.95;
 
@@ -102,33 +102,7 @@ SPECIES.forEach((species, index) => {
   material.twoSidedLighting = true;
   material.specularIntensity = 0.05;
 
-  const cards = [0, Math.PI / 3, (Math.PI * 2) / 3].map((yaw, i) => {
-    const card = CreatePlane(
-      `card${index}:${i}`,
-      { width: species.width, height: species.height },
-      scene,
-    );
-    card.rotation.y = yaw;
-    card.position.y = species.height / 2;
-    card.bakeCurrentTransformIntoVertices();
-    card.material = material;
-    return card;
-  });
-  const trunk = CreateCylinder(
-    `trunk${index}`,
-    {
-      height: species.height * 0.36,
-      diameterBottom: species.height * 0.055,
-      diameterTop: species.height * 0.03,
-      tessellation: 7,
-    },
-    scene,
-  );
-  trunk.position.y = species.height * 0.18;
-  trunk.bakeCurrentTransformIntoVertices();
-  trunk.material = bark;
-
-  const merged = Mesh.MergeMeshes([...cards, trunk], true, true, undefined, false, true);
+  const merged = assemblePine(scene, index, species, material, bark);
   if (merged) merged.position.x = -24 + index * 12;
 });
 

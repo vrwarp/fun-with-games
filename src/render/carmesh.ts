@@ -6,7 +6,7 @@ import { CreateSphere } from '@babylonjs/core/Meshes/Builders/sphereBuilder.js';
 import { Vector3 } from '@babylonjs/core/Maths/math.vector.js';
 import type { Material } from '@babylonjs/core/Materials/material.js';
 import type { Scene } from '@babylonjs/core/scene.js';
-import type { TransformNode } from '@babylonjs/core/Meshes/transformNode.js';
+import { TransformNode } from '@babylonjs/core/Meshes/transformNode.js';
 
 /**
  * A racing car, built out of about forty primitives and merged into five.
@@ -50,8 +50,29 @@ export interface CarMaterials {
   readonly carbon: Material;
   /** Tyres. Shared. */
   readonly rubber: Material;
-  /** Wheel rims and exhaust. Shared. */
+  /** The exhaust. Shared. */
   readonly metal: Material;
+  /**
+   * Wheel rims and spokes. Per CAR, not shared, because the rims are the brake
+   * glow: their emissive is driven by that car's own deceleration, and a
+   * shared material would glow every rim on the grid when anyone braked.
+   */
+  readonly wheelMetal: Material;
+}
+
+/** One corner of the car, live: the parts of a wheel that move. */
+export interface CarWheel {
+  /**
+   * Steers. Sits at the wheel's centre, so yawing it is the upright turning
+   * about its kingpin rather than the wheel swinging on an arm.
+   */
+  readonly pivot: TransformNode;
+  /** Spins, about its own X axis — the axle. */
+  readonly mesh: Mesh;
+  /** Front wheels steer; rears only spin. */
+  readonly front: boolean;
+  /** Rolling radius, for turning speed into spin. */
+  readonly radius: number;
 }
 
 export interface CarMesh {
@@ -59,7 +80,17 @@ export interface CarMesh {
   readonly chassis: Mesh;
   /** The rear wing flap. Kept separate so DRS can lay it flat. */
   readonly wing: Mesh;
-  /** Everything else, for disposal. */
+  /**
+   * The sprung mass: everything except the wheels hangs under this, so the
+   * body can pitch under braking and roll in a corner while the wheels stay
+   * planted on the road — which is what suspension IS, seen from outside.
+   */
+  readonly attitude: TransformNode;
+  /** The four corners. */
+  readonly wheels: readonly CarWheel[];
+  /** Turns with the steering estimate, visible from the cockpit. */
+  readonly steeringWheel: TransformNode;
+  /** Everything else, for disposal and shadow registration. */
   readonly parts: Mesh[];
 }
 
@@ -82,6 +113,11 @@ export function buildCarMesh(
   // The root sits at the middle of a capsule's height; a car has to be put
   // back down on the road.
   const floor = -r * 1.7;
+
+  // The sprung mass. Bodywork parents here; wheels parent to the root, so a
+  // pitching body does not lift its own wheels off the ground.
+  const attitude = new TransformNode(`${id}:attitude`, scene);
+  attitude.parent = root;
 
   const paint: Mesh[] = [];
   const carbon: Mesh[] = [];
@@ -212,9 +248,11 @@ export function buildCarMesh(
 
   // --- Halo ------------------------------------------------------------------
   // The single most recognisable thing on a modern car, and one torus.
+  // 28 sides: the halo frames the driver's whole view in the cockpit, so
+  // its facets are as close to the eye as the wheel's.
   const halo = CreateTorus(
     `${id}:halo`,
-    { diameter: r * 1.15, thickness: r * 0.11, tessellation: 16 },
+    { diameter: r * 1.15, thickness: r * 0.11, tessellation: 28 },
     scene,
   );
   // A torus is already flat in XZ, which is how a halo sits — a ring around the
@@ -303,7 +341,45 @@ export function buildCarMesh(
     metal,
   );
 
+  // --- Steering wheel --------------------------------------------------------
+  // Small, near-vertical, and the only reason it exists is the cockpit camera:
+  // a wheel that visibly counter-rotates through a corner is the strongest
+  // "hands on the car" cue an onboard shot has, and it costs one torus.
+  const column = new TransformNode(`${id}:column`, scene);
+  column.parent = attitude;
+  column.position.set(0, floor + r * 1.12, r * 0.98);
+  // Tilted back toward the driver the way a real one rakes.
+  column.rotation.x = -0.35;
+  const steeringWheel = new TransformNode(`${id}:swheel`, scene);
+  steeringWheel.parent = column;
+  // Tessellated far above the car's usual budget, because nothing else in
+  // the game sits this close to a camera: the cockpit eye is centimetres
+  // away, and at 12 sides the rim read as a dodecagonal nut in every frame.
+  const rim = CreateTorus(
+    `${id}:swheel:rim`,
+    { diameter: r * 0.56, thickness: r * 0.055, tessellation: 36 },
+    scene,
+  );
+  // A torus lies flat; stand it up to face the driver.
+  rim.rotation.x = Math.PI / 2;
+  rim.bakeCurrentTransformIntoVertices();
+  rim.parent = steeringWheel;
+  rim.material = materials.carbon;
+  rim.isPickable = false;
+  const spokeBar = CreateBox(
+    `${id}:swheel:spoke`,
+    { width: r * 0.5, height: r * 0.07, depth: r * 0.05 },
+    scene,
+  );
+  spokeBar.parent = steeringWheel;
+  spokeBar.material = materials.carbon;
+  spokeBar.isPickable = false;
+
   // --- Wheels ----------------------------------------------------------------
+  // Live, not merged into the bodywork: each corner is a pivot (which steers)
+  // holding a wheel mesh (which spins). The wheel itself is still ONE mesh —
+  // tyre, rim and spokes merged with their materials kept as submeshes — so a
+  // corner costs a pivot and one mesh, not eight.
   const corners: Array<{ x: number; z: number; front: boolean }> = [
     { x: r * 0.95, z: r * 1.75, front: true },
     { x: -r * 0.95, z: r * 1.75, front: true },
@@ -311,50 +387,40 @@ export function buildCarMesh(
     { x: -r * 1.0, z: -r * 1.5, front: false },
   ];
 
-  for (const [index, corner] of corners.entries()) {
-    const tyre = corner.front ? r * 0.46 : r * 0.55;
-    const width = corner.front ? r * 0.46 : r * 0.6;
+  // One prototype per axle — the pairs differ only in placement, and clones
+  // share geometry.
+  const frontProto = buildWheel(scene, `${id}:wheel:front`, r * 0.46, r * 0.46, r, materials);
+  const rearProto = buildWheel(scene, `${id}:wheel:rear`, r * 0.55, r * 0.6, r, materials);
+
+  const wheels: CarWheel[] = corners.map((corner, index) => {
+    const proto = corner.front ? frontProto : rearProto;
+    const mesh = index % 2 === 0 ? proto : proto.clone(`${proto.name}:${index}`);
+    const tyreRadius = corner.front ? r * 0.46 : r * 0.55;
+
+    const pivot = new TransformNode(`${id}:pivot${index}`, scene);
+    pivot.parent = root;
+    pivot.position.set(corner.x, floor + tyreRadius, corner.z);
+    mesh.parent = pivot;
+    mesh.position.setAll(0);
+    mesh.isPickable = false;
+    return { pivot, mesh, front: corner.front, radius: tyreRadius };
+  });
+
+  // Suspension: two wishbones per corner, angled in toward the tub. They stay
+  // with the BODY: the mismatch as a wheel steers a few visual degrees is
+  // invisible, and merging them keeps the corner at one mesh.
+  for (const corner of corners) {
+    const tyreRadius = corner.front ? r * 0.46 : r * 0.55;
     const side = Math.sign(corner.x);
-
-    tube(
-      `tyre${index}`,
-      { top: tyre * 2, bottom: tyre * 2, height: width, sides: WHEEL_SIDES },
-      { x: corner.x, y: tyre, z: corner.z },
-      'x',
-      rubber,
-    );
-    // The rim, inset so the tyre has a visible sidewall. Without this a wheel
-    // is a black disc, which is exactly what the old car's wheels were.
-    tube(
-      `rim${index}`,
-      { top: tyre * 1.2, bottom: tyre * 1.2, height: width * 1.02, sides: WHEEL_SIDES },
-      { x: corner.x, y: tyre, z: corner.z },
-      'x',
-      metal,
-    );
-    // Spokes, which catch the light and are what make a wheel look like it is
-    // TURNING rather than sliding.
-    for (let spoke = 0; spoke < 5; spoke++) {
-      const arm = CreateBox(
-        `${id}:spoke${index}:${spoke}`,
-        { width: width * 1.04, height: tyre * 1.05, depth: r * 0.07 },
-        scene,
-      );
-      arm.rotation.x = (spoke / 5) * Math.PI;
-      arm.position.set(corner.x, floor + tyre, corner.z);
-      metal.push(arm);
-    }
-
-    // Suspension: two wishbones per corner, angled in toward the tub.
     for (const level of [0.55, 1.05]) {
       const arm = CreateBox(
-        `${id}:wishbone${index}:${level}`,
+        `${id}:wishbone${corner.x}:${level}`,
         { width: Math.abs(corner.x) - r * 0.35, height: r * 0.07, depth: r * 0.1 },
         scene,
       );
       arm.position.set(
         corner.x - (side * (Math.abs(corner.x) - r * 0.35)) / 2,
-        floor + tyre * level,
+        floor + tyreRadius * level,
         corner.z,
       );
       arm.rotation.y = side * 0.28;
@@ -363,23 +429,91 @@ export function buildCarMesh(
   }
 
   // --- Merge -----------------------------------------------------------------
-  // The whole budget argument. Five buffers out, forty primitives in.
-  const chassis = mergeInto(paint, `${id}:paint`, materials.paint, root);
+  // The whole budget argument. Forty primitives in; out come the body groups
+  // plus one live mesh per wheel.
+  const chassis = mergeInto(paint, `${id}:paint`, materials.paint, attitude);
   const parts: Mesh[] = [];
   for (const [group, material, name] of [
     [carbon, materials.carbon, 'carbon'],
     [rubber, materials.rubber, 'rubber'],
     [metal, materials.metal, 'metal'],
   ] as const) {
-    const merged = mergeInto(group, `${id}:${name}`, material, root);
+    const merged = mergeInto(group, `${id}:${name}`, material, attitude);
     if (merged) parts.push(merged);
   }
+  parts.push(rim, spokeBar);
+  for (const wheel of wheels) parts.push(wheel.mesh);
 
   wing.material = materials.carbon;
-  wing.parent = root;
+  wing.parent = attitude;
   wing.isPickable = false;
 
-  return { chassis: chassis ?? wing, wing, parts };
+  return { chassis: chassis ?? wing, wing, attitude, wheels, steeringWheel, parts };
+}
+
+/**
+ * One wheel, centred at the origin with its axle along X, as a single mesh.
+ *
+ * Tyre, rim and spokes are merged with `multiMultiMaterials`, which keeps each
+ * source's material as a submesh instead of flattening them — so the wheel
+ * stays one mesh while the tyre can be matte rubber and the rim can carry the
+ * per-car brake glow. Built at the origin ON PURPOSE: the spin is
+ * `mesh.rotation.x`, and a mesh that was merged in place would orbit the car
+ * instead of turning on its axle.
+ */
+function buildWheel(
+  scene: Scene,
+  name: string,
+  tyreRadius: number,
+  width: number,
+  r: number,
+  materials: CarMaterials,
+): Mesh {
+  const lay = (mesh: Mesh): Mesh => {
+    // Cylinders stand up Y; an axle lies along X. Baked, so the merged
+    // vertices carry the orientation and the mesh's own rotation stays free
+    // for the spin.
+    mesh.rotation.z = Math.PI / 2;
+    mesh.bakeCurrentTransformIntoVertices();
+    return mesh;
+  };
+
+  const tyre = lay(
+    CreateCylinder(
+      `${name}:tyre`,
+      { diameter: tyreRadius * 2, height: width, tessellation: WHEEL_SIDES },
+      scene,
+    ),
+  );
+  tyre.material = materials.rubber;
+
+  const rim = lay(
+    CreateCylinder(
+      `${name}:rim`,
+      { diameter: tyreRadius * 1.2, height: width * 1.02, tessellation: WHEEL_SIDES },
+      scene,
+    ),
+  );
+  rim.material = materials.wheelMetal;
+
+  const spokes: Mesh[] = [];
+  for (let spoke = 0; spoke < 5; spoke++) {
+    const arm = CreateBox(
+      `${name}:spoke${spoke}`,
+      { width: width * 1.04, height: tyreRadius * 1.05, depth: r * 0.07 },
+      scene,
+    );
+    arm.rotation.x = (spoke / 5) * Math.PI;
+    arm.bakeCurrentTransformIntoVertices();
+    arm.material = materials.wheelMetal;
+    spokes.push(arm);
+  }
+
+  const merged = Mesh.MergeMeshes([tyre, rim, ...spokes], true, true, undefined, false, true);
+  if (!merged) return tyre;
+  merged.name = name;
+  merged.isPickable = false;
+  return merged;
 }
 
 /**

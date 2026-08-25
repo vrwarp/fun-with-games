@@ -12,6 +12,10 @@ interface FwgTestHandle {
   readonly peerCount: number;
   readonly tick: number;
   readonly mode: string;
+  /** The tier in force, after governor step-downs — not the one asked for. */
+  readonly quality: 'low' | 'medium' | 'high';
+  /** What shadow rig is live, how many casters feed it, and map readiness. */
+  readonly shadows: { kind: 'cascade' | 'blur' | 'none'; casters: number; mapReady: boolean };
   readonly view: 'follow' | 'first' | 'iso' | 'topdown' | 'side';
   readonly orthographic: boolean;
   readonly phase: 'lobby' | 'countdown' | 'playing' | 'ended';

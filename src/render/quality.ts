@@ -55,6 +55,16 @@ export interface QualitySettings {
    */
   readonly normalMaps: boolean;
   /**
+   * Cascaded shadow maps, with the scenery casting.
+   *
+   * The single most expensive switch here, and the single biggest one: with
+   * it, the treeline, the tyre walls and the boards all throw shade across
+   * the road and the world reads as standing under one sun. Without it the
+   * shadow map is a blurred blob rig fitted to the cars alone — hundreds of
+   * extra caster draws cheaper, and visibly a video game.
+   */
+  readonly cascadedShadows: boolean;
+  /**
    * A clear-coat lobe on car paint and lacquered carbon.
    *
    * The lacquer over the colour: a second, sharper specular layer that does
@@ -81,6 +91,7 @@ const SETTINGS: Record<QualityTier, QualitySettings> = {
     bloom: false,
     ambientOcclusion: false,
     shadowMapSize: 512,
+    cascadedShadows: false,
     // 1.5 rather than 2. A phone at DPR 3 rendering at 2 is still 4x the
     // fragments of a 1x screen, and on a 6" panel the difference between 1.5
     // and 2 is invisible at arm's length while the cost is 78% more pixels.
@@ -93,6 +104,7 @@ const SETTINGS: Record<QualityTier, QualitySettings> = {
     bloom: true,
     ambientOcclusion: false,
     shadowMapSize: 1024,
+    cascadedShadows: false,
     maxPixelRatio: 2,
     normalMaps: true,
     clearCoat: true,
@@ -102,6 +114,7 @@ const SETTINGS: Record<QualityTier, QualitySettings> = {
     bloom: true,
     ambientOcclusion: true,
     shadowMapSize: 2048,
+    cascadedShadows: true,
     maxPixelRatio: 2,
     normalMaps: true,
     clearCoat: true,

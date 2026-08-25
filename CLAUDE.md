@@ -492,21 +492,27 @@ Full guidance, including where to find CC0 art and how to generate it:
   substances rather than a gloss dial — turn it up and the paint loses its
   colour to the reflection. All three traps have bitten; see
   `docs/RENDERING.md` §3.
-- **Trackside scenery is thin-instanced and casts no shadows.** The shadow map
-  is fitted to its casters, so admitting a treeline would stretch it across the
-  arena and leave each car a handful of texels. `scenery.ts`, and the placement
-  half of it is pure so a tyre wall on the wrong side of a corner is a unit
-  test rather than a squint.
+- **Trackside scenery is thin-instanced; only the high tier lets it cast.**
+  On low and medium the shadow map is fitted to the cars, so admitting a
+  treeline would stretch it across the arena and leave each car a handful of
+  texels; the high tier switches to cascaded maps that follow the camera, and
+  there the trees, tyre stacks and boards all throw shade. `scenery.ts`, and
+  the placement half of it is pure so a tyre wall on the wrong side of a
+  corner is a unit test rather than a squint.
 - **A camera's screen box is not its ground footprint.** Screen axes are world
   axes only when the camera looks down one, and a tilted camera covers
   `height / cos(beta)` of ground. For `iso` that is 58x58 world units where the
   box says 40x25. Use `groundFootprint()` rather than the ortho extents, and
   clamp against `groundExtent()` — the arena stopped being the edge of the
   world when a circuit's ground grew past it. `docs/RENDERING.md` §9.
-- **A browser with no GPU opens on the cheapest tier.** `isSoftwareRenderer()`
-  reads the WebGL renderer string; a software rasteriser is a different order
-  of magnitude from a slow GPU, not a slower one. This is also why the e2e
-  suite runs on `low` — CI has no acceleration.
+- **A browser with no GPU opens on the cheapest tier — and gets no dressing
+  at all.** `isSoftwareRenderer()` reads the WebGL renderer string; a software
+  rasteriser is a different order of magnitude from a slow GPU, not a slower
+  one. Its scarce resource is fill, so the renderer skips building the
+  trackside scenery and tyre smoke there entirely (`#dressing` in
+  `renderer.ts`) — that is a device fact, independent of the tier picker.
+  This is also why the e2e suite runs on `low` — CI has no acceleration —
+  and why an e2e test can never assert a tree.
 - **Overlays are priced against a very dark road.** Tarmac is a true asphalt
   albedo — about a tenth of the light that lands on it — so an emissive tint
   that looked subtle over the old flat grey now dominates. Budget a new one

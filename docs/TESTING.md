@@ -248,3 +248,22 @@ second run costs double and makes two software-rendered WebGL suites compete for
 runners. Forks have no push run, so their pull requests still run everything.
 
 Locally, `npm run verify` runs everything except e2e.
+
+## Screenshotting under SwiftShader — two traps
+
+Anyone debugging visuals with headless Chromium screenshots (as the e2e
+suite and agents do) is rendering on SwiftShader, and two of its behaviours
+have burned a day each, so they are written down:
+
+- **`deviceScaleFactor: 2` silently kills every shadow.** Same build, same
+  scene, DPR 1 renders full cascaded shadows and DPR 2 renders none — no
+  error, no warning, the map just comes back empty. Playwright's Chromium
+  defaults to DPR 1 and the e2e suite must stay there; take forensic
+  screenshots at DPR 1 too, or you will "discover" a shadow bug that does
+  not exist. Real GPUs at phone pixel ratios are unaffected.
+- **The dev server is not the bundle.** Vite serves every module with all
+  its side effects; the production build tree-shakes by `package.json`
+  `sideEffects`, so a missing side-effect import (Babylon's `Ray`, the
+  thin-instance patch) works in dev and fails only in `npm run preview` /
+  production. Any visual bug hunt must reproduce against the BUILT app
+  before blaming code.

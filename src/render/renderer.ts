@@ -4,11 +4,14 @@ import { ArcRotateCamera } from '@babylonjs/core/Cameras/arcRotateCamera.js';
 import { HemisphericLight } from '@babylonjs/core/Lights/hemisphericLight.js';
 import { DirectionalLight } from '@babylonjs/core/Lights/directionalLight.js';
 import { ShadowGenerator } from '@babylonjs/core/Lights/Shadows/shadowGenerator.js';
+import { CascadedShadowGenerator } from '@babylonjs/core/Lights/Shadows/cascadedShadowGenerator.js';
 import { Color3 } from '@babylonjs/core/Maths/math.color.js';
 import { createLogger } from '../shared/logger.js';
 import { SurfaceMarks } from './marks.js';
-import { SUN_TRAVEL, createSkyDome, createSkyEnvironment } from './environment.js';
-import { createSurface, grass } from './surfaces.js';
+import { TyreSmoke } from './smoke.js';
+import { ColorCurves } from '@babylonjs/core/Materials/colorCurves.js';
+import { DAYLIGHT, SUN_TRAVEL, createSkyDome, createSkyEnvironment } from './environment.js';
+import { corrugation, createSurface, grass } from './surfaces.js';
 import { PBRMaterial } from '@babylonjs/core/Materials/PBR/pbrMaterial.js';
 import {
   QualityGovernor,
@@ -64,6 +67,13 @@ export interface RendererOptions {
   sprites?: boolean;
   /** Force a quality tier. Omitted means "work out what this device can take". */
   quality?: QualityTier;
+  /**
+   * Build the trackside dressing even on a software rasteriser. Diagnostics
+   * only (`?dress=1`): the machines that skip dressing are the ones that
+   * cannot afford it, and the override exists so tests and screenshots on a
+   * GPU-less box can still see the full scene.
+   */
+  forceDressing?: boolean;
 }
 
 const log = createLogger('render:renderer');
@@ -94,9 +104,16 @@ function groundExtent(config: SimConfig): { x: number; z: number } {
 const GROUND_REACH = 5;
 
 /** Texels per side of the generated grass. */
-const GRASS_TEXTURE_SIZE = 256;
-/** World units one tile of grass covers. */
-const GRASS_TILE = 5;
+const GRASS_TEXTURE_SIZE = 512;
+/**
+ * World units one tile of grass covers.
+ *
+ * Large, because the tile now carries the mowing stripes and a stripe is
+ * metres wide: at the old five units per tile the bands would repeat like
+ * wallpaper. Twelve puts a light/dark pair every twelve metres, which is what
+ * a mown verge actually looks like from a camera at altitude.
+ */
+const GRASS_TILE = 12;
 
 /** How long a manual camera adjustment suspends auto-follow, in seconds. */
 const MANUAL_CAMERA_HOLD_SECONDS = 2.5;
@@ -133,6 +150,20 @@ export class Renderer {
   #track: TrackView;
   #scenery: Scenery | null = null;
   /**
+   * Whether this device can afford pure dressing — trackside scenery, tyre
+   * smoke. A software rasteriser shades every fragment on the CPU, so its
+   * scarce resource is FILL, and the dressing is almost nothing but fill:
+   * big alpha-tested tree cards over the sky, drawn again into every shadow
+   * cascade, blended smoke over the road. On such a machine (CI containers,
+   * VMs, browsers with acceleration off) the dressing is the difference
+   * between a slideshow and a game, while every real GPU — a cheap phone's
+   * included — keeps all of it. This is a device fact, not a quality tier:
+   * the tier picker must stay honest on software rendering too, and it does,
+   * because what it switches (post passes, shadow quality) still switches.
+   */
+  readonly #dressing: boolean;
+  #sun: DirectionalLight | null = null;
+  /**
    * How far back the camera sits, relative to the on-foot framing the view
    * specs are written for. Driven by top speed: what a player needs to see is
    * a second or two of road, and a car covers three times a runner's ground
@@ -144,6 +175,7 @@ export class Renderer {
   #shadows: ShadowGenerator | null = null;
   #localId: string | null = null;
   #marks: SurfaceMarks | null = null;
+  #smoke: TyreSmoke | null = null;
   /** Cars get a field of view that opens with speed; runners do not. */
   #speedFov = false;
   #baseFov = 0;
@@ -181,9 +213,12 @@ export class Renderer {
     // Which look this device can afford. Everything visual below asks the
     // tier rather than sniffing the platform itself, so there is one policy
     // and it is unit-tested — see `quality.ts` for why that matters here.
-    this.#governor = new QualityGovernor(
-      options.quality ?? startingTier(readDeviceHints(this.#rendererName())),
-    );
+    // The one exception is the software-rasteriser bit: that is not a tier,
+    // it is a different machine (see `#dressing`), so it is read once here
+    // and never changes with the picker.
+    const hints = readDeviceHints(this.#rendererName());
+    this.#dressing = !hints.softwareRenderer || options.forceDressing === true;
+    this.#governor = new QualityGovernor(options.quality ?? startingTier(hints));
 
     this.scene = new Scene(this.engine);
     this.#createSky(options.config);
@@ -206,6 +241,9 @@ export class Renderer {
     const racingScene = options.config.track.enabled && options.config.trackPath.length >= 2;
     if (racingScene) {
       this.#marks = new SurfaceMarks(this.scene, options.config.playerRadius * 1.8);
+      // Marks are one textured quad however hard the race gets; smoke is
+      // blended overdraw per puff, which is dressing by the rule above.
+      if (this.#dressing) this.#smoke = new TyreSmoke(this.scene);
       this.#speedFov = options.config.vehicle.enabled;
       this.#baseFov = this.camera.fov;
     }
@@ -223,10 +261,17 @@ export class Renderer {
     this.#track = new TrackView(this.scene, options.config, {
       normalMaps: qualitySettings(this.#governor.tier).normalMaps,
     });
-    // Everything on the far side of the barrier. Static, tier-independent —
-    // it is a handful of draw calls whatever the device, so there is nothing
-    // for a quality setting to take away.
-    this.#scenery = new Scenery(this.scene, options.config);
+    // Everything on the far side of the barrier. Static, and cheap in draw
+    // calls on any device — but almost pure fill, which is why it obeys
+    // `#dressing` rather than the tier: the game is complete without it, and
+    // a machine shading fragments on the CPU cannot pay for it.
+    if (this.#dressing) {
+      this.#scenery = new Scenery(this.scene, options.config);
+      if (this.#shadows && qualitySettings(this.#governor.tier).cascadedShadows) {
+        this.#scenery.addCastersTo(this.#shadows);
+        this.#scenery.setReceiveShadows(true);
+      }
+    }
     this.#framingScale = options.config.vehicle.enabled
       ? Math.min(1.7, Math.max(1, options.config.playerMaxSpeed / 14))
       : 1;
@@ -270,19 +315,21 @@ export class Renderer {
     this.#kit.sync(state, deltaSeconds);
     this.#sinceManualCamera += deltaSeconds;
 
-    if (this.#marks) {
-      this.#marks.update(
-        state.players.map((player) => ({
-          id: player.id,
-          x: player.x,
-          z: player.z,
-          heading: player.heading,
-          vx: player.vx,
-          vz: player.vz,
-          onTrack: isOnTrack(this.#config, player.x, player.z),
-        })),
-        deltaSeconds,
-      );
+    if (this.#marks || this.#smoke) {
+      // One source list for the ground story and the air story: the streaks
+      // and the smoke are gated by the same functions, so they can never
+      // disagree about whether a car is in trouble.
+      const sources = state.players.map((player) => ({
+        id: player.id,
+        x: player.x,
+        z: player.z,
+        heading: player.heading,
+        vx: player.vx,
+        vz: player.vz,
+        onTrack: isOnTrack(this.#config, player.x, player.z),
+      }));
+      this.#marks?.update(sources, deltaSeconds);
+      this.#smoke?.update(sources);
     }
 
     const local = state.players.find((player) => player.id === this.#localId);
@@ -361,6 +408,7 @@ export class Renderer {
 
   dispose(): void {
     this.#marks?.dispose();
+    this.#smoke?.dispose();
     if (this.#disposed) return;
     this.#disposed = true;
     this.#canvas.removeEventListener('pointerdown', this.#onManualCamera);
@@ -677,6 +725,29 @@ export class Renderer {
   }
 
   /**
+   * Facts about the live shadow rig, for the e2e handle and diagnostics.
+   *
+   * Exists because shadows have TWICE failed silently — a refused generator
+   * caught into null, and a light angle no cascade could fit — and in both
+   * cases the only symptom was a shadowless screenshot nobody could explain.
+   * A test can assert on this; an eye cannot be trusted to.
+   */
+  get shadowDiagnostics(): {
+    kind: 'cascade' | 'blur' | 'none';
+    casters: number;
+    mapReady: boolean;
+  } {
+    if (!this.#shadows) return { kind: 'none', casters: 0, mapReady: false };
+    const kind = this.#shadows instanceof CascadedShadowGenerator ? 'cascade' : 'blur';
+    const map = this.#shadows.getShadowMap();
+    return {
+      kind,
+      casters: map?.renderList?.length ?? 0,
+      mapReady: map?.isReadyForRendering() ?? false,
+    };
+  }
+
+  /**
    * Switches the whole look, at runtime.
    *
    * Called both by the Settings panel and by the governor below. A player's
@@ -702,6 +773,16 @@ export class Renderer {
    * somebody moved a slider.
    */
   #applyTierToScene(tier: QualityTier): void {
+    // Shadows first, so everything rebuilt below registers with the NEW
+    // generator rather than a disposed one.
+    this.#shadows?.dispose();
+    this.#shadows = this.#createShadows(tier);
+    this.#entities.setShadows(this.#shadows);
+    this.#kit.setShadows(this.#shadows);
+    const cascading = this.#shadows !== null && qualitySettings(tier).cascadedShadows;
+    if (this.#shadows && cascading) this.#scenery?.addCastersTo(this.#shadows);
+    this.#scenery?.setReceiveShadows(cascading);
+
     this.#entities.setFinish(finishOptions(tier));
     this.#track.dispose();
     this.#track = new TrackView(this.scene, this.#config, {
@@ -758,8 +839,12 @@ export class Renderer {
         // reason. What it buys is contact: without it every object looks like
         // a sticker floating slightly above whatever it stands on.
         this.#ssao = new SSAO2RenderingPipeline('ssao', this.scene, 0.75, [this.camera]);
-        this.#ssao.radius = 1.4;
-        this.#ssao.totalStrength = 0.9;
+        this.#ssao.radius = 1.8;
+        // Stronger than before, deliberately. Contact darkening is half of
+        // what separates "objects standing on a surface" from "objects pasted
+        // onto one", and the old strength was tuned against a scene with no
+        // scenery to ground.
+        this.#ssao.totalStrength = 1.15;
         this.#ssao.samples = 12;
         this.#ssao.expensiveBlur = false;
       }
@@ -805,7 +890,25 @@ export class Renderer {
     // Exposure is the right dial for that: the materials stay honest and the
     // camera is opened up, which is exactly what a photographer would do.
     image.exposure = 1.35;
-    image.contrast = 1.05;
+    image.contrast = 1.08;
+    // The grade. The first one pulled saturation DOWN across the board, on
+    // the theory that a procedural palette is authored too pure — and it was
+    // wrong twice: the palette here is olive grass, near-neutral tarmac and
+    // a pale sky, none of which had saturation to spare, and pulling the
+    // shadows hardest muted exactly the band the trackside lives in. The
+    // ungraded frame was the better picture, which is the test a grade has
+    // to pass. So this one ADDS: midtone colour comes up, and the split is
+    // the colourist's actual move — highlights warmed toward the low sun,
+    // shadows cooled toward the sky that fills them.
+    const curves = new ColorCurves();
+    curves.globalSaturation = 12;
+    curves.highlightsHue = 40;
+    curves.highlightsDensity = 18;
+    curves.highlightsSaturation = -4;
+    curves.shadowsHue = 215;
+    curves.shadowsDensity = 16;
+    image.colorCurves = curves;
+    image.colorCurvesEnabled = true;
     // No vignette, and I tried one. In the isometric view the corners of the
     // frame are SKY, and darkening the sky does not read as a lens — it reads
     // as a dirty screen. A vignette wants a camera pointed at a subject, and
@@ -817,7 +920,7 @@ export class Renderer {
     const racing = config.track.enabled && config.trackPath.length >= 2;
     // A circuit gets daylight; everything else keeps the darker arena mood it
     // was designed against, so this does not quietly restyle fifteen modes.
-    const horizon = racing ? new Color3(0.55, 0.65, 0.78) : new Color3(0.09, 0.11, 0.16);
+    const horizon = racing ? DAYLIGHT.horizon : new Color3(0.09, 0.11, 0.16);
     this.scene.clearColor = horizon.toColor4(1);
 
     // A circuit gets a real sky rather than a flat fill. It is the same
@@ -826,17 +929,32 @@ export class Renderer {
     // their flat backdrop — the arena is meant to read as a room.
     if (racing) createSkyDome(this.scene);
 
+    if (racing) {
+      // Aerial perspective, not weather. Exponential-squared, because linear
+      // fog with its start inside the frame reads as a wall arriving; a
+      // perceptual falloff is a LADDER — a rival forty metres up the road is
+      // a step lighter than your own bodywork, the far treeline is several,
+      // and near and far stop being the same value, which no amount of
+      // surface detail can do on its own.
+      //
+      // The colour is THE SKY'S OWN HORIZON, taken to linear space because
+      // that is where the shader blends it (same rule as albedo — see
+      // CLAUDE.md). Sourced from the constant rather than restated: it was
+      // restated once, drifted 30% darker, and everything that faded faded
+      // toward a colour that did not exist in the sky behind it.
+      this.scene.fogMode = Scene.FOGMODE_EXP2;
+      this.scene.fogColor = DAYLIGHT.horizon.toLinearSpace();
+      this.scene.fogDensity = 0.005;
+      return;
+    }
+
     this.scene.fogMode = Scene.FOGMODE_LINEAR;
     this.scene.fogColor = horizon;
-    // Starts well out so nothing a driver is actually looking at is hazed, and
-    // ends past the arena so the walls dissolve into the horizon rather than
-    // stopping against it.
-    // Far out, and retuned once the scene was properly lit. Fog set for a dark
-    // scene is barely visible; the same fog over a bright one washes the whole
-    // mid-distance flat, because there is far more light for it to scatter.
-    // Only the genuine distance should haze.
+    // Starts well out so nothing a player is actually looking at is hazed,
+    // and ends past the arena so the walls dissolve into the horizon rather
+    // than stopping against it.
     const span = Math.max(config.arenaHalfExtentX, config.arenaHalfExtentZ);
-    this.scene.fogStart = span * (racing ? 1.1 : 0.8);
+    this.scene.fogStart = span * 0.8;
     this.scene.fogEnd = span * 3;
   }
 
@@ -845,47 +963,113 @@ export class Renderer {
 
     const ambient = new HemisphericLight('ambient', new Vector3(0, 1, 0), this.scene);
     // Lit for a tone-mapped pipeline, so these are deliberately hot: see
-    // `#applyToneMapping`. Values that look blown out written down here are
-    // what the ACES curve turns into a highlight rather than a white blob.
-    ambient.intensity = racing ? 0.55 : 0.55;
+    // `#applyToneMapping`. The split between ambient and sun is the SHADOW
+    // CONTRAST dial: ambient is the light a shadow still receives, so the
+    // ratio between the two is how dark a shadow can possibly be. It used to
+    // sit near 1:4, which is why the whole scene read as flatly, evenly lit —
+    // shadows could never be more than a quarter-step darker than the sun.
+    ambient.intensity = racing ? 0.5 : 0.55;
     // Bounced light takes the colour of what it bounced off. Outdoors that is
     // sky above and ground below, and saying so is most of what separates a
-    // scene that looks lit from one that looks tinted.
-    ambient.diffuse = racing ? new Color3(0.86, 0.9, 1) : new Color3(1, 1, 1);
-    ambient.groundColor = racing ? new Color3(0.22, 0.26, 0.2) : new Color3(0.12, 0.13, 0.18);
+    // scene that looks lit from one that looks tinted. The ground bounce off
+    // a sunlit field is genuinely bright — it was a third of this once, and
+    // everything facing away from the sun crushed to black: the sponsor
+    // boards rendered as unreadable dark slabs of their own artwork.
+    ambient.diffuse = racing ? new Color3(0.78, 0.86, 1) : new Color3(1, 1, 1);
+    ambient.groundColor = racing ? new Color3(0.34, 0.36, 0.28) : new Color3(0.12, 0.13, 0.18);
 
     // The direction comes from the sky, so the disc a player can see and the
     // light casting their shadow are one fact rather than two constants that
     // can drift. A sun in the wrong half of the sky is wrongness everybody
     // feels and nobody names.
-    const sun = new DirectionalLight(
+    this.#sun = new DirectionalLight(
       'sun',
       new Vector3(SUN_TRAVEL.x, SUN_TRAVEL.y, SUN_TRAVEL.z),
       this.scene,
     );
-    sun.position = new Vector3(-SUN_TRAVEL.x * 40, -SUN_TRAVEL.y * 40, -SUN_TRAVEL.z * 40);
-    sun.intensity = racing ? 2.4 : 1.1;
-    // Warm, because sunlight is. A neutral key against a cool sky is what
-    // makes a scene read as fluorescent.
-    if (racing) sun.diffuse = new Color3(1, 0.96, 0.86);
+    this.#sun.position = new Vector3(-SUN_TRAVEL.x * 40, -SUN_TRAVEL.y * 40, -SUN_TRAVEL.z * 40);
+    // Hotter than the old noon sun on purpose: at nineteen degrees the
+    // ground only catches sin(19°) of the beam, so the lamp must burn
+    // brighter for the scene to hold its exposure — exactly as a real
+    // evening looks, walls glowing while the ground goes quiet.
+    this.#sun.intensity = racing ? 4.6 : 1.1;
+    // Warm, because low sunlight is — this much air reddens it. A neutral
+    // key against a cool sky is what makes a scene read as fluorescent.
+    if (racing) this.#sun.diffuse = new Color3(1, 0.9, 0.72);
 
     const span = Math.max(config.arenaHalfExtentX, config.arenaHalfExtentZ);
-    sun.shadowMinZ = 1;
-    sun.shadowMaxZ = span * 6;
+    this.#sun.shadowMinZ = 1;
+    this.#sun.shadowMaxZ = span * 6;
 
+    return this.#createShadows(this.#governor.tier);
+  }
+
+  /**
+   * The shadow generator a tier can afford. Three genuinely different rigs:
+   *
+   * ```
+   *   low     512 blurred exponential map — soft blobs under the cars.
+   *   medium  quality.shadowMapSize, same technique, sharper.
+   *   high    CASCADED shadow map: the treeline, the tyre walls and the
+   *           boards all cast, and the map follows the camera so near
+   *           shadows are sharp and far ones are cheap.
+   * ```
+   *
+   * The cascade rig is the difference between "a game with shadows under the
+   * cars" and "an outdoor scene": a world where nothing tall throws shade
+   * reads as evenly lit from everywhere, which is exactly the flat look this
+   * whole pass exists to kill. It is also several hundred extra draws into
+   * the shadow map, which is why it is high-tier only.
+   *
+   * `quality.shadowMapSize` was, before this, defined in the tier table and
+   * then never read — the constructor sniffed the pointer type instead. The
+   * tier is the policy; it decides now.
+   */
+  #createShadows(tier: QualityTier): ShadowGenerator | null {
+    if (!this.#sun) return null;
+    const quality = qualitySettings(tier);
     try {
-      // Shadow maps are the single most expensive thing in this scene. Halve
-      // the resolution on touch devices, where the GPU is weaker and the
-      // screen is too small to notice.
-      const isCoarsePointer = globalThis.matchMedia?.('(pointer: coarse)').matches ?? false;
-      const shadows = new ShadowGenerator(isCoarsePointer ? 512 : 1024, sun);
+      if (quality.cascadedShadows) {
+        const cascades = new CascadedShadowGenerator(quality.shadowMapSize, this.#sun);
+        // Two, not three — three was tried for the low sun and the third
+        // slab of a 2048 texture array is precisely the allocation a
+        // software rasteriser refuses, which the catch below turned into a
+        // silently shadowless scene. Two is what the look was tuned on.
+        cascades.numCascades = 2;
+        // Bias the split toward the near field: the far cascade only has to
+        // catch the treeline, which nobody reads closely.
+        cascades.lambda = 0.85;
+        cascades.stabilizeCascades = true;
+        // Follows the fog: past it a shadow would land on haze anyway.
+        const span = Math.max(this.#config.arenaHalfExtentX, this.#config.arenaHalfExtentZ);
+        cascades.shadowMaxZ = span * 3;
+        // NOT retuned upward for the grazing sun, though that was the first
+        // instinct: at 19° the receiver's light-space depth gradient is so
+        // steep that doubling the bias pushed every surface past its own
+        // occluder and the scene lost its shadows entirely. The noon values
+        // survive the low sun; check acne in a screenshot before touching.
+        cascades.bias = 0.012;
+        cascades.normalBias = 0.02;
+        // Alpha-tested casters: the pine cards must punch tree-shaped holes
+        // in the light, not card-shaped ones.
+        cascades.transparencyShadow = true;
+        cascades.usePercentageCloserFiltering = true;
+        cascades.filteringQuality = ShadowGenerator.QUALITY_MEDIUM;
+        cascades.darkness = 0.25;
+        return cascades;
+      }
+
+      const shadows = new ShadowGenerator(quality.shadowMapSize, this.#sun);
       shadows.useBlurExponentialShadowMap = true;
-      shadows.blurKernel = isCoarsePointer ? 16 : 24;
-      shadows.darkness = 0.35;
+      shadows.blurKernel = quality.shadowMapSize <= 512 ? 16 : 24;
+      shadows.darkness = 0.3;
       return shadows;
-    } catch {
+    } catch (error) {
       // Some software renderers refuse the shadow map format. Losing shadows
-      // is strictly better than losing the whole scene.
+      // is strictly better than losing the whole scene — but say so: this
+      // catch once swallowed a refused three-slab cascade array and the only
+      // symptom was a shadowless world nobody could explain.
+      log.warn('shadow generator refused; continuing without shadows', error);
       return null;
     }
   }
@@ -913,11 +1097,21 @@ export class Renderer {
       return material;
     }
     const material = new PBRMaterial('wall:mat', this.scene);
-    material.albedoColor = Color3.FromHexString('#9aa0ad').toLinearSpace();
-    material.metallic = 0;
-    // Concrete. Rough enough to have no highlight of its own, so all it ever
-    // shows is the sky's own brightness.
-    material.roughness = 0.9;
+    material.albedoColor = Color3.FromHexString('#787f8a').toLinearSpace();
+    material.metallic = 0.2;
+    // Rough enough to have no highlight of its own, so all it ever shows is
+    // the sky's own brightness — and corrugated, because a flat slab the
+    // length of the horizon is the fastest way to look like a demo. The tiling
+    // is coarse: this wall is only ever seen from far away.
+    material.roughness = 0.72;
+    const steel = createSurface(this.scene, 'wall:steel', corrugation(128), {
+      size: 128,
+      uScale: 48,
+      vScale: 1,
+      strength: 7,
+      withNormal: qualitySettings(this.#governor.tier).normalMaps,
+    });
+    material.bumpTexture = steel.normal;
     return material;
   }
 

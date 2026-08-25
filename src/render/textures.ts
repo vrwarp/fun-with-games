@@ -171,18 +171,57 @@ export function createLabelTexture(scene: Scene, text: string, color: string): D
  * with no binary assets, and a kerb is four rectangles.
  */
 export function createKerbTexture(scene: Scene): DynamicTexture {
-  const width = 64;
-  const height = 16;
+  const width = 256;
+  const height = 64;
   const texture = new DynamicTexture('kerb', { width, height }, scene, false);
   const ctx = context2d(texture);
 
   // Split along the texture's WIDTH, because a kerb ribbon runs its `u` axis
   // down the road: stripes have to alternate as you drive past them, not
   // across the 0.9 metres of paint.
-  ctx.fillStyle = '#f1f1f1';
+  //
+  // Weathered, not poster-fresh. The old two-colour chip (#e63946 on
+  // #f1f1f1) was the highest-chroma object in every frame — brighter than
+  // the cars — and paint that has been rained on and driven over for a
+  // season is nearer brick than pillar-box. The valleys between the ribs
+  // collect grime (phase-matched to `kerbRibs`, which puts four ribs along
+  // u), the outer edge darkens as a painted chamfer, and a few rubber
+  // scuffs cross where tyres actually touch.
+  ctx.fillStyle = '#d8d3c8';
   ctx.fillRect(0, 0, width, height);
-  ctx.fillStyle = '#e63946';
+  ctx.fillStyle = '#b0363c';
   ctx.fillRect(0, 0, width / 2, height);
+
+  // Grime in the rib valleys. kerbRibs' triangle wave rises and falls once
+  // per quarter of the tile, with its valleys at u = 0, 1/4, 1/2, 3/4.
+  const ribs = 4;
+  for (let rib = 0; rib <= ribs; rib++) {
+    const at = (width * rib) / ribs;
+    const grime = ctx.createLinearGradient(at - 10, 0, at + 10, 0);
+    grime.addColorStop(0, 'rgba(30, 26, 22, 0)');
+    grime.addColorStop(0.5, 'rgba(30, 26, 22, 0.35)');
+    grime.addColorStop(1, 'rgba(30, 26, 22, 0)');
+    ctx.fillStyle = grime;
+    ctx.fillRect(at - 10, 0, 20, height);
+  }
+
+  // The chamfer: the outer 20% of the kerb's width falls away from the sun,
+  // painted as a darkening ramp because the band geometry is flat.
+  const chamfer = ctx.createLinearGradient(0, height * 0.78, 0, height);
+  chamfer.addColorStop(0, 'rgba(20, 18, 16, 0)');
+  chamfer.addColorStop(1, 'rgba(20, 18, 16, 0.45)');
+  ctx.fillStyle = chamfer;
+  ctx.fillRect(0, Math.floor(height * 0.78), width, height);
+
+  // Rubber scuffs where the inside wheels clip: sparse, dark, streaked
+  // along u. Hashed positions so every kerb segment weathers identically —
+  // the texture tiles, so variety must come cheap or not at all.
+  ctx.fillStyle = 'rgba(24, 24, 26, 0.3)';
+  for (let i = 0; i < 5; i++) {
+    const at = jitter(i * 13 + 5, 3) * width;
+    const y = jitter(i * 7 + 1, 11) * height * 0.5;
+    ctx.fillRect(at, y, 14 + jitter(i, 29) * 22, 2 + jitter(i, 31) * 3);
+  }
 
   texture.update();
   return texture;
@@ -207,6 +246,239 @@ export function createStartLineTexture(scene: Scene): DynamicTexture {
       ctx.fillRect(x * cell, y * cell, cell, cell);
     }
   }
+
+  texture.update();
+  return texture;
+}
+
+/** Deterministic value in [0,1) — art must not differ between two runs. */
+function jitter(a: number, b: number): number {
+  let h = (Math.imul(a, 374761393) + Math.imul(b, 668265263)) | 0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+
+/**
+ * A conifer, drawn — the side view for the crossed cards a tree is made of.
+ *
+ * The cones this replaces were the single loudest "1997" in the frame, and no
+ * material could save them, because what fails on a cone is the SILHOUETTE:
+ * real conifers are ragged. Drawing one buys exactly that — dozens of drooping
+ * frond strokes with jittered lengths, gaps where branches are missing,
+ * darker in the interior where a canopy shades itself, warmer at the sunlit
+ * tips. All of it alpha-cut, so the sky shows through the edges.
+ *
+ * `seed` varies the raggedness so the three species do not share one outline.
+ */
+export function createPineTexture(
+  scene: Scene,
+  seed: number,
+  base: { r: number; g: number; b: number },
+): DynamicTexture {
+  const width = 192;
+  const height = 384;
+  const texture = new DynamicTexture(
+    `pine:${seed}`,
+    { width, height },
+    scene,
+    // Mipmaps on: these cards live at every distance from kerbside to fog.
+    true,
+  );
+  texture.hasAlpha = true;
+  const ctx = context2d(texture);
+  ctx.clearRect(0, 0, width, height);
+
+  const centre = width / 2;
+  const crownY = 14;
+  const skirtY = height - 44;
+  const paint = (lum: number): string =>
+    `rgb(${Math.round(base.r * lum * 255)}, ${Math.round(base.g * lum * 255)}, ${Math.round(
+      base.b * lum * 255,
+    )})`;
+
+  // No painted trunk any more: the assembled tree carries a real bark
+  // cylinder, and the painted one — visible at each offset card's base —
+  // read as a clutter of extra stumps beside it.
+
+  const rows = 30;
+  const pitch = (skirtY - crownY) / (rows - 1);
+  const reachAt = (t: number): number => (1 - t * 0.92) * (width * 0.46);
+  const coreHalfAt = (row: number, t: number): number =>
+    0.6 * reachAt(t) * (1 + 0.1 * jitter(seed * 7 + row, 1));
+
+  // THE CORE — an opaque, dark, scalloped spire under the fronds, one tooth
+  // per whorl. This is what makes the tree a tree instead of lace: measured,
+  // the old card was 15% opaque along its own axis, so the crown's interior
+  // was mostly sky and the trunk showed all the way up through it. A spruce
+  // is optically dense to about six tenths of its reach; this core is
+  // exactly that wide, which keeps it a strict subset of the frond outline —
+  // the ragged silhouette stays byte-for-byte the fronds' own. Filled with a
+  // vertical gradient, light crown to dark skirt: baked ambient occlusion,
+  // sun-independent, so it never fights the real light. Every frond drawn
+  // over it then reads as a lit branch against canopy shade.
+  const core = ctx.createLinearGradient(0, crownY, 0, skirtY);
+  core.addColorStop(0, paint(0.38));
+  core.addColorStop(1, paint(0.26));
+  ctx.fillStyle = core;
+  ctx.beginPath();
+  ctx.moveTo(centre, crownY - 8);
+  for (let row = 0; row < rows; row++) {
+    const t = 1 - row / (rows - 1);
+    const y = skirtY - t * (skirtY - crownY);
+    const half = coreHalfAt(row, t);
+    ctx.lineTo(centre + half * 0.62, y - pitch * 0.3);
+    ctx.lineTo(centre + half, y + pitch * 0.5);
+  }
+  ctx.lineTo(centre, skirtY + pitch * 0.9);
+  for (let row = rows - 1; row >= 0; row--) {
+    const t = 1 - row / (rows - 1);
+    const y = skirtY - t * (skirtY - crownY);
+    const half = coreHalfAt(row, t);
+    ctx.lineTo(centre - half, y + pitch * 0.5);
+    ctx.lineTo(centre - half * 0.62, y - pitch * 0.3);
+  }
+  ctx.closePath();
+  ctx.fill();
+
+  // Fronds, in rows from the skirt up to the crown. Painter's order matters:
+  // lower (wider, darker) rows first, so upper rows overlap them the way real
+  // branches sit in front of the ones below. Each frond starts a little way
+  // ACROSS the axis before travelling out — branches meet at the trunk, and
+  // the old strokes only ever grew outward, which is half of how the middle
+  // ended up empty.
+  for (let row = 0; row < rows; row++) {
+    const t = row / (rows - 1); // 0 at skirt, 1 at crown
+    const y = skirtY - t * (skirtY - crownY);
+    const reach = reachAt(t);
+    const strokes = Math.max(4, Math.round((1 - t) * 13) + 5);
+
+    for (let i = 0; i < strokes; i++) {
+      const u = strokes === 1 ? 0 : (i / (strokes - 1)) * 2 - 1;
+      // Gaps: some branches simply are not there — and the dropout is
+      // concentrated on the OUTER strokes, where a missing branch notches
+      // the silhouette, rather than the interior, where it punched a hole
+      // of daylight through the crown.
+      if (jitter(seed * 91 + row, i * 7) < (Math.abs(u) > 0.6 ? 0.16 : 0.06)) continue;
+
+      const droop = 10 + jitter(seed + row, i) * 14;
+      const length = reach * (0.55 + jitter(seed * 3 + row, i * 5) * 0.6);
+      const sign = Math.sign(u || jitter(row, i) - 0.5);
+      const xBase = centre + u * reach * 0.55;
+      const x = xBase - sign * reach * 0.12;
+      const tipX = xBase + sign * length * 0.55;
+
+      // Two-tone by POSITION, not chance: interior shade to lit tips, upper
+      // canopy lighter than the skirt (it genuinely sees more sky). The old
+      // term was a third random, which scattered bright flecks into the
+      // interior — sparkle, not light. Capped at 0.82 so the brightest
+      // foliage stays a clear step below the turf it stands on.
+      const lum = Math.min(
+        0.82,
+        0.4 + 0.26 * Math.abs(u) + 0.16 * t + 0.08 * jitter(seed + i, row * 3),
+      );
+      ctx.fillStyle = paint(lum);
+
+      ctx.beginPath();
+      ctx.moveTo(x, y - 6 - jitter(row, seed + i) * 6);
+      ctx.lineTo(tipX, y + droop);
+      ctx.lineTo(x + (tipX - x) * 0.5, y + droop * 0.35);
+      ctx.closePath();
+      ctx.fill();
+    }
+  }
+
+  // The leader — the single vertical tip every conifer has. Wide and deep
+  // enough to sink into the crown, and tinted like the core, so it reads as
+  // the top of the mass rather than a dark fin balanced on lace.
+  ctx.fillStyle = paint(0.44);
+  ctx.beginPath();
+  ctx.moveTo(centre, 2);
+  ctx.lineTo(centre + 10, crownY + 34);
+  ctx.lineTo(centre - 10, crownY + 34);
+  ctx.closePath();
+  ctx.fill();
+
+  // Bleed each opaque texel's colour into the transparent field around it.
+  // The canvas's cleared texels are black-with-zero-alpha, and the mip chain
+  // averages that black INTO the visible colour — a third of the green was
+  // gone by the third mip, which is why a distant stand went grey-blue.
+  bleedColour(ctx, width, height);
+
+  texture.update();
+  return texture;
+}
+
+/**
+ * Flood the colour of the nearest opaque texel into every transparent one,
+ * leaving alpha untouched. A breadth-first pass from all opaque texels at
+ * once, so each transparent texel takes its colour from its nearest opaque
+ * neighbour in ring order.
+ */
+function bleedColour(ctx: CanvasRenderingContext2D, width: number, height: number): void {
+  const image = ctx.getImageData(0, 0, width, height);
+  const data = image.data;
+  const queue: number[] = [];
+  for (let i = 0; i < width * height; i++) {
+    if ((data[i * 4 + 3] ?? 0) > 0) queue.push(i);
+  }
+  const filled = new Uint8Array(width * height);
+  for (const i of queue) filled[i] = 1;
+
+  for (let head = 0; head < queue.length; head++) {
+    const at = queue[head] ?? 0;
+    const x = at % width;
+    const y = (at - x) / width;
+    for (const [dx, dy] of [
+      [1, 0],
+      [-1, 0],
+      [0, 1],
+      [0, -1],
+    ] as const) {
+      const nx = x + dx;
+      const ny = y + dy;
+      if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
+      const next = ny * width + nx;
+      if (filled[next]) continue;
+      filled[next] = 1;
+      data[next * 4] = data[at * 4] ?? 0;
+      data[next * 4 + 1] = data[at * 4 + 1] ?? 0;
+      data[next * 4 + 2] = data[at * 4 + 2] ?? 0;
+      queue.push(next);
+    }
+  }
+  ctx.putImageData(image, 0, 0);
+}
+
+/**
+ * A trackside advertising board: a bold made-up name on a bright panel.
+ *
+ * Real circuits are LINED with these, and their absence is much of why a
+ * home-made track reads as an empty field. The names are invented — a real
+ * brand would be a licence problem and a lie.
+ */
+export function createBoardTexture(
+  scene: Scene,
+  text: string,
+  background: string,
+  foreground: string,
+): DynamicTexture {
+  const width = 512;
+  const height = 96;
+  const texture = new DynamicTexture(`board:${text}`, { width, height }, scene, true);
+  const ctx = context2d(texture);
+
+  ctx.fillStyle = background;
+  ctx.fillRect(0, 0, width, height);
+  // A thin frame, so the board reads as an object rather than paint.
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.25)';
+  ctx.fillRect(0, 0, width, 6);
+  ctx.fillRect(0, height - 6, width, 6);
+
+  ctx.fillStyle = foreground;
+  ctx.font = `700 ${Math.round(height * 0.56)}px system-ui, sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, width / 2, height / 2 + 2);
 
   texture.update();
   return texture;

@@ -26,19 +26,21 @@ Nothing below quietly restyles them: every branch is on
 
 ## 2. Files
 
-| File              | Owns                                                                     |
-| ----------------- | ------------------------------------------------------------------------ |
-| `renderer.ts`     | Engine, scene, camera, lights, fog, arena, post-processing, quality tier |
-| `environment.ts`  | The generated sky: sun, clouds, a reflection probe and a visible dome    |
-| `scenery.ts`      | Trees, tyre walls and marshal posts, as thin instances                   |
-| `surfaces.ts`     | Procedural albedo + height patterns, and the normal maps made from them  |
-| `carmesh.ts`      | The car's geometry                                                       |
-| `carmaterials.ts` | The car's substances (paint, carbon, rubber, metal)                      |
-| `skin.ts`         | The seam status effects use to paint a body of any material type         |
-| `quality.ts`      | Which tier a device starts on, and when to give one up                   |
-| `entities.ts`     | Player and pickup meshes                                                 |
-| `trackview.ts`    | Tarmac, kerbs, start line, zone marks, barriers, gantry                  |
-| `marks.ts`        | Tyre marks and dust                                                      |
+| File              | Owns                                                                    |
+| ----------------- | ----------------------------------------------------------------------- |
+| `renderer.ts`     | Engine, scene, camera, lights, shadows, fog, arena, post                |
+| `environment.ts`  | The generated sky: sun, clouds, a reflection probe and a visible dome   |
+| `scenery.ts`      | Trees, tyre walls, guard posts, sponsor boards — thin instances         |
+| `cardynamics.ts`  | Wheel spin, recovered steering, body lean, brake glow — pure            |
+| `smoke.ts`        | Tyre smoke and dust, gated by the same slip functions as the marks      |
+| `surfaces.ts`     | Procedural albedo + height patterns, and the normal maps made from them |
+| `carmesh.ts`      | The car's geometry                                                      |
+| `carmaterials.ts` | The car's substances (paint, carbon, rubber, metal)                     |
+| `skin.ts`         | The seam status effects use to paint a body of any material type        |
+| `quality.ts`      | Which tier a device starts on, and when to give one up                  |
+| `entities.ts`     | Player and pickup meshes                                                |
+| `trackview.ts`    | Tarmac, kerbs, start line, zone marks, barriers, gantry                 |
+| `marks.ts`        | Tyre marks and dust                                                     |
 
 ---
 
@@ -217,6 +219,58 @@ how it looks over a mid-grey.
 
 ---
 
+## 6b. The car moves, and the shadows are tiered
+
+Two systems that arrived together, because both answer the same review: a
+scene can be materially perfect and still read as a video game if the car is a
+statue and the light is flat.
+
+**Car motion is derived, never transmitted** (`cardynamics.ts`). The renderer
+already receives position, heading and velocity; wheel spin is distance over
+radius, the steering angle is the sim's own bicycle model run backward from
+the yaw rate, body pitch/roll is the differenced acceleration leaned AGAINST,
+and brake glow heats the rims instantly and cools slowly. Bots animate
+identically to humans because both are just cars with velocities. The signs
+are the entire hazard — a body leaning INTO a corner looks off without looking
+broken — so all of them are pinned by pure tests, including one caught by
+arithmetic: Babylon's positive `rotation.z` tilts the top toward −X, the car's
+LEFT, so the roll negates at its single apply site.
+
+**Shadows are three genuinely different rigs**, keyed by `quality.shadowMapSize`
+and `quality.cascadedShadows` (the former was defined and unread for a while —
+the constructor sniffed pointer type instead; the tier decides now):
+
+```
+low     512 blurred exponential map: soft blobs under the cars.
+medium  1024, same technique, sharper.
+high    2048 CASCADED maps: treeline, tyre stacks, posts and boards all
+        cast, PCF filtered, alpha-tested so the pine cards punch
+        tree-shaped holes in the light.
+```
+
+Generators rebuild on tier change; `EntityViews` rebuilds its bodies against
+the new one, `KitViews` re-registers its static casters, `Scenery` re-adds on
+the cascade tier. The ambient:sun ratio IS the darkest a shadow can be — at
+the old near-1:4 the scene could never contrast, which read as "evenly lit
+from everywhere", which read as N64.
+
+**Tyre smoke** (`smoke.ts`) puts the slide in the air above the streak the
+marks put on the ground — one particle system per car, gated by the same
+`marksGround`/`slipOf` the marks use so the two can never disagree, white on
+the limit and brown dust off it.
+
+There is deliberately **no lens flare**. One shipped briefly: Babylon's
+`LensFlareSystem` ray-picks the scene for occlusion, which needs the `Ray`
+side-effect import — absent, the first flare render throws and takes the
+whole render loop with it, and only in the production bundle, where
+tree-shaking removes what the dev server happened to keep. It also never
+fired in the isometric view (an orthographic camera at 37° elevation never
+has the sun on screen), which made it a cockpit-only garnish priced at a
+crashed game. If it returns, it returns with the `Ray` import, a test that
+covers a built bundle at a bloom tier, and a reason to exist in iso.
+
+---
+
 ## 7. The world beyond the kerb
 
 The scene used to end at the kerb: grass, then a grey wall, then sky. A circuit
@@ -245,12 +299,23 @@ Candidates that land near the road are dropped rather than nudged, because a
 circuit folds back on itself and nudging produces a suspicious ring hugging the
 barrier.
 
-There are **three species**, differing in silhouette more than in hue. A single
-prototype repeated hundreds of times is found out immediately: the eye is very
-good at spotting a repeated shape and rather bad at measuring a tree. (The
-cheaper fix — one mesh with a colour per instance — did not take: a
-thin-instance colour buffer needs the material set up to read it. Two extra
-draw calls buy shape variation as well, which is the stronger signal.)
+Trees are **drawn, not lathed**: each of three species paints its own conifer
+— drooping frond strokes with jittered lengths, missing branches, darker
+interiors — onto three alpha-cut cards at sixty degrees. A cone is geometry
+pretending to be a tree; a card carries the actual ragged outline, which is
+the part the eye reads. A horizontal cap card for top-down cameras was tried
+and removed: seen from anywhere near the ground it smears into a line slicing
+every tree in half, and this game's cameras live near the ground — the
+isometric one looks down at 53 degrees, not 90, so three oblique cards keep
+their volume there too.
+
+The dressing around them: corrugated guardrail (a normal-mapped wave profile;
+corrugation reads as light rolling across ridges), guard posts every four
+metres so a hundred-metre barrier stops reading as one extrusion, tyre stacks
+painted in red/white/black bundles, invented-sponsor boards along the
+straights — built as two one-sided planes, because a two-sided plane shows its
+text MIRRORED to the half of the circuit behind it — and painted pit bays
+where the pit zones' literal trigger circles used to float like crop circles.
 
 Tyre walls go where the road actually **bends**, measured as the turn in
 heading over a fixed chord rather than from the path's own vertices, which
@@ -374,7 +439,16 @@ containers, virtual machines, remote desktops and any browser where
 acceleration is off or blocklisted, and without it such a machine opens on the
 most expensive look and spends eight seconds and two rebuilds climbing back
 down. Otherwise a touch screen means a phone, and a phone with few cores or a
-pixel ratio of 3 means a cheap one. Then
+pixel ratio of 3 means a cheap one.
+
+A software rasteriser also gets **no dressing at all** — no trackside scenery,
+no tyre smoke — and that is a device fact rather than a tier (`#dressing` in
+`renderer.ts`), so it holds whatever the picker says. The dressing is a
+handful of draw calls but almost pure fill: screen-covering alpha-tested tree
+cards, drawn again into every shadow cascade, and blended smoke — and fill is
+the one thing a CPU shading fragments cannot pay. Skipping it took the
+software frame from tens of seconds back to workable; every real GPU,
+including a cheap phone's, keeps all of it. Then
 `QualityGovernor` only ever steps **down**, after a sustained shortfall rather
 than one dropped frame. A player who starts too low sees a game that runs
 beautifully and can turn the handsome switches on; a player who starts too high

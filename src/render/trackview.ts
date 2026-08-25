@@ -1,10 +1,13 @@
 import { Color3 } from '@babylonjs/core/Maths/math.color.js';
 import { Vector3 } from '@babylonjs/core/Maths/math.vector.js';
+import { Constants } from '@babylonjs/core/Engines/constants.js';
 import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial.js';
 import { PBRMaterial } from '@babylonjs/core/Materials/PBR/pbrMaterial.js';
 import type { Material } from '@babylonjs/core/Materials/material.js';
 import { Texture } from '@babylonjs/core/Materials/Textures/texture.js';
 import { CreateRibbon } from '@babylonjs/core/Meshes/Builders/ribbonBuilder.js';
+import { CreatePlane } from '@babylonjs/core/Meshes/Builders/planeBuilder.js';
+import { DynamicTexture } from '@babylonjs/core/Materials/Textures/dynamicTexture.js';
 import { VertexBuffer } from '@babylonjs/core/Buffers/buffer.js';
 import { CreateBox } from '@babylonjs/core/Meshes/Builders/boxBuilder.js';
 import type { Mesh } from '@babylonjs/core/Meshes/mesh.js';
@@ -13,7 +16,7 @@ import type { Scene } from '@babylonjs/core/scene.js';
 import type { SimConfig, TrackPoint } from '../sim/config.js';
 import { sampleTrack, trackLength, trackPoseAt } from '../sim/track.js';
 import { createKerbTexture, createStartLineTexture } from './textures.js';
-import { asphalt, createSurface, type Surface } from './surfaces.js';
+import { asphalt, corrugation, createSurface, kerbRibs, type Surface } from './surfaces.js';
 
 /**
  * Draws the circuit: tarmac, kerbs, the start/finish line, sector marks and
@@ -56,7 +59,19 @@ const LINE_Y = 0.14;
  * itself. A polygon offset biases the comparison rather than the geometry, so
  * the paint stays flat and still wins.
  */
-const LAYER_BIAS = { rubber: -0.5, drs: -1, kerb: -2, limit: -2.5, sector: -3, line: -4 } as const;
+const LAYER_BIAS = {
+  wearWide: -0.2,
+  wearMid: -0.25,
+  wearCore: -0.3,
+  seam: -0.35,
+  dust: -0.4,
+  rubber: -0.5,
+  drs: -1,
+  kerb: -2,
+  limit: -2.5,
+  sector: -3,
+  line: -4,
+} as const;
 
 /**
  * How far the ideal line moves toward the inside of a corner, as a fraction of
@@ -186,6 +201,7 @@ export class TrackView {
   readonly #scene: Scene;
   readonly #normalMaps: boolean;
   #meshes: Mesh[] = [];
+  #pitMaterial: StandardMaterial | null = null;
   #materials: Material[] = [];
   #surfaces: Surface[] = [];
   #textures: Texture[] = [];
@@ -209,6 +225,9 @@ export class TrackView {
     this.#band('track:kerb:l', path, 0, lap, half - 0.9, half, KERB_Y, kerb);
     this.#band('track:kerb:r', path, 0, lap, -half, -half + 0.9, KERB_Y, kerb);
 
+    // The value structure a used road has before anyone drives today.
+    this.#roadWear(path, lap, half);
+
     // The fast line, and the white paint that says where the road ends.
     this.#racingLine(path, lap, half);
     const limit = this.#limitMaterial();
@@ -220,13 +239,15 @@ export class TrackView {
     // The chequered board, last so it sits on top of everything else.
     this.#band('track:line', path, -1.3, 1.3, -half, half, LINE_Y, this.#startLineMaterial(half));
 
+    this.#gridBoxes(config, path, half);
+
     // Barriers, set back from the kerb by a run-off so a small mistake is a
     // moment rather than the end of a race. They are scenery: the simulation's
     // track limits are still the grass, and nothing here collides. The circuit
     // decides whether it has room for them — see `track.barrierRunoff`.
     const runoff = config.track.barrierRunoff;
     if (runoff > 0) {
-      const barrier = this.#barrierMaterial();
+      const barrier = this.#barrierMaterial(lap);
       const back = half + runoff;
       this.#wall('track:barrier:l', path, lap, back, BARRIER_HEIGHT, barrier);
       this.#wall('track:barrier:r', path, lap, -back, BARRIER_HEIGHT, barrier);
@@ -381,6 +402,10 @@ export class TrackView {
     const drs = this.#flatMaterial('track:drs', '#06d6a0', 0.006, LAYER_BIAS.drs);
 
     config.zones.forEach((zone, index) => {
+      if (zone.kind === 'pit') {
+        this.#pitBox(zone, index, path);
+        return;
+      }
       if (zone.kind !== 'checkpoint' && zone.kind !== 'drs') return;
       const at = sampleTrack(path, zone.x, zone.z).progress;
 
@@ -436,6 +461,65 @@ export class TrackView {
   }
 
   /**
+   * One pit box: a painted white bay on the pit lane.
+   *
+   * The zone used to be drawn as its literal trigger circle, and four
+   * overlapping nine-metre hoops on the grass read as crop circles, not as a
+   * pit lane. The circle is gameplay geometry; the PAINT is a bay outline the
+   * size of a car, oriented along the lane — which runs parallel to the main
+   * straight beside it, so the nearest track direction is the lane's.
+   */
+  #pitBox(zone: { x: number; z: number }, index: number, path: readonly TrackPoint[]): void {
+    const sample = sampleTrack(path, zone.x, zone.z);
+    const heading = Math.atan2(sample.dirX, sample.dirZ);
+
+    const mesh = CreatePlane(`track:pit:${index}`, { width: 2.4, height: 4 }, this.#scene);
+    mesh.rotation.x = Math.PI / 2;
+    mesh.rotation.y = heading;
+    mesh.position.set(zone.x, KERB_Y, zone.z);
+    mesh.material = this.#pitPaint();
+    mesh.isPickable = false;
+    this.#meshes.push(mesh);
+  }
+
+  /** The paint a pit bay is outlined with: white border, open middle. */
+  #pitPaint(): StandardMaterial {
+    if (this.#pitMaterial) return this.#pitMaterial;
+    const size = 128;
+    const texture = new DynamicTexture(
+      'track:pit:paint',
+      { width: size, height: size },
+      this.#scene,
+      false,
+    );
+    texture.hasAlpha = true;
+    const ctx = texture.getContext() as unknown as CanvasRenderingContext2D;
+    ctx.clearRect(0, 0, size, size);
+    ctx.strokeStyle = 'rgba(235, 238, 240, 0.85)';
+    ctx.lineWidth = 7;
+    // Open at the lane side (top edge undrawn): a bay is a slot, not a cage.
+    ctx.beginPath();
+    ctx.moveTo(4, 4);
+    ctx.lineTo(4, size - 4);
+    ctx.lineTo(size - 4, size - 4);
+    ctx.lineTo(size - 4, 4);
+    ctx.stroke();
+    texture.update();
+    this.#textures.push(texture);
+
+    const material = new StandardMaterial('track:pit:mat', this.#scene);
+    material.diffuseTexture = texture;
+    material.useAlphaFromDiffuseTexture = true;
+    material.emissiveColor = new Color3(0.8, 0.8, 0.82);
+    material.disableLighting = true;
+    material.zOffset = LAYER_BIAS.sector;
+    material.backFaceCulling = false;
+    this.#materials.push(material);
+    this.#pitMaterial = material;
+    return material;
+  }
+
+  /**
    * Tarmac.
    *
    * The biggest surface in the game and the one the camera is pointed at for
@@ -467,12 +551,17 @@ export class TrackView {
 
     material.albedoTexture = surface.albedo;
     if (surface.normal) material.bumpTexture = surface.normal;
-    // Asphalt is not a metal and it is not polished. What it does do is get
-    // *less* rough where the racing line has polished it — which is a refinement
-    // for another day; a single value that is rough but not matte is already
-    // the difference between tarmac and felt.
+    // Asphalt is not a metal and it is not polished. The number was 0.72
+    // until the sun came down to 19°: at grazing incidence every chip facet
+    // found a mirror angle and the whole road lit up like standing water.
+    // Dry tarmac keeps only a faint sheen toward a low sun — roughness up,
+    // and the sky reflection damped, because fresnel at a grazing camera
+    // heads for 1 whatever the roughness and the road is ALWAYS at a
+    // grazing camera in the cockpit. Wet is a reflection question, not a
+    // roughness one.
     material.metallic = 0;
-    material.roughness = 0.72;
+    material.roughness = 0.88;
+    material.environmentIntensity = 0.35;
     material.backFaceCulling = CULL_BACK_FACES;
     this.#materials.push(material);
     return material;
@@ -490,6 +579,52 @@ export class TrackView {
    * Placed and oriented from the road itself, so it stands square across the
    * line on any circuit rather than needing a per-track constant.
    */
+  /**
+   * Painted grid boxes behind the line, mirroring the simulation's own
+   * `gridSlot` geometry (rows of `gridColumns`, half-row stagger, lanes
+   * spread across the width). Mirrored rather than imported because the two
+   * layers may not share code — but the ARITHMETIC must match, or the paint
+   * puts cars visibly outside their boxes at every standing start.
+   */
+  #gridBoxes(config: SimConfig, path: readonly TrackPoint[], half: number): void {
+    const columns = Math.max(1, Math.floor(config.track.gridColumns));
+    const spacing = config.track.gridRowSpacing;
+    const lane = (half * 2) / (columns + 1);
+    const paint = this.#flatMaterial('track:gridbox', '#dfe3e6', 0.8, LAYER_BIAS.sector);
+
+    for (let slot = 0; slot < 8; slot++) {
+      const row = Math.floor(slot / columns);
+      const column = slot % columns;
+      const back = (row + 1) * spacing + column * spacing * 0.5;
+      const offset = (column - (columns - 1) / 2) * lane;
+
+      // A box is a front bar you pull up to and two short rails behind it.
+      const nose = -back + 1.1;
+      this.#band(
+        `track:grid:${slot}:bar`,
+        path,
+        nose - 0.14,
+        nose,
+        offset - 0.95,
+        offset + 0.95,
+        SECTOR_Y,
+        paint,
+      );
+      for (const side of [-1, 1]) {
+        this.#band(
+          `track:grid:${slot}:rail${side}`,
+          path,
+          nose - 2.6,
+          nose,
+          offset + side * 0.95 - 0.07 * side,
+          offset + side * 0.95 + 0.07 * side,
+          SECTOR_Y,
+          paint,
+        );
+      }
+    }
+  }
+
   #gantry(path: readonly TrackPoint[], half: number): void {
     const pose = trackPoseAt(path, 0);
     const heading = Math.atan2(pose.dirX, pose.dirZ);
@@ -525,6 +660,42 @@ export class TrackView {
     beam.material = material;
     beam.isPickable = false;
     this.#meshes.push(beam);
+
+    // The five-light rig under the beam — the single most recognisable
+    // object on a Formula circuit, and the thing that makes the gantry a
+    // START gantry rather than a doorframe. Dormant housings with a deep-red
+    // lens: dressing for now, wiring them to the countdown is a live-state
+    // feature for another day.
+    const housing = this.#gantryMaterial();
+    const lens = this.#flatMaterial('track:gantry:lens', '#3d0d10', 0.9, 0);
+    for (let i = 0; i < 5; i++) {
+      const at = (i - 2) * 0.85;
+      const pod = CreateBox(
+        `track:gantry:pod${i}`,
+        { width: 0.55, height: 0.62, depth: 0.3 },
+        this.#scene,
+      );
+      pod.position.set(
+        pose.x + pose.dirX * -0.1 + normalX * at,
+        GANTRY_HEIGHT - 0.76,
+        pose.z + pose.dirZ * -0.1 + normalZ * at,
+      );
+      pod.rotation.y = heading;
+      pod.material = housing;
+      pod.isPickable = false;
+      this.#meshes.push(pod);
+
+      const face = CreatePlane(`track:gantry:lens${i}`, { width: 0.4, height: 0.46 }, this.#scene);
+      face.position.set(
+        pose.x + pose.dirX * -0.27 + normalX * at,
+        GANTRY_HEIGHT - 0.76,
+        pose.z + pose.dirZ * -0.27 + normalZ * at,
+      );
+      face.rotation.y = heading + Math.PI;
+      face.material = lens;
+      face.isPickable = false;
+      this.#meshes.push(face);
+    }
   }
 
   #gantryMaterial(): StandardMaterial {
@@ -535,13 +706,30 @@ export class TrackView {
     return material;
   }
 
-  #barrierMaterial(): StandardMaterial {
-    const material = new StandardMaterial('track:barrier:mat', this.#scene);
-    // Pale, so it reads against the grass and takes the sky's colour the way
-    // the arena wall now does rather than cutting a dark line round the
-    // circuit.
-    material.diffuseColor = Color3.FromHexString('#c9ccd3');
-    material.specularColor = new Color3(0.08, 0.08, 0.09);
+  #barrierMaterial(lap: number): PBRMaterial {
+    // Corrugated guardrail, not a painted slab. The wave profile lives in a
+    // normal map — what makes corrugation read is the light rolling across
+    // the ridges — and the albedo rides along from the same pattern, a
+    // galvanised grey a step darker than the old wall so it stops being the
+    // brightest thing on the horizon.
+    const steel = createSurface(this.#scene, 'track:barrier:steel', corrugation(128), {
+      size: 128,
+      // One tile every couple of metres along the run; the ribbon's V spans
+      // foot-to-top once, which is exactly one wave profile.
+      uScale: Math.max(8, Math.round(lap / 2.4)),
+      vScale: 1,
+      strength: 9,
+      withNormal: this.#normalMaps,
+    });
+    this.#surfaces.push(steel);
+
+    const material = new PBRMaterial('track:barrier:mat', this.#scene);
+    material.albedoTexture = steel.albedo;
+    if (steel.normal) material.bumpTexture = steel.normal;
+    // Weathered galvanised steel: metallic enough to take the sky, rough
+    // enough not to mirror it.
+    material.metallic = 0.55;
+    material.roughness = 0.5;
     material.backFaceCulling = false;
     this.#materials.push(material);
     return material;
@@ -556,6 +744,66 @@ export class TrackView {
    * two outer paths carry zero alpha and the two inner ones carry full, which
    * costs one extra quad across the width and buys the whole effect.
    */
+  /**
+   * The macro value structure a used road has: a rubbered-in darker middle,
+   * pale dusty shoulders where nobody drives, and a surfacing seam every
+   * thirty-odd metres.
+   *
+   * This is most of what makes real tarmac readable from two hundred metres —
+   * the texture's chips vanish past twenty, but these bands never do. The
+   * middle is MULTIPLIED over the road in three nested steps, because a
+   * multiply can only darken (paint that lightened the road would float over
+   * it), the steps fake the soft falloff a hard-edged band lacks, and the
+   * chip noise underneath breaks the steps up. The shoulders are additive
+   * dust, priced against the linear road value like every overlay here. The
+   * seams reuse `#band` across a 14cm arc — a seam IS a very short band.
+   */
+  #roadWear(path: readonly TrackPoint[], lap: number, half: number): void {
+    const steps = [
+      { reach: 0.56, bias: LAYER_BIAS.wearWide },
+      { reach: 0.42, bias: LAYER_BIAS.wearMid },
+      { reach: 0.26, bias: LAYER_BIAS.wearCore },
+    ];
+    steps.forEach((step, index) => {
+      const material = new StandardMaterial(`track:wear${index}:mat`, this.#scene);
+      material.emissiveColor = new Color3(0.9, 0.9, 0.92);
+      material.disableLighting = true;
+      material.alphaMode = Constants.ALPHA_MULTIPLY;
+      // 0.99 rather than 1: an alpha of exactly one opts out of blending and
+      // the band would overwrite the road instead of multiplying it.
+      material.alpha = 0.99;
+      material.zOffset = step.bias;
+      material.backFaceCulling = CULL_BACK_FACES;
+      this.#materials.push(material);
+      this.#band(
+        `track:wear${index}`,
+        path,
+        0,
+        lap,
+        -half * step.reach,
+        half * step.reach,
+        RUBBER_Y,
+        material,
+      );
+    });
+
+    // Dust: the outer lane a race never uses goes paler, not darker.
+    const dust = this.#flatMaterial('track:dust', '#7d786c', 0.09, LAYER_BIAS.dust);
+    this.#band('track:dust:l', path, 0, lap, half * 0.74, half - 1.15, RUBBER_Y, dust);
+    this.#band('track:dust:r', path, 0, lap, -(half - 1.15), -half * 0.74, RUBBER_Y, dust);
+
+    // Surfacing seams. 31 metres, not 30: a spacing that never quite beats
+    // against the kerb stripes or the tile period reads as laid, not tiled.
+    const seam = this.#flatMaterial('track:seam', '#0d0e10', 0.4, LAYER_BIAS.seam);
+    const count = Math.max(4, Math.round(lap / 31));
+    for (let i = 0; i < count; i++) {
+      const at = (lap * i) / count;
+      // Keep clear of the start boards, which own that stretch visually.
+      if (at < 4 || lap - at < 4) continue;
+      this.#band(`track:seam:${i}`, path, at - 0.07, at + 0.07, -half, half, RUBBER_Y, seam);
+    }
+  }
+
   #racingLine(path: readonly TrackPoint[], lap: number, half: number): void {
     const samples = Math.max(16, Math.round(lap / 1.5));
     const offsets = racingLineOffsets(path, lap, samples, (half - LINE_HALF_WIDTH) * LINE_REACH);
@@ -620,7 +868,7 @@ export class TrackView {
     const material = new PBRMaterial('track:rubber:mat', this.#scene);
     material.albedoColor = Color3.FromHexString('#17171a').toLinearSpace();
     material.metallic = 0;
-    material.roughness = 0.42;
+    material.roughness = 0.55;
     material.zOffset = LAYER_BIAS.rubber;
     material.backFaceCulling = CULL_BACK_FACES;
     this.#materials.push(material);
@@ -639,20 +887,37 @@ export class TrackView {
     return material;
   }
 
-  #kerbMaterial(lap: number): StandardMaterial {
+  #kerbMaterial(lap: number): PBRMaterial {
     const texture = createKerbTexture(this.#scene);
     texture.wrapU = Texture.WRAP_ADDRESSMODE;
     texture.wrapV = Texture.WRAP_ADDRESSMODE;
     // One red/white pair every ~3 units of road, along `u` — the axis that
     // runs down the circuit.
-    texture.uScale = Math.max(8, Math.round(lap / 3));
+    const uScale = Math.max(8, Math.round(lap / 3));
+    texture.uScale = uScale;
     this.#textures.push(texture);
 
-    const material = new StandardMaterial('track:kerb:mat', this.#scene);
+    // The stripes are paint; the RIBS are the kerb. A rumble strip with no
+    // relief is a sticker on the tarmac, and the sun catching each rib's
+    // leading face is what makes the strip read as a thing a car would jolt
+    // over. The relief rides a normal map whose tiling matches the paint,
+    // four ribs to each stripe pair.
+    const ribs = createSurface(this.#scene, 'track:kerb:ribs', kerbRibs(128), {
+      size: 128,
+      uScale,
+      vScale: 1,
+      strength: 10,
+      withNormal: this.#normalMaps,
+    });
+    this.#surfaces.push(ribs);
+
+    const material = new PBRMaterial('track:kerb:mat', this.#scene);
+    material.albedoTexture = texture;
+    if (ribs.normal) material.bumpTexture = ribs.normal;
+    material.metallic = 0;
+    // Painted concrete: glossier than tarmac, duller than bodywork.
+    material.roughness = 0.62;
     material.zOffset = LAYER_BIAS.kerb;
-    material.diffuseTexture = texture;
-    material.emissiveColor = new Color3(0.4, 0.4, 0.4);
-    material.specularColor = new Color3(0, 0, 0);
     material.backFaceCulling = CULL_BACK_FACES;
     this.#materials.push(material);
     return material;

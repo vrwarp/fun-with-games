@@ -505,10 +505,14 @@ Full guidance, including where to find CC0 art and how to generate it:
   box says 40x25. Use `groundFootprint()` rather than the ortho extents, and
   clamp against `groundExtent()` — the arena stopped being the edge of the
   world when a circuit's ground grew past it. `docs/RENDERING.md` §9.
-- **A browser with no GPU opens on the cheapest tier.** `isSoftwareRenderer()`
-  reads the WebGL renderer string; a software rasteriser is a different order
-  of magnitude from a slow GPU, not a slower one. This is also why the e2e
-  suite runs on `low` — CI has no acceleration.
+- **A browser with no GPU opens on the cheapest tier — and gets no dressing
+  at all.** `isSoftwareRenderer()` reads the WebGL renderer string; a software
+  rasteriser is a different order of magnitude from a slow GPU, not a slower
+  one. Its scarce resource is fill, so the renderer skips building the
+  trackside scenery and tyre smoke there entirely (`#dressing` in
+  `renderer.ts`) — that is a device fact, independent of the tier picker.
+  This is also why the e2e suite runs on `low` — CI has no acceleration —
+  and why an e2e test can never assert a tree.
 - **Overlays are priced against a very dark road.** Tarmac is a true asphalt
   albedo — about a tenth of the light that lands on it — so an emissive tint
   that looked subtle over the old flat grey now dominates. Budget a new one

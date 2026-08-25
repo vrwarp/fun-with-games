@@ -69,6 +69,39 @@ describe('a single peer', () => {
 
     expect(h.state('solo').pickups).toHaveLength(6);
   });
+
+  it('keeps game time real on a slow renderer and caps a backgrounded return', () => {
+    // Ticks are what game time IS, so the frame-delta ceiling is a promise
+    // with two sides. A machine rendering at one frame a second must still
+    // step a full second of simulation per frame — capping below that would
+    // quietly run the whole game in slow motion, which is how three e2e
+    // tests once found a "1 fps" page had also nearly stopped ticking. And a
+    // tab returning from minutes in the background must NOT replay them all.
+    const h = makeHarness();
+    h.join('solo');
+    h.advance(500);
+
+    const session = h.peer('solo').session;
+    const tickRate = h.config.tickRate;
+    let now = h.network.now;
+
+    const before = session.world.tick;
+    for (let frame = 0; frame < 3; frame++) {
+      now += 1000; // a renderer struggling at 1 fps
+      session.update(now);
+    }
+    // Three seconds of wall time must be three seconds of game time, give or
+    // take the fraction of a tick the accumulator carries.
+    expect(session.world.tick - before).toBeGreaterThanOrEqual(3 * tickRate - 1);
+    expect(session.world.tick - before).toBeLessThanOrEqual(3 * tickRate + 1);
+
+    const parked = session.world.tick;
+    now += 60_000; // backgrounded for a minute
+    session.update(now);
+    const replayed = session.world.tick - parked;
+    expect(replayed).toBeLessThanOrEqual(tickRate + 1);
+    expect(replayed).toBeGreaterThan(0);
+  });
 });
 
 describe('two peers', () => {

@@ -432,7 +432,16 @@ containers, virtual machines, remote desktops and any browser where
 acceleration is off or blocklisted, and without it such a machine opens on the
 most expensive look and spends eight seconds and two rebuilds climbing back
 down. Otherwise a touch screen means a phone, and a phone with few cores or a
-pixel ratio of 3 means a cheap one. Then
+pixel ratio of 3 means a cheap one.
+
+A software rasteriser also gets **no dressing at all** — no trackside scenery,
+no tyre smoke — and that is a device fact rather than a tier (`#dressing` in
+`renderer.ts`), so it holds whatever the picker says. The dressing is a
+handful of draw calls but almost pure fill: screen-covering alpha-tested tree
+cards, drawn again into every shadow cascade, and blended smoke — and fill is
+the one thing a CPU shading fragments cannot pay. Skipping it took the
+software frame from tens of seconds back to workable; every real GPU,
+including a cheap phone's, keeps all of it. Then
 `QualityGovernor` only ever steps **down**, after a sustained shortfall rather
 than one dropped frame. A player who starts too low sees a game that runs
 beautifully and can turn the handsome switches on; a player who starts too high

@@ -147,6 +147,19 @@ export class Renderer {
   #kit: KitViews;
   #track: TrackView;
   #scenery: Scenery | null = null;
+  /**
+   * Whether this device can afford pure dressing — trackside scenery, tyre
+   * smoke. A software rasteriser shades every fragment on the CPU, so its
+   * scarce resource is FILL, and the dressing is almost nothing but fill:
+   * big alpha-tested tree cards over the sky, drawn again into every shadow
+   * cascade, blended smoke over the road. On such a machine (CI containers,
+   * VMs, browsers with acceleration off) the dressing is the difference
+   * between a slideshow and a game, while every real GPU — a cheap phone's
+   * included — keeps all of it. This is a device fact, not a quality tier:
+   * the tier picker must stay honest on software rendering too, and it does,
+   * because what it switches (post passes, shadow quality) still switches.
+   */
+  readonly #dressing: boolean;
   #sun: DirectionalLight | null = null;
   /**
    * How far back the camera sits, relative to the on-foot framing the view
@@ -200,9 +213,12 @@ export class Renderer {
     // Which look this device can afford. Everything visual below asks the
     // tier rather than sniffing the platform itself, so there is one policy
     // and it is unit-tested — see `quality.ts` for why that matters here.
-    this.#governor = new QualityGovernor(
-      options.quality ?? startingTier(readDeviceHints(this.#rendererName())),
-    );
+    // The one exception is the software-rasteriser bit: that is not a tier,
+    // it is a different machine (see `#dressing`), so it is read once here
+    // and never changes with the picker.
+    const hints = readDeviceHints(this.#rendererName());
+    this.#dressing = !hints.softwareRenderer;
+    this.#governor = new QualityGovernor(options.quality ?? startingTier(hints));
 
     this.scene = new Scene(this.engine);
     this.#createSky(options.config);
@@ -225,7 +241,9 @@ export class Renderer {
     const racingScene = options.config.track.enabled && options.config.trackPath.length >= 2;
     if (racingScene) {
       this.#marks = new SurfaceMarks(this.scene, options.config.playerRadius * 1.8);
-      this.#smoke = new TyreSmoke(this.scene);
+      // Marks are one textured quad however hard the race gets; smoke is
+      // blended overdraw per puff, which is dressing by the rule above.
+      if (this.#dressing) this.#smoke = new TyreSmoke(this.scene);
       this.#speedFov = options.config.vehicle.enabled;
       this.#baseFov = this.camera.fov;
     }
@@ -243,12 +261,15 @@ export class Renderer {
     this.#track = new TrackView(this.scene, options.config, {
       normalMaps: qualitySettings(this.#governor.tier).normalMaps,
     });
-    // Everything on the far side of the barrier. Static, tier-independent —
-    // it is a handful of draw calls whatever the device, so there is nothing
-    // for a quality setting to take away.
-    this.#scenery = new Scenery(this.scene, options.config);
-    if (this.#shadows && qualitySettings(this.#governor.tier).cascadedShadows) {
-      this.#scenery.addCastersTo(this.#shadows);
+    // Everything on the far side of the barrier. Static, and cheap in draw
+    // calls on any device — but almost pure fill, which is why it obeys
+    // `#dressing` rather than the tier: the game is complete without it, and
+    // a machine shading fragments on the CPU cannot pay for it.
+    if (this.#dressing) {
+      this.#scenery = new Scenery(this.scene, options.config);
+      if (this.#shadows && qualitySettings(this.#governor.tier).cascadedShadows) {
+        this.#scenery.addCastersTo(this.#shadows);
+      }
     }
     this.#framingScale = options.config.vehicle.enabled
       ? Math.min(1.7, Math.max(1, options.config.playerMaxSpeed / 14))

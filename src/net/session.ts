@@ -18,8 +18,22 @@ import { EMPTY_RENDER_STATE, type RenderState } from './view.js';
 
 const log = createLogger('net:session');
 
-/** Ceiling on catch-up after a tab is backgrounded, to avoid a death spiral. */
-const MAX_FRAME_DELTA_MS = 250;
+/**
+ * Ceiling on how much real time a single frame may hand the simulation.
+ *
+ * Two very different stalls arrive at `update`. A backgrounded tab stops
+ * calling it for minutes, and replaying all of that on return would freeze
+ * the page — so there must be a ceiling. But a struggling renderer — a
+ * software rasteriser, a phone throttled to single-digit frame rates —
+ * stalls for hundreds of milliseconds on EVERY frame, and a ceiling below
+ * its frame time quietly slows the whole game down: ticks are what game
+ * time IS, so capping them is not dropping frames, it is bending the clock.
+ * One second sits comfortably above any frame a machine still playably
+ * renders, while capping an hour in the background to one second of
+ * catch-up. The catch-up itself is cheap — stepping the sim costs a few
+ * hundred microseconds a tick, and catch-up ticks do not render.
+ */
+const MAX_FRAME_DELTA_MS = 1000;
 
 const DEFAULT_PROFILE: PlayerProfile = { name: 'player', color: '#9aa0a6' };
 

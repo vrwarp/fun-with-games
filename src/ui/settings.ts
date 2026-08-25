@@ -1,10 +1,19 @@
 import { VIEW_IDS, VIEW_LABELS, viewsFor, type ModeView } from '../shared/modes.js';
+import { QUALITY_TIERS, isQualityTier, type QualityTier } from '../render/quality.js';
+
+/** What each tier is called where a player can see it. */
+const QUALITY_LABELS: Record<QualityTier, string> = {
+  low: 'Performance',
+  medium: 'Balanced',
+  high: 'Quality',
+};
 
 export interface SettingsValues {
   view: ModeView;
   sprites: boolean;
   muted: boolean;
   haptics: boolean;
+  quality: QualityTier;
 }
 
 export interface SettingsOptions {
@@ -129,6 +138,20 @@ export class Settings {
       if (chosen) this.#emit({ view: chosen });
     });
 
+    const graphics = document.createElement('select');
+    graphics.className = 'settings__select';
+    graphics.dataset['testid'] = 'settings-quality';
+    for (const tier of QUALITY_TIERS) {
+      const option = document.createElement('option');
+      option.value = tier;
+      option.textContent = QUALITY_LABELS[tier];
+      graphics.append(option);
+    }
+    graphics.value = this.#values.quality;
+    graphics.addEventListener('change', () => {
+      if (isQualityTier(graphics.value)) this.#emit({ quality: graphics.value });
+    });
+
     body.append(
       header,
       this.#row(
@@ -142,6 +165,11 @@ export class Settings {
         this.#toggle('settings-sprites', this.#values.sprites, (sprites) =>
           this.#emit({ sprites }),
         ),
+      ),
+      this.#row(
+        'Graphics',
+        'Reflections, anti-aliasing and shading. Lower if the game stutters.',
+        graphics,
       ),
       this.#row(
         'Sound',

@@ -1,4 +1,5 @@
 import { VIEW_IDS, type ModeView } from '../shared/modes.js';
+import { isQualityTier, type QualityTier } from '../render/quality.js';
 
 /**
  * The player's presentation choices, remembered between sessions.
@@ -17,6 +18,7 @@ export interface Preferences {
   readonly sprites?: boolean;
   readonly muted?: boolean;
   readonly haptics?: boolean;
+  readonly quality?: QualityTier;
 }
 
 const STORAGE_KEY = 'fwg:preferences';
@@ -48,6 +50,7 @@ export function readPreferences(): Preferences {
       ...(typeof record['sprites'] === 'boolean' ? { sprites: record['sprites'] } : {}),
       ...(typeof record['muted'] === 'boolean' ? { muted: record['muted'] } : {}),
       ...(typeof record['haptics'] === 'boolean' ? { haptics: record['haptics'] } : {}),
+      ...(isQualityTier(record['quality']) ? { quality: record['quality'] } : {}),
     };
   } catch {
     return {};

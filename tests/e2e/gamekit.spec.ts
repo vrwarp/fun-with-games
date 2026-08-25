@@ -360,6 +360,63 @@ test.describe('racing', () => {
     ).toBeGreaterThan(4);
   });
 
+  test('every graphics tier renders without falling over', async ({ page }) => {
+    // The one thing a browser is needed for here. The tier POLICY is unit
+    // tested — CI renders in software at single digit frame rates whatever is
+    // switched on, so nothing here can tell an expensive look from a cheap one
+    // — but whether a post-processing chain, an SSAO pass and a generated cube
+    // texture actually COMPILE and draw is a question only a real GL context
+    // answers, and getting it wrong is a black screen rather than a slow one.
+    //
+    // Slow on purpose, and the reason is worth writing down because the
+    // obvious diagnosis is wrong. Switching tier is NOT what costs the time:
+    // measured, the scene resumes its normal tick rate about a second after
+    // each change. What costs the time is Playwright TOUCHING THE DOM. Every
+    // actionability check waits for the element to hold still across two
+    // animation frames, and this page renders in software at one or two frames
+    // a second, so a single click can take five seconds. Nine interactions ran
+    // to 51 seconds of a 60 second budget here and over it on a slower runner.
+    //
+    // So the panel is opened once and the picker cycled inside it, which is
+    // four interactions rather than nine — and is the better test anyway,
+    // because a settings change is supposed to apply immediately rather than
+    // on closing the panel.
+    test.slow();
+
+    const errors: string[] = [];
+    page.on('pageerror', (error) => errors.push(error.message));
+
+    await page.goto('/?net=broadcast&autojoin=1&room=e2e-gfx&mode=grandprix&name=Driver');
+    await waitForHud(page);
+    await expect
+      .poll(() => page.evaluate(() => window.__FWG__.tick), { timeout: 30_000 })
+      .toBeGreaterThan(30);
+
+    const picker = page.getByTestId('settings-quality');
+    await page.getByTestId('settings-button').click();
+    await expect(picker).toBeVisible();
+
+    for (const tier of ['low', 'medium', 'high'] as const) {
+      await picker.selectOption(tier);
+
+      // Rebuilding a pipeline tears down render targets and builds new ones.
+      // If any of that throws, the scene stops advancing — so the tick is the
+      // honest check that the renderer survived, not merely that no exception
+      // reached the console.
+      const before = await page.evaluate(() => window.__FWG__.tick);
+      await expect
+        .poll(() => page.evaluate(() => window.__FWG__.tick), { timeout: 30_000 })
+        .toBeGreaterThan(before + 10);
+    }
+
+    // And the panel still closes on the most expensive tier, which is the one
+    // most likely to have left the page wedged.
+    await page.getByTestId('settings-close').click();
+    await expect(picker).toBeHidden();
+
+    expect(errors).toEqual([]);
+  });
+
   test('a grand prix renders, grids up and drives', async ({ page }) => {
     const errors: string[] = [];
     page.on('pageerror', (error) => errors.push(error.message));

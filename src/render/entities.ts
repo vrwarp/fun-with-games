@@ -4,8 +4,6 @@ import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial.js'
 import { CreateCapsule } from '@babylonjs/core/Meshes/Builders/capsuleBuilder.js';
 import { CreatePolyhedron } from '@babylonjs/core/Meshes/Builders/polyhedronBuilder.js';
 import { CreatePlane } from '@babylonjs/core/Meshes/Builders/planeBuilder.js';
-import { CreateBox } from '@babylonjs/core/Meshes/Builders/boxBuilder.js';
-import { CreateCylinder } from '@babylonjs/core/Meshes/Builders/cylinderBuilder.js';
 import type { AbstractMesh } from '@babylonjs/core/Meshes/abstractMesh.js';
 import type { Mesh } from '@babylonjs/core/Meshes/mesh.js';
 import { TransformNode } from '@babylonjs/core/Meshes/transformNode.js';
@@ -14,6 +12,9 @@ import type { ShadowGenerator } from '@babylonjs/core/Lights/Shadows/shadowGener
 import type { SimConfig } from '../sim/config.js';
 import type { RenderPickup, RenderPlayer, RenderState } from '../net/view.js';
 import { createLabelTexture, createSpriteTexture } from './textures.js';
+import { buildCarMesh } from './carmesh.js';
+import { CarFinishes, type FinishOptions } from './carmaterials.js';
+import { pbrSkin, standardSkin, type PlayerSkin } from './skin.js';
 
 export interface EntityViewOptions {
   /**
@@ -34,13 +35,26 @@ export interface EntityViewOptions {
    * own chest.
    */
   firstPerson?: boolean;
+  /**
+   * What the current quality tier will pay for in a car's materials.
+   *
+   * Passed in rather than read here, because the tier is the renderer's
+   * business and this class should not have to know that a phone exists.
+   */
+  finish?: FinishOptions;
 }
 
 interface PlayerView {
   root: TransformNode;
   body: Mesh;
   label: Mesh;
-  material: StandardMaterial;
+  /** The body's surface, whatever kind of material it turned out to be. */
+  skin: PlayerSkin;
+  /**
+   * Set only when the body is a sprite, whose colour lives in a texture rather
+   * than in a colour channel and so has to be swapped rather than assigned.
+   */
+  sprite: StandardMaterial | null;
   name: string;
   color: string;
   baseColor: Color3;
@@ -80,9 +94,14 @@ export class EntityViews {
    * would only be a way for the two to disagree.
    */
   readonly #vehicle: boolean;
-  /** Shared trim materials — every car uses the same dark bodywork. */
-  #carTrim: StandardMaterial | null = null;
-  #carRubber: StandardMaterial | null = null;
+  /**
+   * Carbon, rubber and metal, shared by every car on the grid.
+   *
+   * Built on first use rather than in the constructor, because a mode with no
+   * cars in it should not pay to generate two textures it will never sample.
+   */
+  #finishes: CarFinishes | null = null;
+  #finish: FinishOptions;
 
   /** Prototype meshes; per-entity meshes are clones/instances of these. */
   #playerProto: Mesh;
@@ -103,6 +122,7 @@ export class EntityViews {
     this.#sprites = options.sprites ?? false;
     this.#firstPerson = options.firstPerson ?? false;
     this.#vehicle = config.vehicle.enabled;
+    this.#finish = options.finish ?? { normalMaps: true, clearCoat: true };
 
     this.#playerProto = CreateCapsule(
       'player:proto',
@@ -163,6 +183,27 @@ export class EntityViews {
     this.#firstPerson = firstPerson;
   }
 
+  /**
+   * Rebuilds car materials for a new quality tier.
+   *
+   * Whether a material has a normal map is compiled into its shader, so this
+   * cannot be a property assignment — the materials are thrown away and the
+   * next `sync` builds them again. Cars go with them, because each one holds a
+   * paint material from the bank being discarded.
+   */
+  setFinish(finish: FinishOptions): void {
+    if (
+      finish.normalMaps === this.#finish.normalMaps &&
+      finish.clearCoat === this.#finish.clearCoat
+    ) {
+      return;
+    }
+    this.#finish = finish;
+    this.#rebuildPlayers();
+    this.#finishes?.dispose();
+    this.#finishes = null;
+  }
+
   /** Projects one frame of state onto the scene. */
   sync(state: RenderState, deltaSeconds: number): void {
     this.#spinRadians = (this.#spinRadians + deltaSeconds * 2) % (Math.PI * 2);
@@ -177,7 +218,7 @@ export class EntityViews {
    * over any arena content because it changes the character, not the ground.
    */
   #applyStatus(view: PlayerView, player: RenderPlayer): void {
-    const material = view.material;
+    const skin = view.skin;
     const body = view.body;
 
     const isIt = player.role === 1;
@@ -186,14 +227,14 @@ export class EntityViews {
     const protectedNow = player.effects.includes('safe') || player.effects.includes('shield');
 
     if (knockedOut) {
-      material.alpha = 0.25;
+      skin.setAlpha(0.25);
       body.scaling.setAll(0.8);
       view.label.visibility = 0.25;
       if (this.#sprites) {
-        material.emissiveColor = new Color3(0.4, 0.4, 0.45);
+        skin.setGlow(new Color3(0.4, 0.4, 0.45));
       } else {
-        material.diffuseColor = view.baseColor.scale(0.6);
-        material.emissiveColor = view.baseEmissive.scale(0.2);
+        skin.setBase(view.baseColor.scale(0.6));
+        skin.setGlow(view.baseEmissive.scale(0.2));
       }
       return;
     }
@@ -202,36 +243,36 @@ export class EntityViews {
     view.label.visibility = 1;
 
     // Blinking beats a steady tint for protection: it reads as "temporary".
-    material.alpha = protectedNow ? 0.55 + 0.35 * Math.sin(this.#spinRadians * 6) : 1;
+    skin.setAlpha(protectedNow ? 0.55 + 0.35 * Math.sin(this.#spinRadians * 6) : 1);
 
     // A sprite carries its colour in its texture, so status has to be a
     // multiply on top (emissive) rather than a diffuse swap, which would
     // simply be ignored.
     if (this.#sprites) {
       if (frozen) {
-        material.emissiveColor = Color3.FromHexString('#8fd3e8');
+        skin.setGlow(Color3.FromHexString('#8fd3e8'));
       } else if (isIt) {
         const pulse = 0.6 + 0.4 * Math.sin(this.#spinRadians * 4);
-        material.emissiveColor = new Color3(1, pulse * 0.55, pulse * 0.45);
+        skin.setGlow(new Color3(1, pulse * 0.55, pulse * 0.45));
       } else {
-        material.emissiveColor = new Color3(1, 1, 1);
+        skin.setGlow(new Color3(1, 1, 1));
       }
       return;
     }
 
     if (frozen) {
-      material.diffuseColor = Color3.FromHexString('#a8dadc');
-      material.emissiveColor = Color3.FromHexString('#457b9d').scale(0.5);
+      skin.setBase(Color3.FromHexString('#a8dadc'));
+      skin.setGlow(Color3.FromHexString('#457b9d').scale(0.5));
       return;
     }
 
-    material.diffuseColor = view.baseColor;
+    skin.setBase(view.baseColor);
     if (isIt) {
       // A pulsing hot glow marks the player to run from (or cheer for).
       const pulse = 0.5 + 0.35 * Math.sin(this.#spinRadians * 4);
-      material.emissiveColor = Color3.FromHexString('#e63946').scale(pulse);
+      skin.setGlow(Color3.FromHexString('#e63946').scale(pulse));
     } else {
-      material.emissiveColor = view.baseEmissive;
+      skin.setGlow(view.baseEmissive);
     }
   }
 
@@ -246,10 +287,8 @@ export class EntityViews {
     for (const view of this.#pickups.values()) view.mesh.dispose();
     this.#pickups.clear();
     this.#playerProto.dispose();
-    this.#carTrim?.dispose();
-    this.#carTrim = null;
-    this.#carRubber?.dispose();
-    this.#carRubber = null;
+    this.#finishes?.dispose();
+    this.#finishes = null;
     for (const proto of this.#pickupProtos.values()) {
       proto.material.dispose();
       proto.mesh.dispose();
@@ -310,48 +349,13 @@ export class EntityViews {
     const root = new TransformNode(`player:${player.id}`, this.#scene);
     root.position = new Vector3(player.x, player.y + this.#config.playerRadius * 1.7, player.z);
 
-    const material = new StandardMaterial(`player:${player.id}:mat`, this.#scene);
     const baseColor = Color3.FromHexString(player.color);
-    const baseEmissive = player.isLocal ? baseColor.scale(0.35) : new Color3(0, 0, 0);
+    if (this.#vehicle && !this.#sprites) return this.#createCar(player, root, baseColor);
 
-    // Car paint, not plastic. A tight bright highlight is the whole difference
-    // between a coloured shape and a body panel — it is what tells the eye the
-    // surface is curved and lacquered, and it is one line rather than a second
-    // material or a texture.
-    if (this.#vehicle && !this.#sprites) {
-      material.specularColor = new Color3(0.85, 0.85, 0.9);
-      material.specularPower = 96;
-    }
-
+    const material = new StandardMaterial(`player:${player.id}:mat`, this.#scene);
+    const baseEmissive = this.#glow(player, baseColor);
     let body: Mesh;
-    let wing: Mesh | null = null;
-    const parts: Mesh[] = [];
-
-    if (this.#vehicle && !this.#sprites) {
-      const car = this.#buildCar(player.id, root, material);
-      body = car.chassis;
-      wing = car.wing;
-      parts.push(...car.parts);
-      material.diffuseColor = baseColor;
-      material.specularColor = new Color3(0.45, 0.45, 0.45);
-      material.emissiveColor = baseEmissive;
-      body.material = material;
-      this.#shadows?.addShadowCaster(body);
-      for (const part of parts) this.#shadows?.addShadowCaster(part);
-
-      return {
-        root,
-        body,
-        label: this.#createLabel(player, root),
-        material,
-        name: player.name,
-        color: player.color,
-        baseColor,
-        baseEmissive,
-        wing,
-        parts,
-      };
-    }
+    let sprite: StandardMaterial | null = null;
 
     if (this.#sprites) {
       const height = this.#config.playerHeight * 1.2;
@@ -372,6 +376,7 @@ export class EntityViews {
       // Cut out rather than blend: a blended sprite sorts badly against other
       // sprites and leaves halos where they overlap.
       material.alphaCutOff = 0.4;
+      sprite = material;
     } else {
       body = this.#playerProto.clone(`player:${player.id}:body`, root);
       body.isVisible = true;
@@ -385,148 +390,80 @@ export class EntityViews {
 
     this.#shadows?.addShadowCaster(body);
 
-    const label = this.#createLabel(player, root);
-
     return {
       root,
       body,
-      label,
-      material,
+      label: this.#createLabel(player, root),
+      skin: standardSkin(material),
+      sprite,
       name: player.name,
       color: player.color,
       baseColor,
       baseEmissive,
-      wing,
+      wing: null,
+      parts: [],
+    };
+  }
+
+  /**
+   * A racing car: real geometry, real materials.
+   *
+   * The shape is `carmesh.ts` and the substances are `carmaterials.ts`; what
+   * happens here is only the joining of the two, plus the one thing neither of
+   * them can know — which car belongs to the person holding the phone.
+   */
+  #createCar(player: RenderPlayer, root: TransformNode, baseColor: Color3): PlayerView {
+    const finishes = (this.#finishes ??= new CarFinishes(this.#scene, this.#finish));
+    const paint = finishes.createPaint(`player:${player.id}:paint`, baseColor);
+    const car = buildCarMesh(
+      this.#scene,
+      `player:${player.id}`,
+      root,
+      {
+        paint,
+        carbon: finishes.carbon,
+        rubber: finishes.rubber,
+        metal: finishes.metal,
+      },
+      this.#config.playerRadius,
+    );
+
+    const skin = pbrSkin(paint);
+    const baseEmissive = this.#glow(player, baseColor);
+    skin.setGlow(baseEmissive);
+
+    const parts = [...car.parts];
+    this.#shadows?.addShadowCaster(car.chassis);
+    this.#shadows?.addShadowCaster(car.wing);
+    for (const part of parts) this.#shadows?.addShadowCaster(part);
+
+    return {
+      root,
+      body: car.chassis,
+      label: this.#createLabel(player, root),
+      skin,
+      sprite: null,
+      name: player.name,
+      color: player.color,
+      baseColor,
+      baseEmissive,
+      wing: car.wing,
       parts,
     };
   }
 
   /**
-   * A single-seater from seven boxes and four cylinders.
+   * How much the local player's own body glows, so they can find themselves.
    *
-   * Procedural like everything else here, because the kit must look
-   * intentional on a fresh clone with no art at all. Proportions are all
-   * derived from `playerRadius`, which is what the simulation actually
-   * collides with — so a car that looks like it fits through a gap does.
-   *
-   * The body points along +Z, matching `heading = atan2(vx, vz)`. That is the
-   * one detail a symmetric capsule let everyone ignore and a car cannot.
+   * Far weaker on a car, and deliberately: emissive is light no shading can
+   * touch, so on a physically-based surface it is the one term that can undo
+   * everything the material is doing — a car lit from inside stops reflecting
+   * the sky and starts looking like a lamp in the shape of a car. On a car the
+   * camera is following you anyway; the glow is a hint, not a beacon.
    */
-  #buildCar(
-    id: string,
-    root: TransformNode,
-    chassisMaterial: StandardMaterial,
-  ): { chassis: Mesh; wing: Mesh; parts: Mesh[] } {
-    const scene = this.#scene;
-    const r = this.#config.playerRadius;
-    // The root is lifted so a capsule's middle sits at mid-height; a car has
-    // to be put back down on the road.
-    const floor = -r * 1.7;
-    const parts: Mesh[] = [];
-
-    const trim = this.#trimMaterial();
-    const rubber = this.#rubberMaterial();
-
-    const chassis = CreateBox(
-      `player:${id}:body`,
-      { width: r * 1.15, height: r * 0.55, depth: r * 3.4 },
-      scene,
-    );
-    chassis.parent = root;
-    chassis.position.set(0, floor + r * 0.62, 0);
-    chassis.material = chassisMaterial;
-
-    const nose = CreateBox(
-      `player:${id}:nose`,
-      { width: r * 0.5, height: r * 0.3, depth: r * 1.5 },
-      scene,
-    );
-    nose.parent = root;
-    nose.position.set(0, floor + r * 0.5, r * 2.2);
-    nose.material = chassisMaterial;
-    parts.push(nose);
-
-    const airbox = CreateBox(
-      `player:${id}:airbox`,
-      { width: r * 0.5, height: r * 0.5, depth: r * 0.8 },
-      scene,
-    );
-    airbox.parent = root;
-    airbox.position.set(0, floor + r * 1.15, -r * 0.5);
-    airbox.material = chassisMaterial;
-    parts.push(airbox);
-
-    const frontWing = CreateBox(
-      `player:${id}:fwing`,
-      { width: r * 2.1, height: r * 0.12, depth: r * 0.6 },
-      scene,
-    );
-    frontWing.parent = root;
-    frontWing.position.set(0, floor + r * 0.22, r * 2.9);
-    frontWing.material = trim;
-    parts.push(frontWing);
-
-    // The rear wing is kept as its own handle: opening DRS lays it flat, which
-    // is the only way a rival can see the overtake coming.
-    const wing = CreateBox(
-      `player:${id}:rwing`,
-      { width: r * 1.9, height: r * 0.14, depth: r * 0.7 },
-      scene,
-    );
-    wing.parent = root;
-    wing.position.set(0, floor + r * 1.35, -r * 1.9);
-    wing.material = trim;
-
-    const wheelSpecs: Array<[number, number]> = [
-      [r * 0.85, r * 1.6],
-      [-r * 0.85, r * 1.6],
-      [r * 0.9, -r * 1.35],
-      [-r * 0.9, -r * 1.35],
-    ];
-    wheelSpecs.forEach(([x, z], index) => {
-      const front = index < 2;
-      const radius = front ? r * 0.42 : r * 0.5;
-      const wheel = CreateCylinder(
-        `player:${id}:wheel${index}`,
-        { diameter: radius * 2, height: r * 0.5, tessellation: 12 },
-        scene,
-      );
-      wheel.parent = root;
-      // Cylinders stand up the Y axis by default; a wheel lies on X.
-      wheel.rotation.z = Math.PI / 2;
-      wheel.position.set(x, floor + radius, z);
-      wheel.material = rubber;
-      parts.push(wheel);
-    });
-
-    return { chassis, wing, parts };
-  }
-
-  #trimMaterial(): StandardMaterial {
-    if (!this.#carTrim) {
-      const material = new StandardMaterial('car:trim', this.#scene);
-      material.diffuseColor = Color3.FromHexString('#20242e');
-      // Between the two: dark composite with a sheen, not a mirror.
-      material.specularColor = new Color3(0.35, 0.35, 0.4);
-      material.specularPower = 32;
-      this.#carTrim = material;
-    }
-    return this.#carTrim;
-  }
-
-  #rubberMaterial(): StandardMaterial {
-    if (!this.#carRubber) {
-      const material = new StandardMaterial('car:rubber', this.#scene);
-      material.diffuseColor = Color3.FromHexString('#15171d');
-      // Dead matte, and deliberately the opposite of the bodywork above. A
-      // tyre that catches the light the way a wing does reads as painted
-      // metal, and the contrast between the two is most of what makes either
-      // of them convincing.
-      material.specularColor = new Color3(0.02, 0.02, 0.02);
-      material.specularPower = 4;
-      this.#carRubber = material;
-    }
-    return this.#carRubber;
+  #glow(player: RenderPlayer, baseColor: Color3): Color3 {
+    if (!player.isLocal) return new Color3(0, 0, 0);
+    return baseColor.scale(this.#vehicle && !this.#sprites ? 0.05 : 0.2);
   }
 
   #createLabel(player: RenderPlayer, parent: TransformNode): Mesh {
@@ -551,14 +488,16 @@ export class EntityViews {
     view.name = player.name;
     view.color = player.color;
     view.baseColor = Color3.FromHexString(player.color);
-    view.baseEmissive = player.isLocal ? view.baseColor.scale(0.35) : new Color3(0, 0, 0);
-    if (this.#sprites) {
-      view.material.diffuseTexture?.dispose();
+    view.baseEmissive = this.#glow(player, view.baseColor);
+    if (view.sprite) {
+      // A sprite's colour is in its pixels, so it has to be redrawn rather
+      // than assigned.
+      view.sprite.diffuseTexture?.dispose();
       const texture = createSpriteTexture(this.#scene, player.color);
       texture.hasAlpha = true;
-      view.material.diffuseTexture = texture;
+      view.sprite.diffuseTexture = texture;
     } else {
-      view.material.diffuseColor = view.baseColor;
+      view.skin.setBase(view.baseColor);
     }
 
     const parent = view.root;
@@ -603,7 +542,7 @@ export class EntityViews {
   #disposePlayer(view: PlayerView): void {
     view.label.material?.dispose(true, true);
     view.label.dispose();
-    view.material.dispose();
+    view.skin.dispose();
     view.wing?.dispose();
     for (const part of view.parts) part.dispose();
     view.body.dispose();

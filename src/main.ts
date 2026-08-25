@@ -5,6 +5,7 @@ import { DEFAULT_MODE_ID, isGameModeId, modeInfo, type GameModeId } from './shar
 import { hashStringToSeed } from './sim/rng.js';
 import { modeConfig } from './sim/presets.js';
 import { usesVehicleAxes } from './sim/controls.js';
+import type { QualityTier } from './render/quality.js';
 import { NetSession } from './net/session.js';
 import type { Transport } from './net/transport.js';
 import { createBroadcastTransport } from './net/transports/broadcast.js';
@@ -55,6 +56,8 @@ interface LaunchOptions {
   muted: boolean;
   /** Whether the pedals drive the phone's motor. Never in the URL — see above. */
   haptics: boolean;
+  /** A tier the player picked before. Absent means "ask the device". */
+  quality?: QualityTier;
 }
 
 /**
@@ -105,6 +108,9 @@ async function bootstrap(): Promise<void> {
   // less motion has not asked for a motor running in their palm, and a game
   // that ignores that on first launch has already got it wrong once.
   const haptics = stored.haptics ?? !prefersReducedMotion();
+  // Deliberately not a URL parameter either. What a device can render is a
+  // fact about that device, not about the match somebody was invited to.
+  const quality = stored.quality;
 
   // `?autojoin=1` skips the lobby. Used by the e2e tests, and handy when you
   // want a shareable link that drops straight into a room.
@@ -120,6 +126,7 @@ async function bootstrap(): Promise<void> {
       haptics,
       view,
       sprites,
+      ...(quality !== undefined ? { quality } : {}),
     });
     return;
   }
@@ -138,6 +145,7 @@ async function bootstrap(): Promise<void> {
     sprites,
     muted,
     haptics,
+    ...(quality !== undefined ? { quality } : {}),
   });
 }
 
@@ -176,6 +184,7 @@ async function launch(app: HTMLElement, options: LaunchOptions): Promise<void> {
       obstacles: session.world.obstacles,
       view: resolvedView,
       sprites: options.sprites ?? mode.sprites ?? false,
+      ...(options.quality !== undefined ? { quality: options.quality } : {}),
     });
   } catch (error) {
     log.error('failed to start the 3D engine', error);
@@ -277,6 +286,9 @@ async function launch(app: HTMLElement, options: LaunchOptions): Promise<void> {
       sprites: options.sprites ?? mode.sprites ?? false,
       muted: options.muted,
       haptics: options.haptics,
+      // Whatever the renderer settled on, which is the device's answer when
+      // the player has not given one.
+      quality: renderer.quality,
     },
     ...(haptics?.supported ? { hasHaptics: true } : {}),
     onChange: (values) => {
@@ -284,6 +296,7 @@ async function launch(app: HTMLElement, options: LaunchOptions): Promise<void> {
       renderer?.setSprites(values.sprites);
       audio.setMuted(values.muted);
       haptics?.setEnabled(values.haptics);
+      renderer?.setQuality(values.quality);
       hud.setCanOrbit(viewSpec(values.view).manualControl);
       writePreferences(values);
       // Keep the address bar describing what is actually on screen, so that

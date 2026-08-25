@@ -248,9 +248,11 @@ export function buildCarMesh(
 
   // --- Halo ------------------------------------------------------------------
   // The single most recognisable thing on a modern car, and one torus.
+  // 28 sides: the halo frames the driver's whole view in the cockpit, so
+  // its facets are as close to the eye as the wheel's.
   const halo = CreateTorus(
     `${id}:halo`,
-    { diameter: r * 1.15, thickness: r * 0.11, tessellation: 16 },
+    { diameter: r * 1.15, thickness: r * 0.11, tessellation: 28 },
     scene,
   );
   // A torus is already flat in XZ, which is how a halo sits — a ring around the
@@ -350,9 +352,12 @@ export function buildCarMesh(
   column.rotation.x = -0.35;
   const steeringWheel = new TransformNode(`${id}:swheel`, scene);
   steeringWheel.parent = column;
+  // Tessellated far above the car's usual budget, because nothing else in
+  // the game sits this close to a camera: the cockpit eye is centimetres
+  // away, and at 12 sides the rim read as a dodecagonal nut in every frame.
   const rim = CreateTorus(
     `${id}:swheel:rim`,
-    { diameter: r * 0.56, thickness: r * 0.055, tessellation: 12 },
+    { diameter: r * 0.56, thickness: r * 0.055, tessellation: 36 },
     scene,
   );
   // A torus lies flat; stand it up to face the driver.

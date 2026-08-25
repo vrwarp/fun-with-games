@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { hashed, scatter, tyreWalls, type Placement } from '@/render/scenery.js';
-import { sampleTrack } from '@/sim/track.js';
+import { boardRun, hashed, scatter, tyreWalls, type Placement } from '@/render/scenery.js';
+import { sampleTrack, trackLength, trackPoseAt } from '@/sim/track.js';
 import { modeConfig } from '@/sim/presets.js';
 
 /**
@@ -150,5 +150,45 @@ describe('tyre walls', () => {
     const close: Placement[] = tyreWalls(path, lap, 8, 3);
     const sparse: Placement[] = tyreWalls(path, lap, 8, 12);
     expect(close.length).toBeGreaterThan(sparse.length * 3);
+  });
+});
+
+describe('advertising boards', () => {
+  it('never lets a board corner cross the barrier line', () => {
+    // The regression this pins: a flat 5.6m hoarding placed on a stretch the
+    // straightness test accepted, whose CORNERS still crossed the curved
+    // rail in front of it. Both ends of every board must stay clearly
+    // outside the wall.
+    const config = modeConfig('grandprix');
+    const path = config.trackPath;
+    const lap = trackLength(path);
+    const half = config.track.halfWidth;
+    const wall = half + config.track.barrierRunoff;
+    const offset = half + Math.max(config.track.barrierRunoff, 3) + 1;
+
+    for (const side of [1, -1] as const) {
+      for (const board of boardRun(path, lap, offset * side, 7, side)) {
+        // A hoarding's width runs parallel to the road, so its corners sit
+        // along the track tangent at its centre — derived from the path
+        // itself rather than from the yaw convention, which this test once
+        // guessed wrong. 2.9 covers the half-width plus a corner's grace.
+        const progress = sampleTrack(path, board.x, board.z).progress;
+        const pose = trackPoseAt(path, progress);
+        for (const end of [-1, 1]) {
+          const x = board.x + end * 2.9 * pose.dirX;
+          const z = board.z + end * 2.9 * pose.dirZ;
+          expect(sampleTrack(path, x, z).lateral).toBeGreaterThan(wall + 0.25);
+        }
+      }
+    }
+  });
+
+  it('still finds somewhere to advertise', () => {
+    // A clearance rule strict enough to reject every placement would pass
+    // the test above while silently emptying the circuit.
+    const config = modeConfig('grandprix');
+    const lap = trackLength(config.trackPath);
+    const offset = config.track.halfWidth + Math.max(config.track.barrierRunoff, 3) + 1;
+    expect(boardRun(config.trackPath, lap, offset, 7, 1).length).toBeGreaterThan(3);
   });
 });

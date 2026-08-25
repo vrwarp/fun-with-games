@@ -272,7 +272,12 @@ export function boardRun(
 ): Placement[] {
   if (path.length < 2 || lap <= 0 || spacing <= 0) return [];
   const out: Placement[] = [];
-  const chord = 5;
+  // The chord must COVER the board (5.6m wide, so ±2.8 and change), and the
+  // threshold is tight: a flat hoarding spanning even gentle curvature
+  // sticks its corners across the rail line. Both numbers were looser once,
+  // and the corners of every board near a curve entry poked through the
+  // corrugated wall in front of it.
+  const chord = 7;
   const steps = Math.max(4, Math.floor(lap / spacing));
   for (let i = 0; i < steps; i++) {
     const at = (lap * i) / steps;
@@ -280,7 +285,7 @@ export function boardRun(
     const ahead = trackPoseAt(path, at + chord);
     const cross = behind.dirX * ahead.dirZ - behind.dirZ * ahead.dirX;
     const dot = behind.dirX * ahead.dirX + behind.dirZ * ahead.dirZ;
-    if (Math.abs(Math.atan2(cross, dot)) > 0.09) continue;
+    if (Math.abs(Math.atan2(cross, dot)) > 0.05) continue;
 
     const pose = trackPoseAt(path, at);
     out.push({
@@ -352,6 +357,8 @@ export class Scenery {
   #textures: DynamicTexture[] = [];
   /** Everything that should throw a shadow, for the renderer to register. */
   #casters: Mesh[] = [];
+  /** One bark material shared by every species' trunk. */
+  #bark: PBRMaterial | null = null;
 
   constructor(scene: Scene, config: SimConfig) {
     if (!config.track.enabled || config.trackPath.length < 2) return;
@@ -414,9 +421,13 @@ export class Scenery {
       { text: 'VELOCE', background: '#b32531', foreground: '#f4f1ea' },
       { text: 'TARMAC PRO', background: '#12386b', foreground: '#e9edf3' },
     ];
+    // A metre behind the rail, not flush against it: the wall ribbon bends
+    // smoothly while a board is flat, and near the entry to a curve the two
+    // normals disagree by enough centimetres to push a flush board's corner
+    // through the corrugation.
     const runs = [
-      ...boardRun(path, lap, barrier + 0.4, 7, 1),
-      ...boardRun(path, lap, -(barrier + 0.4), 7, -1),
+      ...boardRun(path, lap, barrier + 1, 7, 1),
+      ...boardRun(path, lap, -(barrier + 1), 7, -1),
     ];
     boardSpecs.forEach((spec, index) => {
       const share = runs.filter((_, i) => i % boardSpecs.length === index);
@@ -603,10 +614,32 @@ export class Scenery {
       return card;
     });
 
-    const merged = Mesh.MergeMeshes(cards, true, true, undefined, false, false);
+    // A real trunk under the cards. The texture draws one, but a card's
+    // trunk vanishes the moment the card turns edge-on — walk around a tree
+    // and its base flickered between "trunk" and "daylight straight
+    // through". A seven-sided cylinder is the cheapest object in the scene
+    // and the only honest fix: solid from every bearing, and it carries the
+    // canopy visually where the alpha cutout thins.
+    if (!this.#bark) {
+      this.#bark = this.#material(scene, 'scenery:bark', new Color3(0.21, 0.15, 0.1), 0.95);
+    }
+    const trunk = CreateCylinder(
+      `scenery:pinetrunk${index}`,
+      {
+        height: species.height * 0.36,
+        diameterBottom: species.height * 0.055,
+        diameterTop: species.height * 0.03,
+        tessellation: 7,
+      },
+      scene,
+    );
+    trunk.position.y = species.height * 0.18;
+    trunk.bakeCurrentTransformIntoVertices();
+    trunk.material = this.#bark;
+
+    const merged = Mesh.MergeMeshes([...cards, trunk], true, true, undefined, false, true);
     if (!merged) return this.#keep(cards[0] as Mesh);
     merged.name = `scenery:pine${index}`;
-    merged.material = material;
     return this.#keep(merged);
   }
 
@@ -682,14 +715,17 @@ export class Scenery {
       0.6,
     );
 
+    // The sign sits with its bottom edge a clear quarter-metre above the
+    // 1.1m rail in front of it, so from the cockpit's low eye the board
+    // reads as mounted BEHIND the wall instead of growing out of it.
     const face = CreatePlane('scenery:board', { width: 5.6, height: 1.05 }, scene);
-    face.position.y = 1.72;
+    face.position.y = 1.95;
     face.bakeCurrentTransformIntoVertices();
     face.material = material;
 
     const back = CreatePlane('scenery:board:back', { width: 5.6, height: 1.05 }, scene);
     back.rotation.y = Math.PI;
-    back.position.y = 1.72;
+    back.position.y = 1.95;
     back.bakeCurrentTransformIntoVertices();
     back.material = backing;
 
@@ -699,10 +735,10 @@ export class Scenery {
     const legs = [-2.2, 2.2].map((x, index) => {
       const leg = CreateBox(
         `scenery:board:leg${index}`,
-        { width: 0.16, height: 1.25, depth: 0.1 },
+        { width: 0.16, height: 1.5, depth: 0.1 },
         scene,
       );
-      leg.position.set(x, 0.625, 0.02);
+      leg.position.set(x, 0.75, 0.02);
       leg.bakeCurrentTransformIntoVertices();
       leg.material = backing;
       return leg;

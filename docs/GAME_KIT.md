@@ -294,7 +294,18 @@ right trade, because a shunt is exactly the moment a player expects to be
 shoved around by the world, and predicting it against a stale rival position
 would invent contacts that never happened.
 
-### Phases — `systems/phase.ts`, config `phases`
+### Tyre stacks — `systems/tyrestacks.ts`, no config section
+
+Any mode with a circuit gets tyre-wall stacks on the outside of its corners,
+and they are **bodies, not scenery**: much lighter than a car, so clipping one
+costs a thump of speed and sends the stack flying, shoving its neighbours as
+it goes. Friction grinds a loose stack to a dead stop; a round reset stands
+the whole wall back up. Placement is a pure function of the circuit
+(`tyreStackSpots`), so their homes never travel — snapshots carry only where
+the racing has since left each stack, and the renderer derives the topple and
+roll from that displacement alone. Drawn by `src/render/tyrestacks.ts` on
+every device (they are collidable, so they cannot hide behind the
+software-rasteriser dressing gate the way the trees do).
 
 The match state machine: `lobby → countdown → playing → ended → countdown…`.
 Entering `countdown` resets the round (scores, hp, positions, ball, items,

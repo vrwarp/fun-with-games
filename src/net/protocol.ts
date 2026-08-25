@@ -10,6 +10,7 @@ import {
   type PlayerInput,
   type PlayerProfile,
   type ProjectileState,
+  type TyreStackState,
   type WorldSnapshot,
   type ZoneRuntimeState,
 } from '../sim/types.js';
@@ -26,8 +27,9 @@ import {
  * v3: vertical axis — heights and vertical velocity for players, pickups,
  * projectiles and items, plus jump bookkeeping.
  * v4: racing — per-player lap timing (lap start, last lap, best lap).
+ * v5: tyre stacks as bodies — positions and velocities in snapshots.
  */
-export const PROTOCOL_VERSION = 4;
+export const PROTOCOL_VERSION = 5;
 
 export type MessageType = 'hello' | 'input' | 'snapshot' | 'bye';
 
@@ -83,6 +85,7 @@ const MAX_PICKUPS = 256;
 const MAX_PROJECTILES = 256;
 const MAX_ITEMS = 32;
 const MAX_ZONES = 64;
+const MAX_TYRE_STACKS = 512;
 const MAX_TEAMS = 16;
 const MAX_EFFECTS = 16;
 const EFFECT_ID_PATTERN = /^[a-z][a-z0-9_-]{0,23}$/;
@@ -152,6 +155,14 @@ export function encodeSnapshot(snapshot: WorldSnapshot): WorldSnapshot {
       y: quantize(i.y),
     })),
     zones: snapshot.zones.map((z) => ({ ...z })),
+    // Centimetres are plenty for a 1.6-metre prop, and the coarser grid keeps
+    // a parked wall of them cheap on the wire — every value is a short "0".
+    tyreStacks: snapshot.tyreStacks.map((s) => ({
+      x: quantize(s.x, 2),
+      z: quantize(s.z, 2),
+      vx: quantize(s.vx, 2),
+      vz: quantize(s.vz, 2),
+    })),
   };
 }
 
@@ -244,7 +255,8 @@ export function decodeWorldSnapshot(snapshot: Record<string, unknown>): WorldSna
   const projectiles = decodeArray(snapshot['projectiles'], MAX_PROJECTILES, decodeProjectile);
   const items = decodeArray(snapshot['items'], MAX_ITEMS, decodeItem);
   const zones = decodeArray(snapshot['zones'], MAX_ZONES, decodeZone);
-  if (!players || !pickups || !projectiles || !items || !zones) return null;
+  const tyreStacks = decodeArray(snapshot['tyreStacks'], MAX_TYRE_STACKS, decodeTyreStack);
+  if (!players || !pickups || !projectiles || !items || !zones || !tyreStacks) return null;
 
   const teamScores = decodeTeamScores(snapshot['teamScores']);
   if (!teamScores) return null;
@@ -267,6 +279,7 @@ export function decodeWorldSnapshot(snapshot: Record<string, unknown>): WorldSna
     projectiles,
     items,
     zones,
+    tyreStacks,
   };
 }
 
@@ -456,6 +469,19 @@ function decodeBall(raw: unknown): BallState | null {
     vx: raw['vx'] as number,
     vz: raw['vz'] as number,
     lastTouchId: lastTouchId.slice(0, 64),
+  };
+}
+
+function decodeTyreStack(raw: unknown): TyreStackState | null {
+  if (!isRecord(raw)) return null;
+  for (const key of ['x', 'z', 'vx', 'vz'] as const) {
+    if (!isFiniteNumber(raw[key])) return null;
+  }
+  return {
+    x: raw['x'] as number,
+    z: raw['z'] as number,
+    vx: raw['vx'] as number,
+    vz: raw['vz'] as number,
   };
 }
 

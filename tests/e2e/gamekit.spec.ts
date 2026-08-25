@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { regionLevel } from './pixels.js';
 
 /**
  * Game-kit end-to-end coverage: modes launch, phases run, bots fill rooms,
@@ -415,6 +416,17 @@ test.describe('racing', () => {
     await expect(picker).toBeHidden();
 
     expect(errors).toEqual([]);
+
+    // The sky is still a sky. The tick assertions above cannot see the
+    // picture, and the failure they once missed was exactly that shape:
+    // switching to the high tier mid-game handed the sky dome's depth to the
+    // new SSAO pass, which occluded the whole backdrop to black while every
+    // tick kept advancing. The cockpit's upper-right quadrant is open sky in
+    // this mode; black reads ~10, a healthy sky well over 100.
+    const frame = await page.screenshot({ timeout: 60_000 });
+    expect(regionLevel(frame, { left: 0.72, top: 0.1, right: 0.95, bottom: 0.2 })).toBeGreaterThan(
+      60,
+    );
   });
 
   test('a grand prix renders, grids up and drives', async ({ page }) => {

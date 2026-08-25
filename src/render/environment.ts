@@ -424,6 +424,14 @@ export function createSkyDome(scene: Scene, colours: SkyColours = DAYLIGHT): Mes
   material.reflectionTexture = texture;
   material.diffuseColor = Color3.Black();
   material.specularColor = Color3.Black();
+  // The dome must never write depth. It LOOKS infinitely far, but it is a
+  // 100-unit box, and any depth-consuming effect that learns that treats the
+  // sky as a nearby inside-out surface — SSAO's exact failure: switch to the
+  // high tier mid-game and the prepass picks up the box faces at ~50 units,
+  // the occlusion integral runs against their inverted normals, and the whole
+  // sky multiplies to black. With no depth written, sky pixels keep the far
+  // clear value and every such effect's far-plane guard passes them through.
+  material.disableDepthWrite = true;
 
   const mesh = CreateBox('sky:dome', { size: 100 }, scene);
   mesh.material = material;

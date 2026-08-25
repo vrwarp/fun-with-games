@@ -268,6 +268,20 @@ export interface BallState {
   lastTouchId: PlayerId;
 }
 
+/**
+ * One trackside tyre stack, as a body.
+ *
+ * Identified by index: the roster is fixed at construction, derived from the
+ * circuit by `tyreStackSpots()`, so a stack's home never needs to travel —
+ * only where the racing has since shoved it. Empty on modes with no track.
+ */
+export interface TyreStackState {
+  x: number;
+  z: number;
+  vx: number;
+  vz: number;
+}
+
 export interface ProjectileState {
   id: number;
   ownerId: PlayerId;
@@ -338,6 +352,7 @@ export interface WorldSnapshot {
   projectiles: ProjectileState[];
   items: ItemState[];
   zones: ZoneRuntimeState[];
+  tyreStacks: TyreStackState[];
 }
 
 // ---------------------------------------------------------------------------

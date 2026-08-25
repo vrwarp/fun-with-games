@@ -45,6 +45,7 @@ import { finishOptions } from './carmaterials.js';
 import { KitViews } from './kitviews.js';
 import { TrackView } from './trackview.js';
 import { Scenery } from './scenery.js';
+import { TyreStackView } from './tyrestacks.js';
 import {
   applyView,
   groundFootprint,
@@ -149,6 +150,12 @@ export class Renderer {
   #kit: KitViews;
   #track: TrackView;
   #scenery: Scenery | null = null;
+  /**
+   * Trackside tyre stacks, fed from the simulation every frame. NOT part of
+   * `#scenery` and NOT behind the dressing gate: a stack is a body the cars
+   * collide with, so a device that hides it would be hiding gameplay.
+   */
+  #tyreStacks: TyreStackView | null = null;
   /**
    * Whether this device can afford pure dressing — trackside scenery, tyre
    * smoke. A software rasteriser shades every fragment on the CPU, so its
@@ -272,6 +279,13 @@ export class Renderer {
         this.#scenery.setReceiveShadows(true);
       }
     }
+    if (racingScene) {
+      this.#tyreStacks = new TyreStackView(this.scene, options.config);
+      if (this.#shadows && qualitySettings(this.#governor.tier).cascadedShadows) {
+        this.#tyreStacks.addCastersTo(this.#shadows);
+        this.#tyreStacks.setReceiveShadows(true);
+      }
+    }
     this.#framingScale = options.config.vehicle.enabled
       ? Math.min(1.7, Math.max(1, options.config.playerMaxSpeed / 14))
       : 1;
@@ -313,6 +327,7 @@ export class Renderer {
 
     this.#entities.sync(state, deltaSeconds);
     this.#kit.sync(state, deltaSeconds);
+    this.#tyreStacks?.sync(state.tyreStacks);
     this.#sinceManualCamera += deltaSeconds;
 
     if (this.#marks || this.#smoke) {
@@ -415,6 +430,7 @@ export class Renderer {
     this.#canvas.removeEventListener('wheel', this.#onManualCamera);
     this.#track.dispose();
     this.#scenery?.dispose();
+    this.#tyreStacks?.dispose();
     this.#kit.dispose();
     this.#entities.dispose();
     this.scene.dispose();
@@ -782,6 +798,8 @@ export class Renderer {
     const cascading = this.#shadows !== null && qualitySettings(tier).cascadedShadows;
     if (this.#shadows && cascading) this.#scenery?.addCastersTo(this.#shadows);
     this.#scenery?.setReceiveShadows(cascading);
+    if (this.#shadows && cascading) this.#tyreStacks?.addCastersTo(this.#shadows);
+    this.#tyreStacks?.setReceiveShadows(cascading);
 
     this.#entities.setFinish(finishOptions(tier));
     this.#track.dispose();

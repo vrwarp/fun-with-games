@@ -269,6 +269,7 @@ export class Renderer {
       this.#scenery = new Scenery(this.scene, options.config);
       if (this.#shadows && qualitySettings(this.#governor.tier).cascadedShadows) {
         this.#scenery.addCastersTo(this.#shadows);
+        this.#scenery.setReceiveShadows(true);
       }
     }
     this.#framingScale = options.config.vehicle.enabled
@@ -778,9 +779,9 @@ export class Renderer {
     this.#shadows = this.#createShadows(tier);
     this.#entities.setShadows(this.#shadows);
     this.#kit.setShadows(this.#shadows);
-    if (this.#shadows && qualitySettings(tier).cascadedShadows) {
-      this.#scenery?.addCastersTo(this.#shadows);
-    }
+    const cascading = this.#shadows !== null && qualitySettings(tier).cascadedShadows;
+    if (this.#shadows && cascading) this.#scenery?.addCastersTo(this.#shadows);
+    this.#scenery?.setReceiveShadows(cascading);
 
     this.#entities.setFinish(finishOptions(tier));
     this.#track.dispose();

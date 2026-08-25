@@ -85,6 +85,20 @@ describe('scattering trees', () => {
     expect(scatter(bounds, 5, 11).length).toBeGreaterThan(200);
   });
 
+  it('thins toward the edge instead of stopping on a line', () => {
+    // A forest that ends dead on the scatter bounds draws the edge of the
+    // world as a silhouette; the taper is what lets the fog explain it.
+    const cell = 5;
+    const trees = scatter(bounds, cell, 11);
+    const edgeOf = (tree: Placement): number =>
+      Math.min(bounds.halfExtentX - Math.abs(tree.x), bounds.halfExtentZ - Math.abs(tree.z));
+    const rim = trees.filter((tree) => edgeOf(tree) < cell).length;
+    const inner = trees.filter((tree) => edgeOf(tree) >= cell * 3 && edgeOf(tree) < cell * 4);
+    // The rim band and the reference band cover a similar area; the rim must
+    // be markedly thinner, not merely unlucky.
+    expect(rim).toBeLessThan(inner.length * 0.5);
+  });
+
   it('is the same wood every run, and a different one per salt', () => {
     const a = scatter(bounds, 5, 11);
     const b = scatter(bounds, 5, 11);
@@ -97,10 +111,10 @@ describe('scattering trees', () => {
     const trees = scatter(bounds, 5, 11);
     const scales = trees.map((tree) => tree.scale);
     expect(Math.max(...scales) - Math.min(...scales)).toBeGreaterThan(0.5);
-    // Every species must actually get planted, or two of the three prototypes
+    // Every species must actually get planted, or some of the prototypes
     // are dead weight in the scene graph.
-    const species = new Set(trees.map((tree) => Math.floor(tree.tint * 3)));
-    expect(species).toEqual(new Set([0, 1, 2]));
+    const species = new Set(trees.map((tree) => Math.floor(tree.tint * 5)));
+    expect(species).toEqual(new Set([0, 1, 2, 3, 4]));
   });
 });
 

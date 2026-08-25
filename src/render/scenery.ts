@@ -4,8 +4,9 @@ import { CreateCylinder } from '@babylonjs/core/Meshes/Builders/cylinderBuilder.
 import { CreatePlane } from '@babylonjs/core/Meshes/Builders/planeBuilder.js';
 import { CreateTorus } from '@babylonjs/core/Meshes/Builders/torusBuilder.js';
 import { PBRMaterial } from '@babylonjs/core/Materials/PBR/pbrMaterial.js';
+import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial.js';
 import { Color3 } from '@babylonjs/core/Maths/math.color.js';
-import type { DynamicTexture } from '@babylonjs/core/Materials/Textures/dynamicTexture.js';
+import { DynamicTexture } from '@babylonjs/core/Materials/Textures/dynamicTexture.js';
 import type { Material } from '@babylonjs/core/Materials/material.js';
 import type { Scene } from '@babylonjs/core/scene.js';
 import type { SimConfig } from '../sim/config.js';
@@ -68,6 +69,12 @@ const TREE_SPECIES: ReadonlyArray<{ leaf: Color3; height: number; width: number 
   { leaf: new Color3(0.16, 0.3, 0.14), height: 8.4, width: 4.4 },
   { leaf: new Color3(0.22, 0.34, 0.13), height: 6.2, width: 5.2 },
   { leaf: new Color3(0.18, 0.28, 0.17), height: 7.2, width: 4.8 },
+  // Two more buckets whose job is VALUE, not shape: a markedly darker tall
+  // spruce and a paler yellow-green mid. Five value steps across the stand
+  // is what stops a hillside of trees averaging into one flat green — each
+  // tree next to a different-toned neighbour reads as its own object.
+  { leaf: new Color3(0.11, 0.22, 0.11), height: 9, width: 4.2 },
+  { leaf: new Color3(0.27, 0.38, 0.16), height: 6.8, width: 5 },
 ];
 
 /** One instance: where it stands, which way it faces, how big it is. */
@@ -141,6 +148,14 @@ export function scatter(bounds: ScatterBounds, cell: number, salt: number): Plac
       if (bounds.trackPath.length >= 2) {
         if (sampleTrack(bounds.trackPath, x, z).lateral < bounds.clearance) continue;
       }
+
+      // Taper the wood toward the edge of the scatter instead of stopping
+      // dead: a forest that ends on a line reads as the edge of the WORLD,
+      // and the fog can only soften a silhouette, not explain one. Over the
+      // last few cells the dropout rises until the rim is almost bare.
+      const edge = Math.min(bounds.halfExtentX - Math.abs(x), bounds.halfExtentZ - Math.abs(z));
+      const keep = Math.min(1, Math.max(0, edge / (cell * 3)));
+      if (pick < 0.34 + (1 - keep) * 0.6) continue;
 
       out.push({
         x,
@@ -410,14 +425,31 @@ export class Scenery {
     });
 
     // Marshal posts, sparser than the corners so they read as punctuation.
+    const marshalSpots = tyreWalls(path, lap, barrier + 2.2, 26).map((placement) => ({
+      ...placement,
+      scale: 1,
+    }));
     const marshals = instance(
       this.#marshalPost(
         scene,
         this.#material(scene, 'scenery:post', new Color3(0.55, 0.56, 0.6), 0.6),
       ),
-      tyreWalls(path, lap, barrier + 2.2, 26).map((placement) => ({ ...placement, scale: 1 })),
+      marshalSpots,
     );
     if (marshals) this.#casters.push(this.#keep(marshals));
+
+    // Contact shadows: a soft dark disc under everything that stands. One
+    // merged batch, one draw. Cheaper than ambient occlusion and better at
+    // the one thing that matters — saying "this object is ON the ground,
+    // not floating near it" — because it works on every tier and never
+    // depends on a screen-space pass finding the geometry.
+    this.#contacts(scene, [
+      ...trees.map((tree) => ({ ...tree, radius: 1.7 * tree.scale })),
+      ...stacks.map((stack) => ({ ...stack, radius: 1.4 })),
+      ...posts.map((post) => ({ ...post, radius: 0.4 })),
+      ...runs.map((run) => ({ ...run, radius: 2.6 })),
+      ...marshalSpots.map((spot) => ({ ...spot, radius: 0.9 })),
+    ]);
   }
 
   /**
@@ -434,6 +466,21 @@ export class Scenery {
     }
   }
 
+  /**
+   * Whether the dressing also RECEIVES shadows.
+   *
+   * On the cascade tier trees shade trees, and that is what turns the wood
+   * from a flat green mass into a volume — every card in it used to resolve
+   * to the same lambert value. The blob tiers keep it off: their map has no
+   * scenery in it, so sampling it from hundreds of cards would spend
+   * fragment work to learn nothing.
+   */
+  setReceiveShadows(on: boolean): void {
+    for (const mesh of this.#meshes) {
+      if (!mesh.isDisposed()) mesh.receiveShadows = on;
+    }
+  }
+
   dispose(): void {
     for (const mesh of this.#meshes) mesh.dispose();
     for (const material of this.#materials) material.dispose();
@@ -445,6 +492,60 @@ export class Scenery {
   }
 
   // -------------------------------------------------------------- internals
+
+  /** One merged batch of soft dark discs under every placement. */
+  #contacts(scene: Scene, spots: ReadonlyArray<Placement & { radius: number }>): void {
+    if (spots.length === 0) return;
+
+    const size = 64;
+    const texture = new DynamicTexture(
+      'scenery:contact',
+      { width: size, height: size },
+      scene,
+      false,
+    );
+    texture.hasAlpha = true;
+    const ctx = texture.getContext() as unknown as CanvasRenderingContext2D;
+    const half = size / 2;
+    const gradient = ctx.createRadialGradient(half, half, 2, half, half, half);
+    gradient.addColorStop(0, 'rgba(8, 10, 8, 0.5)');
+    gradient.addColorStop(0.65, 'rgba(8, 10, 8, 0.2)');
+    gradient.addColorStop(1, 'rgba(8, 10, 8, 0)');
+    ctx.clearRect(0, 0, size, size);
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, size, size);
+    texture.update();
+    this.#textures.push(texture);
+
+    const material = new StandardMaterial('scenery:contact:mat', scene);
+    material.diffuseTexture = texture;
+    material.useAlphaFromDiffuseTexture = true;
+    material.emissiveColor = new Color3(0.05, 0.06, 0.05);
+    material.disableLighting = true;
+    material.zOffset = -0.1;
+    material.backFaceCulling = false;
+    this.#materials.push(material);
+
+    const proto = CreatePlane('scenery:contact:proto', { size: 2 }, scene);
+    proto.rotation.x = Math.PI / 2;
+    proto.bakeCurrentTransformIntoVertices();
+    proto.material = material;
+
+    const copies = spots.map((spot, index) => {
+      const copy = proto.clone(`scenery:contact:${index}`);
+      copy.scaling.setAll(spot.radius);
+      copy.position.set(spot.x, 0.015, spot.z);
+      copy.computeWorldMatrix(true);
+      return copy;
+    });
+    proto.dispose();
+    const merged = Mesh.MergeMeshes(copies, true, true, undefined, false, false);
+    if (!merged) return;
+    merged.name = 'scenery:contacts';
+    merged.isPickable = false;
+    merged.receiveShadows = false;
+    this.#keep(merged);
+  }
 
   #material(scene: Scene, name: string, albedo: Color3, roughness: number): PBRMaterial {
     const material = new PBRMaterial(name, scene);
@@ -592,12 +693,22 @@ export class Scenery {
     back.bakeCurrentTransformIntoVertices();
     back.material = backing;
 
-    const legs = CreateBox('scenery:board:leg', { width: 5.2, height: 0.5, depth: 0.08 }, scene);
-    legs.position.y = 0.95;
-    legs.bakeCurrentTransformIntoVertices();
-    legs.material = backing;
+    // Two posts that actually reach the ground. The first cut was a plate
+    // spanning 0.7-1.2m, which left every hoarding floating on 70cm of air —
+    // the kind of wrongness nobody names but everybody feels.
+    const legs = [-2.2, 2.2].map((x, index) => {
+      const leg = CreateBox(
+        `scenery:board:leg${index}`,
+        { width: 0.16, height: 1.25, depth: 0.1 },
+        scene,
+      );
+      leg.position.set(x, 0.625, 0.02);
+      leg.bakeCurrentTransformIntoVertices();
+      leg.material = backing;
+      return leg;
+    });
 
-    const merged = Mesh.MergeMeshes([face, back, legs], true, true, undefined, false, true);
+    const merged = Mesh.MergeMeshes([face, back, ...legs], true, true, undefined, false, true);
     if (!merged) return this.#keep(face);
     merged.name = 'scenery:board';
     return this.#keep(merged);

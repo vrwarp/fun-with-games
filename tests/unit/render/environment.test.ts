@@ -4,6 +4,7 @@ import {
   SUN_TRAVEL,
   cloudAt,
   directionAt,
+  ridgeHeightAt,
   skyColourAt,
   skyRadianceAt,
 } from '@/render/environment.js';
@@ -216,5 +217,44 @@ describe('the cloud deck', () => {
     const open = skyRadianceAt(sun[0], sun[1], sun[2]);
     const hidden = skyRadianceAt(sun[0], sun[1], sun[2], overcast);
     expect(hidden.r).toBeLessThan(open.r);
+  });
+});
+
+describe('the far ridge', () => {
+  it('stays inside the lowest band of sky', () => {
+    // The ridge is a painted backdrop on a camera-locked dome: it never
+    // parallaxes, which only reads as honest for something kilometres away
+    // — and kilometres away means barely above the horizon.
+    for (let i = 0; i < 48; i++) {
+      const azimuth = (Math.PI * 2 * i) / 48 - Math.PI;
+      const height = ridgeHeightAt(Math.cos(azimuth), Math.sin(azimuth));
+      expect(height).toBeGreaterThanOrEqual(0.006);
+      expect(height).toBeLessThanOrEqual(0.032);
+    }
+  });
+
+  it('wraps seamlessly across the azimuth seam', () => {
+    // atan2 flips sign at the negative-x axis. A profile that did not wrap
+    // there would stand a cliff into one compass direction of every scene.
+    const above = ridgeHeightAt(-1, 1e-9);
+    const below = ridgeHeightAt(-1, -1e-9);
+    expect(above).toBeCloseTo(below, 6);
+  });
+
+  it('occludes the sky it stands in front of', () => {
+    // Sample a direction just under the ridge line and one well above it:
+    // the low one must be tinted toward the ridge, not the plain gradient.
+    const azimuth = 1.1;
+    const x = Math.cos(azimuth);
+    const z = Math.sin(azimuth);
+    const height = ridgeHeightAt(x, z);
+    const inRidge = skyRadianceAt(x, height * 0.3, z);
+    const plain = skyColourAt(height * 0.3);
+    const aboveRidge = skyRadianceAt(x, 0.2, z);
+    const plainAbove = skyColourAt(0.2);
+    // Below the line the ridge shifts the colour; above it the gradient is
+    // untouched (the sun sits at a different azimuth, so no glare here).
+    expect(Math.abs(inRidge.g - plain.g) + Math.abs(inRidge.b - plain.b)).toBeGreaterThan(0.02);
+    expect(aboveRidge.b).toBeCloseTo(plainAbove.b, 1);
   });
 });

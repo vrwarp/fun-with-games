@@ -171,18 +171,57 @@ export function createLabelTexture(scene: Scene, text: string, color: string): D
  * with no binary assets, and a kerb is four rectangles.
  */
 export function createKerbTexture(scene: Scene): DynamicTexture {
-  const width = 64;
-  const height = 16;
+  const width = 256;
+  const height = 64;
   const texture = new DynamicTexture('kerb', { width, height }, scene, false);
   const ctx = context2d(texture);
 
   // Split along the texture's WIDTH, because a kerb ribbon runs its `u` axis
   // down the road: stripes have to alternate as you drive past them, not
   // across the 0.9 metres of paint.
-  ctx.fillStyle = '#f1f1f1';
+  //
+  // Weathered, not poster-fresh. The old two-colour chip (#e63946 on
+  // #f1f1f1) was the highest-chroma object in every frame — brighter than
+  // the cars — and paint that has been rained on and driven over for a
+  // season is nearer brick than pillar-box. The valleys between the ribs
+  // collect grime (phase-matched to `kerbRibs`, which puts four ribs along
+  // u), the outer edge darkens as a painted chamfer, and a few rubber
+  // scuffs cross where tyres actually touch.
+  ctx.fillStyle = '#d8d3c8';
   ctx.fillRect(0, 0, width, height);
-  ctx.fillStyle = '#e63946';
+  ctx.fillStyle = '#b0363c';
   ctx.fillRect(0, 0, width / 2, height);
+
+  // Grime in the rib valleys. kerbRibs' triangle wave rises and falls once
+  // per quarter of the tile, with its valleys at u = 0, 1/4, 1/2, 3/4.
+  const ribs = 4;
+  for (let rib = 0; rib <= ribs; rib++) {
+    const at = (width * rib) / ribs;
+    const grime = ctx.createLinearGradient(at - 10, 0, at + 10, 0);
+    grime.addColorStop(0, 'rgba(30, 26, 22, 0)');
+    grime.addColorStop(0.5, 'rgba(30, 26, 22, 0.35)');
+    grime.addColorStop(1, 'rgba(30, 26, 22, 0)');
+    ctx.fillStyle = grime;
+    ctx.fillRect(at - 10, 0, 20, height);
+  }
+
+  // The chamfer: the outer 20% of the kerb's width falls away from the sun,
+  // painted as a darkening ramp because the band geometry is flat.
+  const chamfer = ctx.createLinearGradient(0, height * 0.78, 0, height);
+  chamfer.addColorStop(0, 'rgba(20, 18, 16, 0)');
+  chamfer.addColorStop(1, 'rgba(20, 18, 16, 0.45)');
+  ctx.fillStyle = chamfer;
+  ctx.fillRect(0, Math.floor(height * 0.78), width, height);
+
+  // Rubber scuffs where the inside wheels clip: sparse, dark, streaked
+  // along u. Hashed positions so every kerb segment weathers identically —
+  // the texture tiles, so variety must come cheap or not at all.
+  ctx.fillStyle = 'rgba(24, 24, 26, 0.3)';
+  for (let i = 0; i < 5; i++) {
+    const at = jitter(i * 13 + 5, 3) * width;
+    const y = jitter(i * 7 + 1, 11) * height * 0.5;
+    ctx.fillRect(at, y, 14 + jitter(i, 29) * 22, 2 + jitter(i, 31) * 3);
+  }
 
   texture.update();
   return texture;

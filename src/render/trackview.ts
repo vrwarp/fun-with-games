@@ -239,6 +239,8 @@ export class TrackView {
     // The chequered board, last so it sits on top of everything else.
     this.#band('track:line', path, -1.3, 1.3, -half, half, LINE_Y, this.#startLineMaterial(half));
 
+    this.#gridBoxes(config, path, half);
+
     // Barriers, set back from the kerb by a run-off so a small mistake is a
     // moment rather than the end of a race. They are scenery: the simulation's
     // track limits are still the grass, and nothing here collides. The circuit
@@ -577,6 +579,52 @@ export class TrackView {
    * Placed and oriented from the road itself, so it stands square across the
    * line on any circuit rather than needing a per-track constant.
    */
+  /**
+   * Painted grid boxes behind the line, mirroring the simulation's own
+   * `gridSlot` geometry (rows of `gridColumns`, half-row stagger, lanes
+   * spread across the width). Mirrored rather than imported because the two
+   * layers may not share code — but the ARITHMETIC must match, or the paint
+   * puts cars visibly outside their boxes at every standing start.
+   */
+  #gridBoxes(config: SimConfig, path: readonly TrackPoint[], half: number): void {
+    const columns = Math.max(1, Math.floor(config.track.gridColumns));
+    const spacing = config.track.gridRowSpacing;
+    const lane = (half * 2) / (columns + 1);
+    const paint = this.#flatMaterial('track:gridbox', '#dfe3e6', 0.8, LAYER_BIAS.sector);
+
+    for (let slot = 0; slot < 8; slot++) {
+      const row = Math.floor(slot / columns);
+      const column = slot % columns;
+      const back = (row + 1) * spacing + column * spacing * 0.5;
+      const offset = (column - (columns - 1) / 2) * lane;
+
+      // A box is a front bar you pull up to and two short rails behind it.
+      const nose = -back + 1.1;
+      this.#band(
+        `track:grid:${slot}:bar`,
+        path,
+        nose - 0.14,
+        nose,
+        offset - 0.95,
+        offset + 0.95,
+        SECTOR_Y,
+        paint,
+      );
+      for (const side of [-1, 1]) {
+        this.#band(
+          `track:grid:${slot}:rail${side}`,
+          path,
+          nose - 2.6,
+          nose,
+          offset + side * 0.95 - 0.07 * side,
+          offset + side * 0.95 + 0.07 * side,
+          SECTOR_Y,
+          paint,
+        );
+      }
+    }
+  }
+
   #gantry(path: readonly TrackPoint[], half: number): void {
     const pose = trackPoseAt(path, 0);
     const heading = Math.atan2(pose.dirX, pose.dirZ);
@@ -612,6 +660,42 @@ export class TrackView {
     beam.material = material;
     beam.isPickable = false;
     this.#meshes.push(beam);
+
+    // The five-light rig under the beam — the single most recognisable
+    // object on a Formula circuit, and the thing that makes the gantry a
+    // START gantry rather than a doorframe. Dormant housings with a deep-red
+    // lens: dressing for now, wiring them to the countdown is a live-state
+    // feature for another day.
+    const housing = this.#gantryMaterial();
+    const lens = this.#flatMaterial('track:gantry:lens', '#3d0d10', 0.9, 0);
+    for (let i = 0; i < 5; i++) {
+      const at = (i - 2) * 0.85;
+      const pod = CreateBox(
+        `track:gantry:pod${i}`,
+        { width: 0.55, height: 0.62, depth: 0.3 },
+        this.#scene,
+      );
+      pod.position.set(
+        pose.x + pose.dirX * -0.1 + normalX * at,
+        GANTRY_HEIGHT - 0.76,
+        pose.z + pose.dirZ * -0.1 + normalZ * at,
+      );
+      pod.rotation.y = heading;
+      pod.material = housing;
+      pod.isPickable = false;
+      this.#meshes.push(pod);
+
+      const face = CreatePlane(`track:gantry:lens${i}`, { width: 0.4, height: 0.46 }, this.#scene);
+      face.position.set(
+        pose.x + pose.dirX * -0.27 + normalX * at,
+        GANTRY_HEIGHT - 0.76,
+        pose.z + pose.dirZ * -0.27 + normalZ * at,
+      );
+      face.rotation.y = heading + Math.PI;
+      face.material = lens;
+      face.isPickable = false;
+      this.#meshes.push(face);
+    }
   }
 
   #gantryMaterial(): StandardMaterial {

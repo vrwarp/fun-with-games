@@ -165,6 +165,31 @@ export function cloudAt(x: number, y: number, z: number, colours: SkyColours = D
   return smoothstep(threshold, threshold + 0.2, density) * smoothstep(0.015, 0.08, y);
 }
 
+/** Lattice period of the ridge profile, in azimuth cells. Wraps by fbm. */
+const RIDGE_PERIOD = 24;
+/** The ridge's silhouette lives inside the lowest two degrees of sky. */
+const RIDGE_BASE = 0.006;
+const RIDGE_RELIEF = 0.026;
+
+/**
+ * Elevation of the far ridge line along a horizontal direction.
+ *
+ * An orthographic camera has no horizon of its own, and a fogged ground
+ * still ENDS somewhere — so the lowest band of sky carries a distant
+ * ridge/treeline silhouette for the world to terminate against. It is drawn
+ * into the dome, which means it never parallaxes; that is correct for
+ * something kilometres away and why it must stay a low, hazy band rather
+ * than hills you could drive to.
+ *
+ * Pure and exported: the profile wrapping seamlessly at the azimuth seam is
+ * an arithmetic fact a test can pin, and a seam here would stand a visible
+ * cliff into one compass direction of every single scene.
+ */
+export function ridgeHeightAt(x: number, z: number): number {
+  const azimuth = Math.atan2(z, x) / (Math.PI * 2) + 0.5;
+  return RIDGE_BASE + fbm(azimuth * RIDGE_PERIOD, 3.7, RIDGE_PERIOD, 3) * RIDGE_RELIEF;
+}
+
 /**
  * Colour of the sky looking along `y`, where +1 is straight up and -1 down.
  *
@@ -231,6 +256,22 @@ export function skyRadianceAt(
     colour.r += (r - colour.r) * cloud;
     colour.g += (g - colour.g) * cloud;
     colour.b += (b - colour.b) * cloud;
+  }
+
+  // The far ridge, composited over EVERYTHING — terrain occludes the sky,
+  // its sun and its clouds, which is what being terrain means. Kept hazy:
+  // at this distance the air in between does most of the colouring, so it
+  // is the horizon colour pulled toward a cool blue-green, with a soft top
+  // edge so the silhouette does not alias against the gradient.
+  if (y < 0.05) {
+    const ridge = ridgeHeightAt(x, z);
+    const cover = 1 - smoothstep(ridge - 0.004, ridge + 0.002, y);
+    if (cover > 0) {
+      const tint = Color3.Lerp(colours.horizon, new Color3(0.42, 0.5, 0.53), 0.55);
+      colour.r += (tint.r - colour.r) * cover;
+      colour.g += (tint.g - colour.g) * cover;
+      colour.b += (tint.b - colour.b) * cover;
+    }
   }
 
   return colour;

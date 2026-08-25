@@ -367,6 +367,22 @@ test.describe('racing', () => {
     // — but whether a post-processing chain, an SSAO pass and a generated cube
     // texture actually COMPILE and draw is a question only a real GL context
     // answers, and getting it wrong is a black screen rather than a slow one.
+    //
+    // Slow on purpose, and the reason is worth writing down because the
+    // obvious diagnosis is wrong. Switching tier is NOT what costs the time:
+    // measured, the scene resumes its normal tick rate about a second after
+    // each change. What costs the time is Playwright TOUCHING THE DOM. Every
+    // actionability check waits for the element to hold still across two
+    // animation frames, and this page renders in software at one or two frames
+    // a second, so a single click can take five seconds. Nine interactions ran
+    // to 51 seconds of a 60 second budget here and over it on a slower runner.
+    //
+    // So the panel is opened once and the picker cycled inside it, which is
+    // four interactions rather than nine — and is the better test anyway,
+    // because a settings change is supposed to apply immediately rather than
+    // on closing the panel.
+    test.slow();
+
     const errors: string[] = [];
     page.on('pageerror', (error) => errors.push(error.message));
 
@@ -377,11 +393,11 @@ test.describe('racing', () => {
       .toBeGreaterThan(30);
 
     const picker = page.getByTestId('settings-quality');
+    await page.getByTestId('settings-button').click();
+    await expect(picker).toBeVisible();
+
     for (const tier of ['low', 'medium', 'high'] as const) {
-      await page.getByTestId('settings-button').click();
-      await expect(picker).toBeVisible();
       await picker.selectOption(tier);
-      await page.getByTestId('settings-close').click();
 
       // Rebuilding a pipeline tears down render targets and builds new ones.
       // If any of that throws, the scene stops advancing — so the tick is the
@@ -389,9 +405,14 @@ test.describe('racing', () => {
       // reached the console.
       const before = await page.evaluate(() => window.__FWG__.tick);
       await expect
-        .poll(() => page.evaluate(() => window.__FWG__.tick), { timeout: 20_000 })
+        .poll(() => page.evaluate(() => window.__FWG__.tick), { timeout: 30_000 })
         .toBeGreaterThan(before + 10);
     }
+
+    // And the panel still closes on the most expensive tier, which is the one
+    // most likely to have left the page wedged.
+    await page.getByTestId('settings-close').click();
+    await expect(picker).toBeHidden();
 
     expect(errors).toEqual([]);
   });

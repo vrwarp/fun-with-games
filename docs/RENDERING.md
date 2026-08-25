@@ -28,7 +28,7 @@ Nothing below quietly restyles them: every branch is on
 
 | File              | Owns                                                                    |
 | ----------------- | ----------------------------------------------------------------------- |
-| `renderer.ts`     | Engine, scene, camera, lights, shadows, fog, arena, post, lens flare    |
+| `renderer.ts`     | Engine, scene, camera, lights, shadows, fog, arena, post                |
 | `environment.ts`  | The generated sky: sun, clouds, a reflection probe and a visible dome   |
 | `scenery.ts`      | Trees, tyre walls, guard posts, sponsor boards — thin instances         |
 | `cardynamics.ts`  | Wheel spin, recovered steering, body lean, brake glow — pure            |
@@ -250,17 +250,24 @@ high    2048 CASCADED maps: treeline, tyre stacks, posts and boards all
 
 Generators rebuild on tier change; `EntityViews` rebuilds its bodies against
 the new one, `KitViews` re-registers its static casters, `Scenery` re-adds on
-the cascade tier. Ambient sits at 0.38 against a 2.8 sun on a circuit, because
-the ambient:sun ratio IS the darkest a shadow can be — at the old near-1:4 the
-scene could never contrast, which read as "evenly lit from everywhere", which
-read as N64.
+the cascade tier. The ambient:sun ratio IS the darkest a shadow can be — at
+the old near-1:4 the scene could never contrast, which read as "evenly lit
+from everywhere", which read as N64.
 
 **Tyre smoke** (`smoke.ts`) puts the slide in the air above the streak the
 marks put on the ground — one particle system per car, gated by the same
 `marksGround`/`slipOf` the marks use so the two can never disagree, white on
-the limit and brown dust off it. **The lens flare** rides the bloom flag and
-its emitter sits along `SUN_TRAVEL`, so the flare, the drawn disc and the key
-light stay one fact.
+the limit and brown dust off it.
+
+There is deliberately **no lens flare**. One shipped briefly: Babylon's
+`LensFlareSystem` ray-picks the scene for occlusion, which needs the `Ray`
+side-effect import — absent, the first flare render throws and takes the
+whole render loop with it, and only in the production bundle, where
+tree-shaking removes what the dev server happened to keep. It also never
+fired in the isometric view (an orthographic camera at 37° elevation never
+has the sun on screen), which made it a cockpit-only garnish priced at a
+crashed game. If it returns, it returns with the `Ray` import, a test that
+covers a built bundle at a bloom tier, and a reason to exist in iso.
 
 ---
 

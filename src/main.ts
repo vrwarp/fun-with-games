@@ -58,6 +58,14 @@ interface LaunchOptions {
   haptics: boolean;
   /** A tier the player picked before. Absent means "ask the device". */
   quality?: QualityTier;
+  /**
+   * `?dress=1`: build the trackside dressing even on a software rasteriser.
+   * A diagnostics hook in the `?log=` family, not a player option — the
+   * only machines that skip the dressing are ones that cannot afford it,
+   * and the only reason to override that is to screenshot or test the full
+   * scene on a machine without a GPU.
+   */
+  forceDressing?: boolean;
 }
 
 /**
@@ -111,6 +119,8 @@ async function bootstrap(): Promise<void> {
   // Deliberately not a URL parameter either. What a device can render is a
   // fact about that device, not about the match somebody was invited to.
   const quality = stored.quality;
+  // Diagnostics only — see `LaunchOptions.forceDressing`.
+  const forceDressing = params.get('dress') === '1';
 
   // `?autojoin=1` skips the lobby. Used by the e2e tests, and handy when you
   // want a shareable link that drops straight into a room.
@@ -127,6 +137,7 @@ async function bootstrap(): Promise<void> {
       view,
       sprites,
       ...(quality !== undefined ? { quality } : {}),
+      ...(forceDressing ? { forceDressing } : {}),
     });
     return;
   }
@@ -146,6 +157,7 @@ async function bootstrap(): Promise<void> {
     muted,
     haptics,
     ...(quality !== undefined ? { quality } : {}),
+    ...(forceDressing ? { forceDressing } : {}),
   });
 }
 
@@ -185,6 +197,7 @@ async function launch(app: HTMLElement, options: LaunchOptions): Promise<void> {
       view: resolvedView,
       sprites: options.sprites ?? mode.sprites ?? false,
       ...(options.quality !== undefined ? { quality: options.quality } : {}),
+      ...(options.forceDressing ? { forceDressing: true } : {}),
     });
   } catch (error) {
     log.error('failed to start the 3D engine', error);
@@ -601,6 +614,14 @@ function exposeTestHandle(session: NetSession, renderer: Renderer, modeId: GameM
       },
       get mode() {
         return modeId;
+      },
+      /** The tier in force, after governor step-downs — not the one asked for. */
+      get quality() {
+        return renderer.quality;
+      },
+      /** What shadow rig is live and how many casters feed it. */
+      get shadows() {
+        return renderer.shadowDiagnostics;
       },
       /** Live, not the view the page opened in: settings can change it. */
       get view() {

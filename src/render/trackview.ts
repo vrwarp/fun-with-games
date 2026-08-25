@@ -533,12 +533,17 @@ export class TrackView {
 
     material.albedoTexture = surface.albedo;
     if (surface.normal) material.bumpTexture = surface.normal;
-    // Asphalt is not a metal and it is not polished. What it does do is get
-    // *less* rough where the racing line has polished it — which is a refinement
-    // for another day; a single value that is rough but not matte is already
-    // the difference between tarmac and felt.
+    // Asphalt is not a metal and it is not polished. The number was 0.72
+    // until the sun came down to 19°: at grazing incidence every chip facet
+    // found a mirror angle and the whole road lit up like standing water.
+    // Dry tarmac keeps only a faint sheen toward a low sun — roughness up,
+    // and the sky reflection damped, because fresnel at a grazing camera
+    // heads for 1 whatever the roughness and the road is ALWAYS at a
+    // grazing camera in the cockpit. Wet is a reflection question, not a
+    // roughness one.
     material.metallic = 0;
-    material.roughness = 0.72;
+    material.roughness = 0.88;
+    material.environmentIntensity = 0.35;
     material.backFaceCulling = CULL_BACK_FACES;
     this.#materials.push(material);
     return material;

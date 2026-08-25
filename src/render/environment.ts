@@ -87,13 +87,24 @@ export const DAYLIGHT: SkyColours = {
   zenith: new Color3(0.34, 0.48, 0.72),
   horizon: new Color3(0.78, 0.85, 0.94),
   ground: new Color3(0.15, 0.15, 0.145),
-  // Normalised from (0.5, 1, -0.4) — the negation of the key light's travel
+  // Normalised from (1, 0.42, -0.7) — the negation of the key light's travel
   // direction. `SUN_TRAVEL` below is what the renderer hands the light, so the
   // two cannot drift apart.
-  sunX: 0.4211,
-  sunY: 0.8422,
-  sunZ: -0.3369,
-  sunColour: new Color3(1, 0.97, 0.9),
+  //
+  // NINETEEN degrees of elevation, not noon, and that number is most of the
+  // art direction. A sun overhead lights every plane the same and throws a
+  // five-metre puddle under an eight-metre tree — which is how a fixed
+  // vertex light lit a racer in 1998, and why a scene lit that way reads as
+  // one. This low it rakes: long shadow shapes across the tarmac, a lit side
+  // and a shaded side on everything standing, and a warm/cool split between
+  // sun and sky. The azimuth sits ~35° off both world axes so the shadows
+  // never line up with the geometry or the isometric screen edges.
+  sunX: 0.7746,
+  sunY: 0.3254,
+  sunZ: -0.5423,
+  // Warmer than the old noon disc: this much atmosphere reddens the light,
+  // and the key light in `renderer.ts` warms with it.
+  sunColour: new Color3(1, 0.93, 0.8),
   cloud: new Color3(1, 0.99, 0.97),
   cloudShade: new Color3(0.62, 0.66, 0.74),
   cloudCover: 0.45,
@@ -137,14 +148,21 @@ const CLOUD_SCALE = 1.15;
  * the last few degrees fade into the horizon haze rather than aliasing into it.
  */
 export function cloudAt(x: number, y: number, z: number, colours: SkyColours = DAYLIGHT): number {
-  if (y <= 0.03 || colours.cloudCover <= 0) return 0;
+  if (y <= 0.015 || colours.cloudCover <= 0) return 0;
   const reach = 1 / y;
   const density = fbm(x * reach * CLOUD_SCALE, z * reach * CLOUD_SCALE, CLOUD_PERIOD, 4);
   // `cover` moves the threshold rather than scaling the result: at low cover
   // you get a few separate clouds in a clear sky, which is what "scattered"
   // means. Scaling would give you a uniform grey veil instead.
+  //
+  // The fade band hugs the horizon (1.5°-8°) instead of the 10° it used to
+  // start at, because the band below 10° is most of what BOTH cameras see:
+  // the isometric frame is nothing else, and a cockpit is mostly bonnet and
+  // low sky. Fading the clouds out exactly there left the backdrop a blank
+  // wash. The 1/y projection stretches them toward the horizon on its own,
+  // which is the perspective compression a real cloud deck has.
   const threshold = 1 - colours.cloudCover;
-  return smoothstep(threshold, threshold + 0.2, density) * smoothstep(0.03, 0.18, y);
+  return smoothstep(threshold, threshold + 0.2, density) * smoothstep(0.015, 0.08, y);
 }
 
 /**
@@ -192,7 +210,12 @@ export function skyRadianceAt(
   // one, which is most of what says "bright day" rather than "blue paint".
   const towardSun = Math.max(0, x * colours.sunX + y * colours.sunY + z * colours.sunZ);
   const disc = Math.pow(towardSun, 1600);
-  const glare = Math.pow(towardSun, 6) * 0.22;
+  // Tighter and quieter than it was at noon. With the sun near the horizon
+  // the glare lobe sits exactly in the band the cameras look at, and at its
+  // old width (pow 6, 0.22) it whited out the entire backdrop — the
+  // isometric view read as overcast milk. Narrow, it is a bright shoulder
+  // around the sun and the rest of the horizon keeps its colour.
+  const glare = Math.pow(towardSun, 10) * 0.16;
   colour.r += colours.sunColour.r * (disc + glare);
   colour.g += colours.sunColour.g * (disc + glare);
   colour.b += colours.sunColour.b * (disc + glare);

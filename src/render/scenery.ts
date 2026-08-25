@@ -5,7 +5,6 @@ import { CreatePlane } from '@babylonjs/core/Meshes/Builders/planeBuilder.js';
 import { CreateTorus } from '@babylonjs/core/Meshes/Builders/torusBuilder.js';
 import { PBRMaterial } from '@babylonjs/core/Materials/PBR/pbrMaterial.js';
 import { Color3 } from '@babylonjs/core/Maths/math.color.js';
-import { Matrix } from '@babylonjs/core/Maths/math.vector.js';
 import type { DynamicTexture } from '@babylonjs/core/Materials/Textures/dynamicTexture.js';
 import type { Material } from '@babylonjs/core/Materials/material.js';
 import type { Scene } from '@babylonjs/core/scene.js';
@@ -25,15 +24,19 @@ import { createBoardTexture, createPineTexture } from './textures.js';
  *
  * ## One draw call per kind, however many there are
  *
- * All of this is **thin instances**: one mesh, one material, one draw call, and
- * a buffer of transforms. Three hundred trees cost the GPU about what one tree
- * costs, which is the only reason a phone can have three hundred trees. Nothing
- * here is created or destroyed after startup.
+ * Each kind is MERGED into a single static mesh: one draw call for the whole
+ * forest, one for each tyre-bundle colour, one per board design. It was thin
+ * instances, and the numbers never needed them — a forest of drawn cards is a
+ * few thousand static triangles — and the cleverness turned out to carry a
+ * bomb: any thin-instanced mesh in a fogged scene silently killed shadow
+ * rendering for every OTHER mesh (Babylon 9.22, minimal repro: PBR receiver
+ * + scene fog + one thin-instance batch). Fog and shadows are both
+ * load-bearing; the instancing was not. Nothing here is created or destroyed
+ * after startup.
  *
- * None of it casts shadows, and that is deliberate rather than lazy. The shadow
- * map is fitted to whatever casts into it, so admitting a treeline would stretch
- * it across the whole arena and leave each car a handful of texels — trading the
- * shadow that matters for hundreds that nobody looks at.
+ * On the cascaded-shadow tier all of it casts — the treeline throwing shade
+ * across the road is one of the strongest "outdoors" cues there is. The
+ * blob-shadow tiers leave it out of the map so the cars keep their texels.
  *
  * ## Placement is a pure function
  *
@@ -279,37 +282,47 @@ export function boardRun(
   return out;
 }
 
-/** Applies a placement list to a mesh as thin instances. */
-function instance(mesh: Mesh, placements: readonly Placement[], lift = 0): void {
+/**
+ * Applies a placement list by MERGING transformed copies into one mesh.
+ *
+ * This used to be thin instances, and the numbers never justified them: a
+ * whole forest of drawn cards is a few thousand STATIC triangles, which is
+ * one merged mesh and one draw call with nothing clever left to go wrong.
+ * What forced the change was clever going wrong: with any thin-instanced
+ * mesh in the scene, turning on scene fog silently killed shadow rendering
+ * for every other mesh (Babylon 9.22, reproduced minimally — PBR receiver +
+ * fog + one thin-instance batch; opaque or alpha-tested alike). Fog and
+ * shadows are both load-bearing here; the instancing was not.
+ *
+ * Returns the merged batch, or null when there was nothing to place. The
+ * prototype is consumed either way.
+ */
+function instance(mesh: Mesh, placements: readonly Placement[], lift = 0): Mesh | null {
   if (placements.length === 0) {
     mesh.dispose();
-    return;
+    return null;
   }
-  const buffer = new Float32Array(placements.length * 16);
-  placements.forEach((placement, index) => {
+  const copies = placements.map((placement, index) => {
+    const copy = mesh.clone(`${mesh.name}:${index}`);
     // Scale, then yaw, then move. Everything here stands upright, so a
     // quaternion would be machinery for a single angle.
-    const placed = Matrix.Scaling(placement.scale, placement.scale, placement.scale)
-      .multiply(Matrix.RotationY(placement.angle))
-      .multiply(Matrix.Translation(placement.x, lift, placement.z));
-    placed.copyToArray(buffer, index * 16);
+    copy.scaling.setAll(placement.scale);
+    copy.rotation.y = placement.angle;
+    copy.position.set(placement.x, lift, placement.z);
+    copy.computeWorldMatrix(true);
+    return copy;
   });
-  mesh.thinInstanceSetBuffer('matrix', buffer, 16);
-  // The prototype's own bounds are one tree; the instances span the world, and
-  // a mesh culled by the wrong bounds pops in and out as the camera turns.
-  //
-  // This used to also set `alwaysSelectAsActiveMesh`, which made the line above
-  // pointless — asserting "never cull me" while carefully computing the bounds
-  // culling would have used. Both were defensible on their own and together
-  // they were just contradictory. The bounds win: a thin-instance batch is
-  // culled all or nothing, and one that spans the world never will be, so the
-  // frustum test costs a comparison per batch per frame and keeps the mesh
-  // honest about where it is. (If the tree count ever justified it, the real
-  // win would be splitting the scatter into spatial buckets so culling could
-  // actually bite.)
-  mesh.thinInstanceRefreshBoundingInfo(true);
-  mesh.isPickable = false;
-  mesh.receiveShadows = false;
+  const name = mesh.name;
+  mesh.dispose();
+  // `multiMultiMaterials` keeps each source's material split as submeshes,
+  // which is what lets a textured board face and its blank steel back merge
+  // into the same batch without the text bleeding through the back.
+  const merged = Mesh.MergeMeshes(copies, true, true, undefined, false, true);
+  if (!merged) return null;
+  merged.name = name;
+  merged.isPickable = false;
+  merged.receiveShadows = false;
+  return merged;
 }
 
 /**
@@ -347,9 +360,8 @@ export class Scenery {
     // Three species, split by each placement's tint so the mix is stable.
     TREE_SPECIES.forEach((species, index) => {
       const share = trees.filter((tree) => Math.floor(tree.tint * TREE_SPECIES.length) === index);
-      const pine = this.#pine(scene, index, species);
-      instance(pine, share);
-      this.#casters.push(pine);
+      const pines = instance(this.#pine(scene, index, species), share);
+      if (pines) this.#casters.push(this.#keep(pines));
     });
 
     // Tyre walls on the outside of every real corner — and PAINTED, in the
@@ -363,13 +375,11 @@ export class Scenery {
     const stacks = tyreWalls(path, lap, barrier - 0.6, 2.2);
     bundleColours.forEach((colour, index) => {
       const share = stacks.filter((_, i) => i % bundleColours.length === index);
-      const stack = this.#tyreStack(
-        scene,
-        this.#material(scene, `scenery:tyres${index}`, colour, 0.75),
-        index,
+      const bundle = instance(
+        this.#tyreStack(scene, this.#material(scene, `scenery:tyres${index}`, colour, 0.75), index),
+        share,
       );
-      instance(stack, share);
-      this.#casters.push(stack);
+      if (bundle) this.#casters.push(this.#keep(bundle));
     });
 
     // Guardrail posts, one every few metres on both sides. They are what stop
@@ -379,9 +389,8 @@ export class Scenery {
       ...alongTrack(path, lap, barrier + 0.55, 4.2),
       ...alongTrack(path, lap, -(barrier + 0.55), 4.2),
     ];
-    const post = this.#guardPost(scene, postMaterial);
-    instance(post, posts);
-    this.#casters.push(post);
+    const postRun = instance(this.#guardPost(scene, postMaterial), posts);
+    if (postRun) this.#casters.push(this.#keep(postRun));
 
     // Advertising boards along the straights, both sides, faces toward the
     // road. Two designs, alternated by placement so neighbours differ.
@@ -396,21 +405,19 @@ export class Scenery {
     ];
     boardSpecs.forEach((spec, index) => {
       const share = runs.filter((_, i) => i % boardSpecs.length === index);
-      const board = this.#board(scene, spec);
-      instance(board, share);
-      this.#casters.push(board);
+      const boards = instance(this.#board(scene, spec), share);
+      if (boards) this.#casters.push(this.#keep(boards));
     });
 
     // Marshal posts, sparser than the corners so they read as punctuation.
-    const marshal = this.#marshalPost(
-      scene,
-      this.#material(scene, 'scenery:post', new Color3(0.55, 0.56, 0.6), 0.6),
-    );
-    instance(
-      marshal,
+    const marshals = instance(
+      this.#marshalPost(
+        scene,
+        this.#material(scene, 'scenery:post', new Color3(0.55, 0.56, 0.6), 0.6),
+      ),
       tyreWalls(path, lap, barrier + 2.2, 26).map((placement) => ({ ...placement, scale: 1 })),
     );
-    this.#casters.push(marshal);
+    if (marshals) this.#casters.push(this.#keep(marshals));
   }
 
   /**

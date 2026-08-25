@@ -122,6 +122,25 @@ describe('what a tier switches on', () => {
     expect(low.ambientOcclusion).toBe(false);
   });
 
+  it('reserves cascaded shadows for the top tier alone', () => {
+    // The most expensive switch in the table: every tree, tyre stack and
+    // board becomes a caster. A phone never pays it; the desktop default does.
+    expect(qualitySettings('high').cascadedShadows).toBe(true);
+    expect(qualitySettings('medium').cascadedShadows).toBe(false);
+    expect(qualitySettings('low').cascadedShadows).toBe(false);
+  });
+
+  it('scales the shadow map with the tier', () => {
+    // This number was in the table and then never read — the renderer sniffed
+    // the pointer type instead. The tier is the policy; it decides.
+    expect(qualitySettings('low').shadowMapSize).toBeLessThan(
+      qualitySettings('medium').shadowMapSize,
+    );
+    expect(qualitySettings('medium').shadowMapSize).toBeLessThan(
+      qualitySettings('high').shadowMapSize,
+    );
+  });
+
   it('gives up per-fragment detail before it gives up resolution', () => {
     // Normal maps and clear coat are per-fragment work, so they are what a
     // cheap phone can least afford; the pixel ratio cap is already as low as

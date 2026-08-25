@@ -330,8 +330,10 @@ export function tyreRubber(size: number): SurfacePattern {
 export function grass(size: number): SurfacePattern {
   const albedo = new Uint8Array(size * size * 4);
   const height = new Float32Array(size * size);
-  const tuftPeriod = 64;
+  const tuftPeriod = 96;
   const patchPeriod = 5;
+  /** Mowing bands per tile, running diagonally so the joins never line up. */
+  const stripes = 2;
 
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
@@ -339,16 +341,88 @@ export function grass(size: number): SurfacePattern {
       const patch = fbm((x / size) * patchPeriod, (y / size) * patchPeriod, patchPeriod, 2);
       height[y * size + x] = tuft;
 
-      // Dark, and much darker than the instinct says. This sits under a bright
-      // sky and a hot sun; a green that looks right as a swatch comes out as a
-      // glowing lawn once it is lit, and a glowing lawn next to dark tarmac is
-      // a circuit drawn on a snooker table.
-      const lit = 0.45 + tuft * 0.55 + patch * 0.35;
-      // Brighter than the tarmac beside it, on purpose and by a measured
-      // margin — see the test. It was darker, which made the two read as one
-      // dark expanse from a chase camera and is a driving problem rather than
-      // a decorative one. Still nowhere near a lawn: it is lit by a hot sun.
-      put(albedo, (y * size + x) * 4, 0.15 * lit, 0.3 * lit, 0.115 * lit);
+      // Mowing stripes: the alternating light/dark bands a cut lawn has,
+      // because the blades lie away from you in one pass and toward you in
+      // the next. Nothing says "maintained circuit" — as opposed to "green
+      // felt" — more cheaply. Diagonal, so the bands tile with the texture,
+      // and softened by smoothstep so the boundary is a blend, not a rule.
+      const band = (((x + y) / size) * stripes) % 1;
+      const wave = 0.5 + 0.5 * Math.sin(band * Math.PI * 2);
+      const stripe = 0.88 + wave * 0.24;
+
+      // Dried patches: real turf is never one green. Where the coarse noise
+      // runs high the grass yellows and thins, which breaks the carpet up at
+      // exactly the scale a camera at altitude sees.
+      const dry = Math.max(0, patch - 0.62) * 2.2;
+
+      const lit = (0.56 + tuft * 0.5 + patch * 0.25) * stripe;
+      // Olive, not billiard-table. Saturated pure green under a bright sun is
+      // the toy-town signal; the red channel comes UP toward the green as the
+      // patch dries. Bright enough overall that the tarmac stays the darker
+      // surface — the test on that contrast is a gameplay guarantee.
+      const r = (0.14 + dry * 0.06) * lit;
+      const g = (0.26 - dry * 0.03) * lit;
+      const b = (0.088 - dry * 0.016) * lit;
+      put(albedo, (y * size + x) * 4, r, g, b);
+    }
+  }
+
+  return { albedo, height };
+}
+
+/**
+ * Corrugated barrier steel: the horizontal wave profile of a guardrail.
+ *
+ * Entirely a height field — the albedo is flat, because what makes corrugation
+ * read is the lighting rolling across the waves, and that is the normal map's
+ * job. The wave runs down V (a rail's ridges are horizontal, along its
+ * length), with a whisper of noise so the pressing is not mathematically
+ * perfect.
+ */
+export function corrugation(size: number): SurfacePattern {
+  const albedo = new Uint8Array(size * size * 4);
+  const height = new Float32Array(size * size);
+  const waves = 3;
+
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const wave = 0.5 + 0.5 * Math.sin((y / size) * Math.PI * 2 * waves);
+      // Coarse and quiet: at the tiling a barrier uses, a fine dent pattern
+      // strobes into vertical streaks.
+      const dent = valueNoise((x / size) * 5, (y / size) * 3, 5) * 0.05;
+      height[y * size + x] = wave * 0.94 + dent;
+
+      const value = 0.42 + wave * 0.05;
+      put(albedo, (y * size + x) * 4, value, value * 1.01, value * 1.05);
+    }
+  }
+
+  return { albedo, height };
+}
+
+/**
+ * Kerb ribs: the sawtooth a car feels, as a height field for the normal map.
+ *
+ * The painted stripes stay in the canvas texture that already draws them;
+ * this adds only the RELIEF — ridges across the kerb's width, so the sun
+ * catches each rib's leading face. A kerb with stripes but no ribs is paint
+ * on flat tarmac, and reads exactly that flat.
+ */
+export function kerbRibs(size: number): SurfacePattern {
+  const albedo = new Uint8Array(size * size * 4);
+  const height = new Float32Array(size * size);
+  const ribs = 4;
+
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      // A triangle wave along U — the axis that runs down the road — with a
+      // flattened crest, which is the profile of a real rumble strip.
+      const phase = ((x / size) * ribs) % 1;
+      const tri = 1 - Math.abs(phase * 2 - 1);
+      height[y * size + x] = Math.min(1, tri * 1.4);
+
+      const value = 0.5;
+      put(albedo, (y * size + x) * 4, value, value, value);
     }
   }
 

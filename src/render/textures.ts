@@ -211,3 +211,139 @@ export function createStartLineTexture(scene: Scene): DynamicTexture {
   texture.update();
   return texture;
 }
+
+/** Deterministic value in [0,1) — art must not differ between two runs. */
+function jitter(a: number, b: number): number {
+  let h = (Math.imul(a, 374761393) + Math.imul(b, 668265263)) | 0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+
+/**
+ * A conifer, drawn — the side view for the crossed cards a tree is made of.
+ *
+ * The cones this replaces were the single loudest "1997" in the frame, and no
+ * material could save them, because what fails on a cone is the SILHOUETTE:
+ * real conifers are ragged. Drawing one buys exactly that — dozens of drooping
+ * frond strokes with jittered lengths, gaps where branches are missing,
+ * darker in the interior where a canopy shades itself, warmer at the sunlit
+ * tips. All of it alpha-cut, so the sky shows through the edges.
+ *
+ * `seed` varies the raggedness so the three species do not share one outline.
+ */
+export function createPineTexture(
+  scene: Scene,
+  seed: number,
+  base: { r: number; g: number; b: number },
+): DynamicTexture {
+  const width = 192;
+  const height = 384;
+  const texture = new DynamicTexture(
+    `pine:${seed}`,
+    { width, height },
+    scene,
+    // Mipmaps on: these cards live at every distance from kerbside to fog.
+    true,
+  );
+  texture.hasAlpha = true;
+  const ctx = context2d(texture);
+  ctx.clearRect(0, 0, width, height);
+
+  const centre = width / 2;
+  const crownY = 14;
+  const skirtY = height - 44;
+
+  // Trunk first, so fronds overlap it.
+  ctx.fillStyle = 'rgb(52, 38, 26)';
+  ctx.fillRect(centre - 5, height - 90, 10, 90);
+
+  // Fronds, in rows from the skirt up to the crown. Painter's order matters:
+  // lower (wider, darker) rows first, so upper rows overlap them the way real
+  // branches sit in front of the ones below.
+  const rows = 24;
+  for (let row = 0; row < rows; row++) {
+    const t = row / (rows - 1); // 0 at skirt, 1 at crown
+    const y = skirtY - t * (skirtY - crownY);
+    const reach = (1 - t * 0.92) * (width * 0.46);
+    const strokes = Math.max(3, Math.round((1 - t) * 9) + 3);
+
+    for (let i = 0; i < strokes; i++) {
+      const u = strokes === 1 ? 0 : (i / (strokes - 1)) * 2 - 1;
+      // Gaps: a few percent of branches simply are not there.
+      if (jitter(seed * 91 + row, i * 7) < 0.06) continue;
+
+      const droop = 10 + jitter(seed + row, i) * 14;
+      const length = reach * (0.55 + jitter(seed * 3 + row, i * 5) * 0.6);
+      const x = centre + u * reach * 0.55;
+      const tipX = x + Math.sign(u || jitter(row, i) - 0.5) * length * 0.55;
+
+      // Interior fronds darker, outer tips lighter and warmer — the two-tone
+      // that makes a canopy read as lit volume rather than flat card.
+      const out = Math.min(1, Math.abs(u) * 0.8 + jitter(seed + i, row * 3) * 0.35);
+      // Capped low: brighter tips sparkle into white flecks once the texture
+      // is minified across a whole forest, and a forest full of glitter reads
+      // as aliasing, not light.
+      const lum = 0.55 + out * 0.5;
+      const r = Math.round(base.r * lum * 255);
+      const g = Math.round(base.g * lum * 255);
+      const b = Math.round(base.b * lum * 255);
+      ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
+
+      ctx.beginPath();
+      ctx.moveTo(x, y - 6 - jitter(row, seed + i) * 6);
+      ctx.lineTo(tipX, y + droop);
+      ctx.lineTo(x + (tipX - x) * 0.35, y + droop * 0.35);
+      ctx.closePath();
+      ctx.fill();
+    }
+  }
+
+  // The leader — the single vertical tip every conifer has.
+  ctx.fillStyle = `rgb(${Math.round(base.r * 150)}, ${Math.round(base.g * 165)}, ${Math.round(
+    base.b * 140,
+  )})`;
+  ctx.beginPath();
+  ctx.moveTo(centre, 2);
+  ctx.lineTo(centre + 7, crownY + 26);
+  ctx.lineTo(centre - 7, crownY + 26);
+  ctx.closePath();
+  ctx.fill();
+
+  texture.update();
+  return texture;
+}
+
+/**
+ * A trackside advertising board: a bold made-up name on a bright panel.
+ *
+ * Real circuits are LINED with these, and their absence is much of why a
+ * home-made track reads as an empty field. The names are invented — a real
+ * brand would be a licence problem and a lie.
+ */
+export function createBoardTexture(
+  scene: Scene,
+  text: string,
+  background: string,
+  foreground: string,
+): DynamicTexture {
+  const width = 512;
+  const height = 96;
+  const texture = new DynamicTexture(`board:${text}`, { width, height }, scene, true);
+  const ctx = context2d(texture);
+
+  ctx.fillStyle = background;
+  ctx.fillRect(0, 0, width, height);
+  // A thin frame, so the board reads as an object rather than paint.
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.25)';
+  ctx.fillRect(0, 0, width, 6);
+  ctx.fillRect(0, height - 6, width, 6);
+
+  ctx.fillStyle = foreground;
+  ctx.font = `700 ${Math.round(height * 0.56)}px system-ui, sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, width / 2, height / 2 + 2);
+
+  texture.update();
+  return texture;
+}

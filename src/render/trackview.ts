@@ -13,7 +13,7 @@ import type { Scene } from '@babylonjs/core/scene.js';
 import type { SimConfig, TrackPoint } from '../sim/config.js';
 import { sampleTrack, trackLength, trackPoseAt } from '../sim/track.js';
 import { createKerbTexture, createStartLineTexture } from './textures.js';
-import { asphalt, createSurface, type Surface } from './surfaces.js';
+import { asphalt, corrugation, createSurface, kerbRibs, type Surface } from './surfaces.js';
 
 /**
  * Draws the circuit: tarmac, kerbs, the start/finish line, sector marks and
@@ -226,7 +226,7 @@ export class TrackView {
     // decides whether it has room for them — see `track.barrierRunoff`.
     const runoff = config.track.barrierRunoff;
     if (runoff > 0) {
-      const barrier = this.#barrierMaterial();
+      const barrier = this.#barrierMaterial(lap);
       const back = half + runoff;
       this.#wall('track:barrier:l', path, lap, back, BARRIER_HEIGHT, barrier);
       this.#wall('track:barrier:r', path, lap, -back, BARRIER_HEIGHT, barrier);
@@ -535,13 +535,30 @@ export class TrackView {
     return material;
   }
 
-  #barrierMaterial(): StandardMaterial {
-    const material = new StandardMaterial('track:barrier:mat', this.#scene);
-    // Pale, so it reads against the grass and takes the sky's colour the way
-    // the arena wall now does rather than cutting a dark line round the
-    // circuit.
-    material.diffuseColor = Color3.FromHexString('#c9ccd3');
-    material.specularColor = new Color3(0.08, 0.08, 0.09);
+  #barrierMaterial(lap: number): PBRMaterial {
+    // Corrugated guardrail, not a painted slab. The wave profile lives in a
+    // normal map — what makes corrugation read is the light rolling across
+    // the ridges — and the albedo rides along from the same pattern, a
+    // galvanised grey a step darker than the old wall so it stops being the
+    // brightest thing on the horizon.
+    const steel = createSurface(this.#scene, 'track:barrier:steel', corrugation(128), {
+      size: 128,
+      // One tile every couple of metres along the run; the ribbon's V spans
+      // foot-to-top once, which is exactly one wave profile.
+      uScale: Math.max(8, Math.round(lap / 2.4)),
+      vScale: 1,
+      strength: 9,
+      withNormal: this.#normalMaps,
+    });
+    this.#surfaces.push(steel);
+
+    const material = new PBRMaterial('track:barrier:mat', this.#scene);
+    material.albedoTexture = steel.albedo;
+    if (steel.normal) material.bumpTexture = steel.normal;
+    // Weathered galvanised steel: metallic enough to take the sky, rough
+    // enough not to mirror it.
+    material.metallic = 0.55;
+    material.roughness = 0.5;
     material.backFaceCulling = false;
     this.#materials.push(material);
     return material;
@@ -620,7 +637,7 @@ export class TrackView {
     const material = new PBRMaterial('track:rubber:mat', this.#scene);
     material.albedoColor = Color3.FromHexString('#17171a').toLinearSpace();
     material.metallic = 0;
-    material.roughness = 0.42;
+    material.roughness = 0.55;
     material.zOffset = LAYER_BIAS.rubber;
     material.backFaceCulling = CULL_BACK_FACES;
     this.#materials.push(material);
@@ -639,20 +656,37 @@ export class TrackView {
     return material;
   }
 
-  #kerbMaterial(lap: number): StandardMaterial {
+  #kerbMaterial(lap: number): PBRMaterial {
     const texture = createKerbTexture(this.#scene);
     texture.wrapU = Texture.WRAP_ADDRESSMODE;
     texture.wrapV = Texture.WRAP_ADDRESSMODE;
     // One red/white pair every ~3 units of road, along `u` — the axis that
     // runs down the circuit.
-    texture.uScale = Math.max(8, Math.round(lap / 3));
+    const uScale = Math.max(8, Math.round(lap / 3));
+    texture.uScale = uScale;
     this.#textures.push(texture);
 
-    const material = new StandardMaterial('track:kerb:mat', this.#scene);
+    // The stripes are paint; the RIBS are the kerb. A rumble strip with no
+    // relief is a sticker on the tarmac, and the sun catching each rib's
+    // leading face is what makes the strip read as a thing a car would jolt
+    // over. The relief rides a normal map whose tiling matches the paint,
+    // four ribs to each stripe pair.
+    const ribs = createSurface(this.#scene, 'track:kerb:ribs', kerbRibs(128), {
+      size: 128,
+      uScale,
+      vScale: 1,
+      strength: 10,
+      withNormal: this.#normalMaps,
+    });
+    this.#surfaces.push(ribs);
+
+    const material = new PBRMaterial('track:kerb:mat', this.#scene);
+    material.albedoTexture = texture;
+    if (ribs.normal) material.bumpTexture = ribs.normal;
+    material.metallic = 0;
+    // Painted concrete: glossier than tarmac, duller than bodywork.
+    material.roughness = 0.62;
     material.zOffset = LAYER_BIAS.kerb;
-    material.diffuseTexture = texture;
-    material.emissiveColor = new Color3(0.4, 0.4, 0.4);
-    material.specularColor = new Color3(0, 0, 0);
     material.backFaceCulling = CULL_BACK_FACES;
     this.#materials.push(material);
     return material;

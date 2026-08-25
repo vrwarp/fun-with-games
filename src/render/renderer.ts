@@ -4,11 +4,12 @@ import { ArcRotateCamera } from '@babylonjs/core/Cameras/arcRotateCamera.js';
 import { HemisphericLight } from '@babylonjs/core/Lights/hemisphericLight.js';
 import { DirectionalLight } from '@babylonjs/core/Lights/directionalLight.js';
 import { ShadowGenerator } from '@babylonjs/core/Lights/Shadows/shadowGenerator.js';
+import { CascadedShadowGenerator } from '@babylonjs/core/Lights/Shadows/cascadedShadowGenerator.js';
 import { Color3 } from '@babylonjs/core/Maths/math.color.js';
 import { createLogger } from '../shared/logger.js';
 import { SurfaceMarks } from './marks.js';
 import { SUN_TRAVEL, createSkyDome, createSkyEnvironment } from './environment.js';
-import { createSurface, grass } from './surfaces.js';
+import { corrugation, createSurface, grass } from './surfaces.js';
 import { PBRMaterial } from '@babylonjs/core/Materials/PBR/pbrMaterial.js';
 import {
   QualityGovernor,
@@ -94,9 +95,16 @@ function groundExtent(config: SimConfig): { x: number; z: number } {
 const GROUND_REACH = 5;
 
 /** Texels per side of the generated grass. */
-const GRASS_TEXTURE_SIZE = 256;
-/** World units one tile of grass covers. */
-const GRASS_TILE = 5;
+const GRASS_TEXTURE_SIZE = 512;
+/**
+ * World units one tile of grass covers.
+ *
+ * Large, because the tile now carries the mowing stripes and a stripe is
+ * metres wide: at the old five units per tile the bands would repeat like
+ * wallpaper. Twelve puts a light/dark pair every twelve metres, which is what
+ * a mown verge actually looks like from a camera at altitude.
+ */
+const GRASS_TILE = 12;
 
 /** How long a manual camera adjustment suspends auto-follow, in seconds. */
 const MANUAL_CAMERA_HOLD_SECONDS = 2.5;
@@ -132,6 +140,7 @@ export class Renderer {
   #kit: KitViews;
   #track: TrackView;
   #scenery: Scenery | null = null;
+  #sun: DirectionalLight | null = null;
   /**
    * How far back the camera sits, relative to the on-foot framing the view
    * specs are written for. Driven by top speed: what a player needs to see is
@@ -227,6 +236,9 @@ export class Renderer {
     // it is a handful of draw calls whatever the device, so there is nothing
     // for a quality setting to take away.
     this.#scenery = new Scenery(this.scene, options.config);
+    if (this.#shadows && qualitySettings(this.#governor.tier).cascadedShadows) {
+      this.#scenery.addCastersTo(this.#shadows);
+    }
     this.#framingScale = options.config.vehicle.enabled
       ? Math.min(1.7, Math.max(1, options.config.playerMaxSpeed / 14))
       : 1;
@@ -702,6 +714,16 @@ export class Renderer {
    * somebody moved a slider.
    */
   #applyTierToScene(tier: QualityTier): void {
+    // Shadows first, so everything rebuilt below registers with the NEW
+    // generator rather than a disposed one.
+    this.#shadows?.dispose();
+    this.#shadows = this.#createShadows(tier);
+    this.#entities.setShadows(this.#shadows);
+    this.#kit.setShadows(this.#shadows);
+    if (this.#shadows && qualitySettings(tier).cascadedShadows) {
+      this.#scenery?.addCastersTo(this.#shadows);
+    }
+
     this.#entities.setFinish(finishOptions(tier));
     this.#track.dispose();
     this.#track = new TrackView(this.scene, this.#config, {
@@ -758,8 +780,12 @@ export class Renderer {
         // reason. What it buys is contact: without it every object looks like
         // a sticker floating slightly above whatever it stands on.
         this.#ssao = new SSAO2RenderingPipeline('ssao', this.scene, 0.75, [this.camera]);
-        this.#ssao.radius = 1.4;
-        this.#ssao.totalStrength = 0.9;
+        this.#ssao.radius = 1.8;
+        // Stronger than before, deliberately. Contact darkening is half of
+        // what separates "objects standing on a surface" from "objects pasted
+        // onto one", and the old strength was tuned against a scene with no
+        // scenery to ground.
+        this.#ssao.totalStrength = 1.15;
         this.#ssao.samples = 12;
         this.#ssao.expensiveBlur = false;
       }
@@ -845,43 +871,90 @@ export class Renderer {
 
     const ambient = new HemisphericLight('ambient', new Vector3(0, 1, 0), this.scene);
     // Lit for a tone-mapped pipeline, so these are deliberately hot: see
-    // `#applyToneMapping`. Values that look blown out written down here are
-    // what the ACES curve turns into a highlight rather than a white blob.
-    ambient.intensity = racing ? 0.55 : 0.55;
+    // `#applyToneMapping`. The split between ambient and sun is the SHADOW
+    // CONTRAST dial: ambient is the light a shadow still receives, so the
+    // ratio between the two is how dark a shadow can possibly be. It used to
+    // sit near 1:4, which is why the whole scene read as flatly, evenly lit —
+    // shadows could never be more than a quarter-step darker than the sun.
+    ambient.intensity = racing ? 0.38 : 0.55;
     // Bounced light takes the colour of what it bounced off. Outdoors that is
     // sky above and ground below, and saying so is most of what separates a
     // scene that looks lit from one that looks tinted.
-    ambient.diffuse = racing ? new Color3(0.86, 0.9, 1) : new Color3(1, 1, 1);
-    ambient.groundColor = racing ? new Color3(0.22, 0.26, 0.2) : new Color3(0.12, 0.13, 0.18);
+    ambient.diffuse = racing ? new Color3(0.82, 0.88, 1) : new Color3(1, 1, 1);
+    ambient.groundColor = racing ? new Color3(0.24, 0.26, 0.21) : new Color3(0.12, 0.13, 0.18);
 
     // The direction comes from the sky, so the disc a player can see and the
     // light casting their shadow are one fact rather than two constants that
     // can drift. A sun in the wrong half of the sky is wrongness everybody
     // feels and nobody names.
-    const sun = new DirectionalLight(
+    this.#sun = new DirectionalLight(
       'sun',
       new Vector3(SUN_TRAVEL.x, SUN_TRAVEL.y, SUN_TRAVEL.z),
       this.scene,
     );
-    sun.position = new Vector3(-SUN_TRAVEL.x * 40, -SUN_TRAVEL.y * 40, -SUN_TRAVEL.z * 40);
-    sun.intensity = racing ? 2.4 : 1.1;
+    this.#sun.position = new Vector3(-SUN_TRAVEL.x * 40, -SUN_TRAVEL.y * 40, -SUN_TRAVEL.z * 40);
+    this.#sun.intensity = racing ? 2.8 : 1.1;
     // Warm, because sunlight is. A neutral key against a cool sky is what
     // makes a scene read as fluorescent.
-    if (racing) sun.diffuse = new Color3(1, 0.96, 0.86);
+    if (racing) this.#sun.diffuse = new Color3(1, 0.96, 0.86);
 
     const span = Math.max(config.arenaHalfExtentX, config.arenaHalfExtentZ);
-    sun.shadowMinZ = 1;
-    sun.shadowMaxZ = span * 6;
+    this.#sun.shadowMinZ = 1;
+    this.#sun.shadowMaxZ = span * 6;
 
+    return this.#createShadows(this.#governor.tier);
+  }
+
+  /**
+   * The shadow generator a tier can afford. Three genuinely different rigs:
+   *
+   * ```
+   *   low     512 blurred exponential map — soft blobs under the cars.
+   *   medium  quality.shadowMapSize, same technique, sharper.
+   *   high    CASCADED shadow map: the treeline, the tyre walls and the
+   *           boards all cast, and the map follows the camera so near
+   *           shadows are sharp and far ones are cheap.
+   * ```
+   *
+   * The cascade rig is the difference between "a game with shadows under the
+   * cars" and "an outdoor scene": a world where nothing tall throws shade
+   * reads as evenly lit from everywhere, which is exactly the flat look this
+   * whole pass exists to kill. It is also several hundred extra draws into
+   * the shadow map, which is why it is high-tier only.
+   *
+   * `quality.shadowMapSize` was, before this, defined in the tier table and
+   * then never read — the constructor sniffed the pointer type instead. The
+   * tier is the policy; it decides now.
+   */
+  #createShadows(tier: QualityTier): ShadowGenerator | null {
+    if (!this.#sun) return null;
+    const quality = qualitySettings(tier);
     try {
-      // Shadow maps are the single most expensive thing in this scene. Halve
-      // the resolution on touch devices, where the GPU is weaker and the
-      // screen is too small to notice.
-      const isCoarsePointer = globalThis.matchMedia?.('(pointer: coarse)').matches ?? false;
-      const shadows = new ShadowGenerator(isCoarsePointer ? 512 : 1024, sun);
+      if (quality.cascadedShadows) {
+        const cascades = new CascadedShadowGenerator(quality.shadowMapSize, this.#sun);
+        cascades.numCascades = 2;
+        // Bias the split toward the near field: the far cascade only has to
+        // catch the treeline, which nobody reads closely.
+        cascades.lambda = 0.85;
+        cascades.stabilizeCascades = true;
+        // Follows the fog: past it a shadow would land on haze anyway.
+        const span = Math.max(this.#config.arenaHalfExtentX, this.#config.arenaHalfExtentZ);
+        cascades.shadowMaxZ = span * 3;
+        cascades.bias = 0.012;
+        cascades.normalBias = 0.02;
+        // Alpha-tested casters: the pine cards must punch tree-shaped holes
+        // in the light, not card-shaped ones.
+        cascades.transparencyShadow = true;
+        cascades.usePercentageCloserFiltering = true;
+        cascades.filteringQuality = ShadowGenerator.QUALITY_MEDIUM;
+        cascades.darkness = 0.25;
+        return cascades;
+      }
+
+      const shadows = new ShadowGenerator(quality.shadowMapSize, this.#sun);
       shadows.useBlurExponentialShadowMap = true;
-      shadows.blurKernel = isCoarsePointer ? 16 : 24;
-      shadows.darkness = 0.35;
+      shadows.blurKernel = quality.shadowMapSize <= 512 ? 16 : 24;
+      shadows.darkness = 0.3;
       return shadows;
     } catch {
       // Some software renderers refuse the shadow map format. Losing shadows
@@ -913,11 +986,21 @@ export class Renderer {
       return material;
     }
     const material = new PBRMaterial('wall:mat', this.scene);
-    material.albedoColor = Color3.FromHexString('#9aa0ad').toLinearSpace();
-    material.metallic = 0;
-    // Concrete. Rough enough to have no highlight of its own, so all it ever
-    // shows is the sky's own brightness.
-    material.roughness = 0.9;
+    material.albedoColor = Color3.FromHexString('#787f8a').toLinearSpace();
+    material.metallic = 0.2;
+    // Rough enough to have no highlight of its own, so all it ever shows is
+    // the sky's own brightness — and corrugated, because a flat slab the
+    // length of the horizon is the fastest way to look like a demo. The tiling
+    // is coarse: this wall is only ever seen from far away.
+    material.roughness = 0.72;
+    const steel = createSurface(this.scene, 'wall:steel', corrugation(128), {
+      size: 128,
+      uScale: 48,
+      vScale: 1,
+      strength: 7,
+      withNormal: qualitySettings(this.#governor.tier).normalMaps,
+    });
+    material.bumpTexture = steel.normal;
     return material;
   }
 

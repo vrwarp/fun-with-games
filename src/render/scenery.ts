@@ -1,14 +1,17 @@
 import { Mesh } from '@babylonjs/core/Meshes/mesh.js';
 import { CreateBox } from '@babylonjs/core/Meshes/Builders/boxBuilder.js';
 import { CreateCylinder } from '@babylonjs/core/Meshes/Builders/cylinderBuilder.js';
+import { CreatePlane } from '@babylonjs/core/Meshes/Builders/planeBuilder.js';
 import { CreateTorus } from '@babylonjs/core/Meshes/Builders/torusBuilder.js';
 import { PBRMaterial } from '@babylonjs/core/Materials/PBR/pbrMaterial.js';
 import { Color3 } from '@babylonjs/core/Maths/math.color.js';
 import { Matrix } from '@babylonjs/core/Maths/math.vector.js';
+import type { DynamicTexture } from '@babylonjs/core/Materials/Textures/dynamicTexture.js';
 import type { Material } from '@babylonjs/core/Materials/material.js';
 import type { Scene } from '@babylonjs/core/scene.js';
 import type { SimConfig } from '../sim/config.js';
 import { sampleTrack, trackLength, trackPoseAt } from '../sim/track.js';
+import { createBoardTexture, createPineTexture } from './textures.js';
 
 /**
  * The world on the other side of the barrier.
@@ -50,46 +53,18 @@ import { sampleTrack, trackLength, trackPoseAt } from '../sim/track.js';
  */
 const SCENERY_REACH = 30;
 
-/** One cone of foliage: how high its base sits, how wide and how tall it is. */
-interface Tier {
-  readonly y: number;
-  readonly diameter: number;
-  readonly height: number;
-}
-
 /**
  * The three trees this circuit is planted with.
  *
- * A tall narrow spruce, a broad low one, and something in between — chosen so
- * the SILHOUETTES differ, because that is what separates them at the distance
- * they are actually seen from. The colours differ too, but by less than the
- * shapes: a wood is not a paint chart.
+ * A tall narrow spruce, a broad low one, and something in between — the
+ * SHAPES differ more than the colours, because silhouette is what separates
+ * trees at the distance these are seen from. Each species draws its own card
+ * texture, so the outlines differ too, not just the proportions.
  */
-const TREE_SPECIES: ReadonlyArray<{ leaf: Color3; tiers: readonly Tier[] }> = [
-  {
-    leaf: new Color3(0.09, 0.2, 0.07),
-    tiers: [
-      { y: 3.2, diameter: 2.8, height: 3 },
-      { y: 4.8, diameter: 2, height: 2.6 },
-      { y: 6.1, diameter: 1.2, height: 2.2 },
-    ],
-  },
-  {
-    leaf: new Color3(0.13, 0.24, 0.08),
-    tiers: [
-      { y: 2.4, diameter: 4.2, height: 2.4 },
-      { y: 3.6, diameter: 3.2, height: 2 },
-      { y: 4.5, diameter: 2, height: 1.6 },
-    ],
-  },
-  {
-    leaf: new Color3(0.1, 0.19, 0.11),
-    tiers: [
-      { y: 2.9, diameter: 3.4, height: 2.6 },
-      { y: 4.2, diameter: 2.5, height: 2.2 },
-      { y: 5.3, diameter: 1.6, height: 1.9 },
-    ],
-  },
+const TREE_SPECIES: ReadonlyArray<{ leaf: Color3; height: number; width: number }> = [
+  { leaf: new Color3(0.16, 0.3, 0.14), height: 8.4, width: 4.4 },
+  { leaf: new Color3(0.22, 0.34, 0.13), height: 6.2, width: 5.2 },
+  { leaf: new Color3(0.18, 0.28, 0.17), height: 7.2, width: 4.8 },
 ];
 
 /** One instance: where it stands, which way it faces, how big it is. */
@@ -232,6 +207,78 @@ export function tyreWalls(
   return out;
 }
 
+/**
+ * Placements at an even spacing along the whole lap, at a lateral offset.
+ *
+ * The barrier posts: unconditional, unlike `tyreWalls`, because a guardrail
+ * has a post every few metres whether the road bends or not — and the posts
+ * are what stop a hundred-metre barrier reading as one extruded slab.
+ */
+export function alongTrack(
+  path: readonly { x: number; z: number }[],
+  lap: number,
+  offset: number,
+  spacing: number,
+): Placement[] {
+  if (path.length < 2 || lap <= 0 || spacing <= 0) return [];
+  const out: Placement[] = [];
+  const steps = Math.max(4, Math.floor(lap / spacing));
+  for (let i = 0; i < steps; i++) {
+    const pose = trackPoseAt(path, (lap * i) / steps);
+    out.push({
+      x: pose.x + pose.dirZ * offset,
+      z: pose.z - pose.dirX * offset,
+      angle: Math.atan2(pose.dirX, pose.dirZ),
+      scale: 1,
+      tint: (i % 7) / 7,
+    });
+  }
+  return out;
+}
+
+/**
+ * Placements for advertising boards: along the straights, facing the road.
+ *
+ * The inverse of `tyreWalls`' filter — boards go where the road does NOT
+ * bend, partly because that is where a circuit really mounts them and partly
+ * because a board across a corner would hide the one thing a driver must see,
+ * which is the corner. `side` picks which edge of the road; the boards yaw to
+ * face back across it.
+ */
+export function boardRun(
+  path: readonly { x: number; z: number }[],
+  lap: number,
+  offset: number,
+  spacing: number,
+  side: 1 | -1,
+): Placement[] {
+  if (path.length < 2 || lap <= 0 || spacing <= 0) return [];
+  const out: Placement[] = [];
+  const chord = 5;
+  const steps = Math.max(4, Math.floor(lap / spacing));
+  for (let i = 0; i < steps; i++) {
+    const at = (lap * i) / steps;
+    const behind = trackPoseAt(path, at - chord);
+    const ahead = trackPoseAt(path, at + chord);
+    const cross = behind.dirX * ahead.dirZ - behind.dirZ * ahead.dirX;
+    const dot = behind.dirX * ahead.dirX + behind.dirZ * ahead.dirZ;
+    if (Math.abs(Math.atan2(cross, dot)) > 0.09) continue;
+
+    const pose = trackPoseAt(path, at);
+    out.push({
+      x: pose.x + pose.dirZ * side * offset,
+      z: pose.z - pose.dirX * side * offset,
+      // A plane faces its own +Z; yawing it to the road's heading turns its
+      // face across the road for the right-hand side, and PI further round
+      // for the left.
+      angle: Math.atan2(pose.dirX, pose.dirZ) + (side > 0 ? Math.PI : 0),
+      scale: 1,
+      tint: (i % 5) / 5,
+    });
+  }
+  return out;
+}
+
 /** Applies a placement list to a mesh as thin instances. */
 function instance(mesh: Mesh, placements: readonly Placement[], lift = 0): void {
   if (placements.length === 0) {
@@ -274,6 +321,9 @@ function instance(mesh: Mesh, placements: readonly Placement[], lift = 0): void 
 export class Scenery {
   #meshes: Mesh[] = [];
   #materials: Material[] = [];
+  #textures: DynamicTexture[] = [];
+  /** Everything that should throw a shadow, for the renderer to register. */
+  #casters: Mesh[] = [];
 
   constructor(scene: Scene, config: SimConfig) {
     if (!config.track.enabled || config.trackPath.length < 2) return;
@@ -282,27 +332,8 @@ export class Scenery {
     const lap = trackLength(path);
     const barrier = config.track.halfWidth + Math.max(config.track.barrierRunoff, 3);
 
-    const bark = this.#material(scene, 'scenery:bark', new Color3(0.19, 0.14, 0.1), 0.92);
-    // Lighter and glossier than a tyre on a car. These are seen against grass
-    // in full sun rather than in a wheel arch, and at the darkest setting they
-    // read as holes cut in the scenery rather than as objects.
-    const rubber = this.#material(scene, 'scenery:rubber', new Color3(0.075, 0.075, 0.08), 0.82);
-    const post = this.#material(scene, 'scenery:post', new Color3(0.55, 0.56, 0.6), 0.6);
-
-    // Trees, well back from the road: far enough that leaving the circuit is
-    // never a collision with scenery, close enough to stream past on a straight.
-    // Just beyond the barrier, and that is a deliberate reading of where the
-    // world ends. The barrier is already the visual limit and already collides
-    // with nothing — a car that slides past it is off the map, not in a wood —
-    // so the treeline may start where the barrier does. Any further out and
-    // there is simply nowhere to stand: this circuit fills its arena, and at a
-    // six-metre setback only nineteen trees fit anywhere at all, all of them in
-    // the corners where nobody is looking.
-    // Well PAST the arena, not just up to it. The boundary wall is a couple of
-    // metres high and the ground now runs out to the fog, so trees planted
-    // only inside the arena leave a bare grey band across the horizon in every
-    // cockpit shot — the wall, with nothing behind it. Planting beyond puts a
-    // treeline above the wall instead, which is what hides it.
+    // Trees, planted well past the arena so the treeline stands above the
+    // boundary wall instead of leaving it a bare grey band on the horizon.
     const trees = scatter(
       {
         halfExtentX: config.arenaHalfExtentX + SCENERY_REACH,
@@ -313,45 +344,97 @@ export class Scenery {
       5,
       11,
     );
-    instance(this.#trunk(scene, bark), trees);
-    // Three species rather than one, and this is the difference between a wood
-    // and wallpaper. A single prototype repeated four hundred times is found
-    // out immediately however well it is drawn: the eye is very good at
-    // spotting a repeated silhouette and rather bad at measuring a tree.
-    //
-    // The obvious cheap fix — one mesh, a colour per instance — did not take:
-    // a thin-instance colour buffer needs the material to be set up to read
-    // it, and rather than chase that, three prototypes cost two extra draw
-    // calls and vary SHAPE as well as hue, which is the stronger signal.
+    // Three species, split by each placement's tint so the mix is stable.
     TREE_SPECIES.forEach((species, index) => {
       const share = trees.filter((tree) => Math.floor(tree.tint * TREE_SPECIES.length) === index);
-      instance(
-        this.#canopy(
-          scene,
-          this.#material(scene, `scenery:leaf${index}`, species.leaf, 0.88),
-          species.tiers,
-        ),
-        share,
-      );
+      const pine = this.#pine(scene, index, species);
+      instance(pine, share);
+      this.#casters.push(pine);
     });
 
-    // Tyre walls on the outside of every real corner.
-    // Close enough together to form a continuous wall through a corner. A
-    // stack every five metres reads as litter; every two reads as a barrier.
-    instance(this.#tyreStack(scene, rubber), tyreWalls(path, lap, barrier - 0.6, 2.2));
+    // Tyre walls on the outside of every real corner — and PAINTED, in the
+    // red/white/blue bundles a real circuit wraps them in. All black they
+    // read as licorice; the paint is what says "safety equipment".
+    const bundleColours = [
+      new Color3(0.55, 0.12, 0.1),
+      new Color3(0.78, 0.78, 0.74),
+      new Color3(0.09, 0.09, 0.1),
+    ];
+    const stacks = tyreWalls(path, lap, barrier - 0.6, 2.2);
+    bundleColours.forEach((colour, index) => {
+      const share = stacks.filter((_, i) => i % bundleColours.length === index);
+      const stack = this.#tyreStack(
+        scene,
+        this.#material(scene, `scenery:tyres${index}`, colour, 0.75),
+        index,
+      );
+      instance(stack, share);
+      this.#casters.push(stack);
+    });
+
+    // Guardrail posts, one every few metres on both sides. They are what stop
+    // a hundred-metre barrier reading as one extruded slab.
+    const postMaterial = this.#material(scene, 'scenery:guard', new Color3(0.32, 0.34, 0.38), 0.55);
+    const posts = [
+      ...alongTrack(path, lap, barrier + 0.55, 4.2),
+      ...alongTrack(path, lap, -(barrier + 0.55), 4.2),
+    ];
+    const post = this.#guardPost(scene, postMaterial);
+    instance(post, posts);
+    this.#casters.push(post);
+
+    // Advertising boards along the straights, both sides, faces toward the
+    // road. Two designs, alternated by placement so neighbours differ.
+    const boardSpecs: Array<{ text: string; background: string; foreground: string }> = [
+      { text: 'APEX AERO', background: '#d8dde2', foreground: '#16233c' },
+      { text: 'VELOCE', background: '#b32531', foreground: '#f4f1ea' },
+      { text: 'TARMAC PRO', background: '#12386b', foreground: '#e9edf3' },
+    ];
+    const runs = [
+      ...boardRun(path, lap, barrier + 0.4, 7, 1),
+      ...boardRun(path, lap, -(barrier + 0.4), 7, -1),
+    ];
+    boardSpecs.forEach((spec, index) => {
+      const share = runs.filter((_, i) => i % boardSpecs.length === index);
+      const board = this.#board(scene, spec);
+      instance(board, share);
+      this.#casters.push(board);
+    });
 
     // Marshal posts, sparser than the corners so they read as punctuation.
+    const marshal = this.#marshalPost(
+      scene,
+      this.#material(scene, 'scenery:post', new Color3(0.55, 0.56, 0.6), 0.6),
+    );
     instance(
-      this.#marshalPost(scene, post),
+      marshal,
       tyreWalls(path, lap, barrier + 2.2, 26).map((placement) => ({ ...placement, scale: 1 })),
     );
+    this.#casters.push(marshal);
+  }
+
+  /**
+   * Registers everything here as a shadow caster.
+   *
+   * Called by the renderer, and only on the tier that can afford it: a
+   * treeline throwing long shadows across the road is one of the strongest
+   * "outdoors" cues there is, and also several hundred extra draws into the
+   * shadow map.
+   */
+  addCastersTo(shadows: { addShadowCaster(mesh: Mesh): void }): void {
+    for (const mesh of this.#casters) {
+      if (!mesh.isDisposed()) shadows.addShadowCaster(mesh);
+    }
   }
 
   dispose(): void {
     for (const mesh of this.#meshes) mesh.dispose();
     for (const material of this.#materials) material.dispose();
+    for (const texture of this.#textures) texture.dispose();
     this.#meshes = [];
     this.#materials = [];
+    this.#textures = [];
+    this.#casters = [];
   }
 
   // -------------------------------------------------------------- internals
@@ -370,47 +453,80 @@ export class Scenery {
     return mesh;
   }
 
-  #trunk(scene: Scene, material: Material): Mesh {
-    const mesh = CreateCylinder(
-      'scenery:trunk',
-      { diameterTop: 0.28, diameterBottom: 0.45, height: 2.6, tessellation: 6 },
-      scene,
-    );
-    mesh.position.y = 1.3;
-    mesh.bakeCurrentTransformIntoVertices();
-    mesh.material = material;
-    return this.#keep(mesh);
-  }
-
   /**
-   * Foliage: three stacked cones, narrowing upward.
+   * A conifer as three alpha-cut cards: two crossed uprights and one
+   * horizontal cap.
    *
-   * One cone is a party hat. Three overlapping ones break the silhouette
-   * enough that a tree reads as a tree at the distance these are actually
-   * seen from, which is far.
+   * This replaced stacked cones, and the reason is the silhouette: a cone is
+   * geometry pretending to be a tree, a drawn card IS the tree's outline,
+   * ragged fronds and all. The cap card exists because the isometric camera
+   * looks DOWN, which collapses crossed uprights into a thin X — from above
+   * you see the cap's radial fronds instead.
    */
-  #canopy(scene: Scene, material: Material, tiers: readonly Tier[]): Mesh {
-    const parts = tiers.map((tier, index) => {
-      const cone = CreateCylinder(
-        `scenery:canopy${index}`,
-        { diameterTop: 0, diameterBottom: tier.diameter, height: tier.height, tessellation: 7 },
+  #pine(
+    scene: Scene,
+    index: number,
+    species: { leaf: Color3; height: number; width: number },
+  ): Mesh {
+    const side = createPineTexture(scene, index * 17 + 3, {
+      r: species.leaf.r,
+      g: species.leaf.g,
+      b: species.leaf.b,
+    });
+    this.#textures.push(side);
+
+    // Three uprights at sixty degrees, and NO horizontal cap. A cap card is
+    // the textbook answer for cameras that look straight down, but seen from
+    // anywhere near the ground it becomes a smeared line slicing every tree
+    // in half — and this game's cameras live near the ground. Three oblique
+    // cards stay oblique from the isometric camera too (it looks down at 53
+    // degrees, not 90), which is volume enough.
+    const material = this.#foliage(scene, `scenery:pine${index}`, side);
+    const cards = [0, Math.PI / 3, (Math.PI * 2) / 3].map((yaw, i) => {
+      const card = CreatePlane(
+        `scenery:pinecard${index}:${i}`,
+        { width: species.width, height: species.height },
         scene,
       );
-      cone.position.y = tier.y;
-      return cone;
+      card.rotation.y = yaw;
+      card.position.y = species.height / 2;
+      card.bakeCurrentTransformIntoVertices();
+      card.material = material;
+      return card;
     });
-    const merged = Mesh.MergeMeshes(parts, true, true, undefined, false, false);
-    if (!merged) return this.#keep(parts[0] as Mesh);
-    merged.name = 'scenery:canopy';
+
+    const merged = Mesh.MergeMeshes(cards, true, true, undefined, false, false);
+    if (!merged) return this.#keep(cards[0] as Mesh);
+    merged.name = `scenery:pine${index}`;
     merged.material = material;
     return this.#keep(merged);
   }
 
-  /** Three tyres on their side, stacked. */
-  #tyreStack(scene: Scene, material: Material): Mesh {
-    const parts = [0.35, 0.95, 1.55].map((y, index) => {
+  /** The material a foliage card wants: alpha-cut, matte, lit from both sides. */
+  #foliage(scene: Scene, name: string, texture: DynamicTexture): PBRMaterial {
+    const material = new PBRMaterial(name, scene);
+    material.albedoTexture = texture;
+    texture.hasAlpha = true;
+    material.useAlphaFromAlbedoTexture = true;
+    material.transparencyMode = PBRMaterial.MATERIAL_ALPHATEST;
+    material.alphaCutOff = 0.4;
+    material.metallic = 0;
+    material.roughness = 1;
+    // A card has no thickness, so it must light from either face — and the
+    // specular lobe is killed outright, because a glinting flat quad is what
+    // gives the card trick away.
+    material.backFaceCulling = false;
+    material.twoSidedLighting = true;
+    material.specularIntensity = 0.05;
+    this.#materials.push(material);
+    return material;
+  }
+
+  /** Three tyres on their side, stacked, with a soft paint-band variation. */
+  #tyreStack(scene: Scene, material: Material, index: number): Mesh {
+    const parts = [0.35, 0.95, 1.55].map((y, tier) => {
       const tyre = CreateTorus(
-        `scenery:tyre${index}`,
+        `scenery:tyre${index}:${tier}`,
         { diameter: 1.15, thickness: 0.42, tessellation: 10 },
         scene,
       );
@@ -419,8 +535,64 @@ export class Scenery {
     });
     const merged = Mesh.MergeMeshes(parts, true, true, undefined, false, false);
     if (!merged) return this.#keep(parts[0] as Mesh);
-    merged.name = 'scenery:tyres';
+    merged.name = `scenery:tyres${index}`;
     merged.material = material;
+    return this.#keep(merged);
+  }
+
+  /** One guardrail post: a dark upright with a shallow cap. */
+  #guardPost(scene: Scene, material: Material): Mesh {
+    const mesh = CreateBox('scenery:guardpost', { width: 0.16, height: 1.15, depth: 0.22 }, scene);
+    mesh.position.y = 0.55;
+    mesh.bakeCurrentTransformIntoVertices();
+    mesh.material = material;
+    return this.#keep(mesh);
+  }
+
+  /**
+   * One advertising board, standing on the barrier line.
+   *
+   * Two one-sided planes back to back, not one two-sided plane: a two-sided
+   * plane shows its texture MIRRORED from behind, and half the boards on a
+   * circuit are seen from behind. A real board's back is blank steel, so the
+   * back here is one.
+   */
+  #board(scene: Scene, spec: { text: string; background: string; foreground: string }): Mesh {
+    const texture = createBoardTexture(scene, spec.text, spec.background, spec.foreground);
+    this.#textures.push(texture);
+
+    const material = new PBRMaterial(`scenery:board:${spec.text}`, scene);
+    material.albedoTexture = texture;
+    material.metallic = 0;
+    material.roughness = 0.5;
+    this.#materials.push(material);
+
+    const backing = this.#material(
+      scene,
+      `scenery:board:${spec.text}:back`,
+      new Color3(0.3, 0.31, 0.34),
+      0.6,
+    );
+
+    const face = CreatePlane('scenery:board', { width: 5.6, height: 1.05 }, scene);
+    face.position.y = 1.72;
+    face.bakeCurrentTransformIntoVertices();
+    face.material = material;
+
+    const back = CreatePlane('scenery:board:back', { width: 5.6, height: 1.05 }, scene);
+    back.rotation.y = Math.PI;
+    back.position.y = 1.72;
+    back.bakeCurrentTransformIntoVertices();
+    back.material = backing;
+
+    const legs = CreateBox('scenery:board:leg', { width: 5.2, height: 0.5, depth: 0.08 }, scene);
+    legs.position.y = 0.95;
+    legs.bakeCurrentTransformIntoVertices();
+    legs.material = backing;
+
+    const merged = Mesh.MergeMeshes([face, back, legs], true, true, undefined, false, true);
+    if (!merged) return this.#keep(face);
+    merged.name = 'scenery:board';
     return this.#keep(merged);
   }
 

@@ -114,7 +114,7 @@ interface PickupView {
 export class EntityViews {
   readonly #scene: Scene;
   readonly #config: SimConfig;
-  readonly #shadows: ShadowGenerator | null;
+  #shadows: ShadowGenerator | null;
 
   #players = new Map<string, PlayerView>();
   #pickups = new Map<number, PickupView>();
@@ -215,6 +215,18 @@ export class EntityViews {
   /** Whether the camera is inside the local player. See `EntityViewOptions`. */
   setFirstPerson(firstPerson: boolean): void {
     this.#firstPerson = firstPerson;
+  }
+
+  /**
+   * Swaps in a new shadow generator, when a tier change rebuilt it.
+   *
+   * The bodies are thrown away rather than re-registered: caster lists live
+   * inside the generator, and the next `sync` rebuilds every view against the
+   * new one through the same path that built them the first time.
+   */
+  setShadows(shadows: ShadowGenerator | null): void {
+    this.#shadows = shadows;
+    this.#rebuildPlayers();
   }
 
   /**

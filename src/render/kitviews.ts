@@ -38,7 +38,9 @@ const ZONE_BASE_COLORS: Record<RenderZone['kind'], string> = {
 export class KitViews {
   readonly #scene: Scene;
   readonly #config: SimConfig;
-  readonly #shadows: ShadowGenerator | null;
+  #shadows: ShadowGenerator | null;
+  /** Meshes registered at construction, to re-register on a generator swap. */
+  #staticCasters: Mesh[] = [];
 
   #zones = new Map<number, { mesh: Mesh; material: StandardMaterial }>();
   #ball: { mesh: Mesh; material: StandardMaterial } | null = null;
@@ -64,13 +66,31 @@ export class KitViews {
 
     config.zones.forEach((spec, id) => {
       if (!drawn.includes(spec)) return;
-      const mesh = CreateDisc(`zone:${id}`, { radius: spec.radius, tessellation: 48 }, scene);
-      mesh.rotation.x = Math.PI / 2;
+      // On a circuit a zone is a painted RING, not a filled disc. A translucent
+      // dinner plate the size of a pit box is pure interface floating in a
+      // scene that otherwise works hard to look like a place; a painted circle
+      // is how a real circuit marks designated ground.
+      const ring = onTrack;
+      const mesh = ring
+        ? CreateTorus(
+            `zone:${id}`,
+            { diameter: spec.radius * 2, thickness: 0.16, tessellation: 40 },
+            scene,
+          )
+        : CreateDisc(`zone:${id}`, { radius: spec.radius, tessellation: 48 }, scene);
+      if (ring) {
+        // Squashed nearly flat: paint has no height, and a torus lying in the
+        // plane already, so only its tube needs flattening.
+        mesh.scaling.y = 0.12;
+      } else {
+        mesh.rotation.x = Math.PI / 2;
+      }
       mesh.position.set(spec.x, 0.03, spec.z);
       mesh.isPickable = false;
 
       const material = new StandardMaterial(`zone:${id}:mat`, scene);
-      material.alpha = 0.32;
+      // Faint for a ring: it is road paint seen from altitude, not signage.
+      material.alpha = ring ? 0.38 : 0.32;
       material.disableLighting = true;
       // The disc lies flat and is viewed from above; culling would decide its
       // visibility by winding order, which is exactly the kind of silent bug
@@ -90,6 +110,7 @@ export class KitViews {
       mesh.material = material;
       mesh.isPickable = false;
       this.#shadows?.addShadowCaster(mesh);
+      this.#staticCasters.push(mesh);
       this.#ball = { mesh, material };
     }
 
@@ -127,6 +148,21 @@ export class KitViews {
     this.#syncBall(state);
     this.#syncProjectiles(state);
     this.#syncItems(state);
+  }
+
+  /**
+   * Swaps in a new shadow generator after a tier change.
+   *
+   * Static kit meshes (zones, the ball) were registered at construction, so
+   * they re-register here; dynamic ones (projectiles, items) go through
+   * `#shadows` at spawn and pick the new generator up on their own.
+   */
+  setShadows(shadows: ShadowGenerator | null): void {
+    this.#shadows = shadows;
+    if (!shadows) return;
+    for (const caster of this.#staticCasters) {
+      if (!caster.isDisposed()) shadows.addShadowCaster(caster);
+    }
   }
 
   dispose(): void {

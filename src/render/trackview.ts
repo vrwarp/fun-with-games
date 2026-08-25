@@ -1,5 +1,6 @@
 import { Color3 } from '@babylonjs/core/Maths/math.color.js';
 import { Vector3 } from '@babylonjs/core/Maths/math.vector.js';
+import { Constants } from '@babylonjs/core/Engines/constants.js';
 import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial.js';
 import { PBRMaterial } from '@babylonjs/core/Materials/PBR/pbrMaterial.js';
 import type { Material } from '@babylonjs/core/Materials/material.js';
@@ -58,7 +59,19 @@ const LINE_Y = 0.14;
  * itself. A polygon offset biases the comparison rather than the geometry, so
  * the paint stays flat and still wins.
  */
-const LAYER_BIAS = { rubber: -0.5, drs: -1, kerb: -2, limit: -2.5, sector: -3, line: -4 } as const;
+const LAYER_BIAS = {
+  wearWide: -0.2,
+  wearMid: -0.25,
+  wearCore: -0.3,
+  seam: -0.35,
+  dust: -0.4,
+  rubber: -0.5,
+  drs: -1,
+  kerb: -2,
+  limit: -2.5,
+  sector: -3,
+  line: -4,
+} as const;
 
 /**
  * How far the ideal line moves toward the inside of a corner, as a fraction of
@@ -211,6 +224,9 @@ export class TrackView {
     const kerb = this.#kerbMaterial(lap);
     this.#band('track:kerb:l', path, 0, lap, half - 0.9, half, KERB_Y, kerb);
     this.#band('track:kerb:r', path, 0, lap, -half, -half + 0.9, KERB_Y, kerb);
+
+    // The value structure a used road has before anyone drives today.
+    this.#roadWear(path, lap, half);
 
     // The fast line, and the white paint that says where the road ends.
     this.#racingLine(path, lap, half);
@@ -644,6 +660,66 @@ export class TrackView {
    * two outer paths carry zero alpha and the two inner ones carry full, which
    * costs one extra quad across the width and buys the whole effect.
    */
+  /**
+   * The macro value structure a used road has: a rubbered-in darker middle,
+   * pale dusty shoulders where nobody drives, and a surfacing seam every
+   * thirty-odd metres.
+   *
+   * This is most of what makes real tarmac readable from two hundred metres —
+   * the texture's chips vanish past twenty, but these bands never do. The
+   * middle is MULTIPLIED over the road in three nested steps, because a
+   * multiply can only darken (paint that lightened the road would float over
+   * it), the steps fake the soft falloff a hard-edged band lacks, and the
+   * chip noise underneath breaks the steps up. The shoulders are additive
+   * dust, priced against the linear road value like every overlay here. The
+   * seams reuse `#band` across a 14cm arc — a seam IS a very short band.
+   */
+  #roadWear(path: readonly TrackPoint[], lap: number, half: number): void {
+    const steps = [
+      { reach: 0.56, bias: LAYER_BIAS.wearWide },
+      { reach: 0.42, bias: LAYER_BIAS.wearMid },
+      { reach: 0.26, bias: LAYER_BIAS.wearCore },
+    ];
+    steps.forEach((step, index) => {
+      const material = new StandardMaterial(`track:wear${index}:mat`, this.#scene);
+      material.emissiveColor = new Color3(0.9, 0.9, 0.92);
+      material.disableLighting = true;
+      material.alphaMode = Constants.ALPHA_MULTIPLY;
+      // 0.99 rather than 1: an alpha of exactly one opts out of blending and
+      // the band would overwrite the road instead of multiplying it.
+      material.alpha = 0.99;
+      material.zOffset = step.bias;
+      material.backFaceCulling = CULL_BACK_FACES;
+      this.#materials.push(material);
+      this.#band(
+        `track:wear${index}`,
+        path,
+        0,
+        lap,
+        -half * step.reach,
+        half * step.reach,
+        RUBBER_Y,
+        material,
+      );
+    });
+
+    // Dust: the outer lane a race never uses goes paler, not darker.
+    const dust = this.#flatMaterial('track:dust', '#7d786c', 0.09, LAYER_BIAS.dust);
+    this.#band('track:dust:l', path, 0, lap, half * 0.74, half - 1.15, RUBBER_Y, dust);
+    this.#band('track:dust:r', path, 0, lap, -(half - 1.15), -half * 0.74, RUBBER_Y, dust);
+
+    // Surfacing seams. 31 metres, not 30: a spacing that never quite beats
+    // against the kerb stripes or the tile period reads as laid, not tiled.
+    const seam = this.#flatMaterial('track:seam', '#0d0e10', 0.4, LAYER_BIAS.seam);
+    const count = Math.max(4, Math.round(lap / 31));
+    for (let i = 0; i < count; i++) {
+      const at = (lap * i) / count;
+      // Keep clear of the start boards, which own that stretch visually.
+      if (at < 4 || lap - at < 4) continue;
+      this.#band(`track:seam:${i}`, path, at - 0.07, at + 0.07, -half, half, RUBBER_Y, seam);
+    }
+  }
+
   #racingLine(path: readonly TrackPoint[], lap: number, half: number): void {
     const samples = Math.max(16, Math.round(lap / 1.5));
     const offsets = racingLineOffsets(path, lap, samples, (half - LINE_HALF_WIDTH) * LINE_REACH);

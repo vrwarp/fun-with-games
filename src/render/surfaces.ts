@@ -476,6 +476,14 @@ export function createSurface(
   albedo.wrapV = Texture.WRAP_ADDRESSMODE;
   albedo.uScale = uScale;
   albedo.vScale = vScale;
+  // Anisotropic filtering, because every surface here is seen at a grazing
+  // angle: a road from a cockpit is a texture viewed nearly edge-on, and
+  // trilinear alone blurs it into featureless grey by fifteen metres — the
+  // loudest "this is a render" signal a driving game can emit, defeating the
+  // whole file above. Eight taps is the knee of the quality curve; a GPU
+  // without the extension (or a software rasteriser) clamps it back to what
+  // it has, so there is nothing to gate.
+  albedo.anisotropicFilteringLevel = 8;
 
   let normal: RawTexture | null = null;
   if (options.withNormal !== false) {
@@ -499,6 +507,9 @@ export function createSurface(
     normal.wrapV = Texture.WRAP_ADDRESSMODE;
     normal.uScale = uScale;
     normal.vScale = vScale;
+    // Same reasoning as the albedo above — a normal map that mips away at a
+    // grazing angle flattens the relief exactly where the light rakes it.
+    normal.anisotropicFilteringLevel = 8;
   }
 
   return {

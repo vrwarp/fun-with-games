@@ -30,7 +30,7 @@ Nothing below quietly restyles them: every branch is on
 | ----------------- | ----------------------------------------------------------------------- |
 | `renderer.ts`     | Engine, scene, camera, lights, shadows, fog, arena, post                |
 | `environment.ts`  | The generated sky: sun, clouds, a reflection probe and a visible dome   |
-| `scenery.ts`      | Trees, guard posts, sponsor boards — merged static meshes               |
+| `scenery.ts`      | Trees, guard posts, boards, street lamps — merged static meshes         |
 | `tyrestacks.ts`   | The tyre walls, drawn from simulation state — they are bodies now       |
 | `cardynamics.ts`  | Wheel spin, recovered steering, body lean, brake glow — pure            |
 | `smoke.ts`        | Tyre smoke and dust, gated by the same slip functions as the marks      |
@@ -352,8 +352,13 @@ The scene used to end at the kerb: grass, then a grey wall, then sky. A circuit
 drawn that way is a road on a plane, and no amount of work on the road fixes
 it — what tells you a track is somewhere is the stuff you are not looking at.
 
-`scenery.ts` plants trees, tyre walls and marshal posts. Three rules make it
-affordable and correct:
+`scenery.ts` plants trees, guard posts, boards and marshal posts — and, in a
+mode whose metadata asks for `'street'` furniture, paired **street lamps**:
+a thin pole, an arm, an unlit-emissive head, and an additive pool of warm
+lamplight painted on the ground under it (the contact-shadow trick run the
+other way). The heads glow instead of casting light — dozens of point lights
+is a budget nobody has — and at dusk the pools are most of what "lit street"
+means, on every tier. Three rules make all of it affordable and correct:
 
 - **Thin instances.** One mesh, one material, one draw call, and a buffer of
   transforms. Five hundred trees cost about what one tree costs.

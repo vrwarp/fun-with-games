@@ -5,6 +5,7 @@ import { CreatePlane } from '@babylonjs/core/Meshes/Builders/planeBuilder.js';
 import { PBRMaterial } from '@babylonjs/core/Materials/PBR/pbrMaterial.js';
 import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial.js';
 import { Color3 } from '@babylonjs/core/Maths/math.color.js';
+import { Constants } from '@babylonjs/core/Engines/constants.js';
 import { DynamicTexture } from '@babylonjs/core/Materials/Textures/dynamicTexture.js';
 import type { Texture } from '@babylonjs/core/Materials/Textures/texture.js';
 import { VertexBuffer } from '@babylonjs/core/Buffers/buffer.js';
@@ -58,6 +59,17 @@ import { createBoardTexture, createPineTexture } from './textures.js';
  * the haze has already swallowed it.
  */
 const SCENERY_REACH = 30;
+
+/**
+ * Street lamps (the `'street'` furniture set): spacing along the lap, pole
+ * height, how far the arm hangs the head over the verge, and the radius of
+ * the pool of light painted under it. Paired at this spacing they read as a
+ * lit street; at the posts' 4.2m they would read as a fence of light.
+ */
+const LAMP_SPACING = 26;
+const LAMP_HEIGHT = 4.8;
+const LAMP_ARM = 1.05;
+const LAMP_POOL_RADIUS = 3.4;
 
 /**
  * The three trees this circuit is planted with.
@@ -464,6 +476,11 @@ function instance(mesh: Mesh, placements: readonly Placement[], lift = 0): Mesh 
  * Built once and then simply exists — none of it moves, none of it reads
  * gameplay state, and none of it is asked a question by anything.
  */
+/** What the mode asked to stand beside the track (see `GameModeInfo`). */
+export interface SceneryOptions {
+  furniture?: 'street';
+}
+
 export class Scenery {
   #meshes: Mesh[] = [];
   #materials: Material[] = [];
@@ -474,7 +491,7 @@ export class Scenery {
   #bark: PBRMaterial | null = null;
   #scene: Scene;
 
-  constructor(scene: Scene, config: SimConfig) {
+  constructor(scene: Scene, config: SimConfig, options: SceneryOptions = {}) {
     this.#scene = scene;
     if (!config.track.enabled || config.trackPath.length < 2) return;
 
@@ -551,6 +568,27 @@ export class Scenery {
     );
     if (marshals) this.#casters.push(this.#keep(marshals));
 
+    // Street furniture: lit lamps, in the one mode that asks for them. The
+    // pole is honest the way the guard posts are honest — thin enough that
+    // clipping one is a blink, not a wall — and the light is the point: a
+    // string of warm heads down a dusk circuit is the difference between
+    // "test track after hours" and "city street". Both sides, facing in
+    // (the left run flips π, the same trick the sponsor boards use).
+    const lampSpots: Placement[] = [];
+    if (options.furniture === 'street') {
+      lampSpots.push(
+        ...alongTrack(path, lap, barrier + 0.9, LAMP_SPACING),
+        ...alongTrack(path, lap, -(barrier + 0.9), LAMP_SPACING).map((spot) => ({
+          ...spot,
+          angle: spot.angle + Math.PI,
+        })),
+      );
+      const lampPost = this.#material(scene, 'scenery:lamp', new Color3(0.16, 0.17, 0.19), 0.5);
+      const lamps = instance(this.#lamp(scene, lampPost), lampSpots);
+      if (lamps) this.#casters.push(this.#keep(lamps));
+      this.#lightPools(scene, lampSpots);
+    }
+
     // Contact shadows: a soft dark disc under everything that stands. One
     // merged batch, one draw. Cheaper than ambient occlusion and better at
     // the one thing that matters — saying "this object is ON the ground,
@@ -561,6 +599,7 @@ export class Scenery {
       ...posts.map((post) => ({ ...post, radius: 0.4 })),
       ...runs.map((run) => ({ ...run, radius: 2.6 })),
       ...marshalSpots.map((spot) => ({ ...spot, radius: 0.9 })),
+      ...lampSpots.map((spot) => ({ ...spot, radius: 0.45 })),
     ]);
   }
 
@@ -831,6 +870,118 @@ export class Scenery {
     if (!merged) return this.#keep(face);
     merged.name = 'scenery:board';
     return this.#keep(merged);
+  }
+
+  /**
+   * A street lamp: tapered pole, arm, and a lit head hung over the verge.
+   *
+   * The head is unlit emissive rather than a light source — dozens of point
+   * lights is a budget nobody has, least of all a phone — and at dusk what
+   * actually reads is the bright head and the pool it throws on the ground
+   * (`#lightPools`), both of which are nearly free. The arm reaches along
+   * local -x, which `alongTrack`'s frame points at the road.
+   */
+  #lamp(scene: Scene, post: PBRMaterial): Mesh {
+    const glow = new StandardMaterial('scenery:lamp:glow', scene);
+    glow.diffuseColor = new Color3(0, 0, 0);
+    glow.specularColor = new Color3(0, 0, 0);
+    glow.emissiveColor = new Color3(1, 0.82, 0.55);
+    this.#materials.push(glow);
+
+    const pole = CreateCylinder(
+      'scenery:lamp:pole',
+      { height: LAMP_HEIGHT, diameterTop: 0.09, diameterBottom: 0.15, tessellation: 6 },
+      scene,
+    );
+    pole.position.y = LAMP_HEIGHT / 2;
+    pole.bakeCurrentTransformIntoVertices();
+    pole.material = post;
+
+    const arm = CreateBox(
+      'scenery:lamp:arm',
+      { width: LAMP_ARM, height: 0.07, depth: 0.07 },
+      scene,
+    );
+    arm.position.set(-LAMP_ARM / 2, LAMP_HEIGHT - 0.04, 0);
+    arm.bakeCurrentTransformIntoVertices();
+    arm.material = post;
+
+    const head = CreateBox('scenery:lamp:head', { width: 0.55, height: 0.1, depth: 0.22 }, scene);
+    head.position.set(-LAMP_ARM, LAMP_HEIGHT - 0.13, 0);
+    head.bakeCurrentTransformIntoVertices();
+    head.material = glow;
+
+    const merged = Mesh.MergeMeshes([pole, arm, head], true, true, undefined, false, true);
+    if (!merged) return this.#keep(pole);
+    merged.name = 'scenery:lamp';
+    return this.#keep(merged);
+  }
+
+  /**
+   * A pool of lamplight under each head, blended additively over whatever
+   * ground is there. The same trick as the contact shadows, run the other
+   * way — and like them it works on every tier, which matters because on
+   * the cheap tier these pools are most of what "lit street" looks like.
+   */
+  #lightPools(scene: Scene, spots: readonly Placement[]): void {
+    if (spots.length === 0) return;
+
+    const size = 64;
+    const texture = new DynamicTexture(
+      'scenery:lamplight',
+      { width: size, height: size },
+      scene,
+      false,
+    );
+    texture.hasAlpha = true;
+    const ctx = texture.getContext() as unknown as CanvasRenderingContext2D;
+    const half = size / 2;
+    // Only the alpha ramp matters here: with lighting disabled the colour
+    // comes wholly from the material's emissive, and the texture is a mask.
+    const gradient = ctx.createRadialGradient(half, half, 2, half, half, half);
+    gradient.addColorStop(0, 'rgba(255, 255, 255, 0.5)');
+    gradient.addColorStop(0.55, 'rgba(255, 255, 255, 0.18)');
+    gradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
+    ctx.clearRect(0, 0, size, size);
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, size, size);
+    texture.update();
+    this.#textures.push(texture);
+
+    const material = new StandardMaterial('scenery:lamplight:mat', scene);
+    material.diffuseTexture = texture;
+    material.useAlphaFromDiffuseTexture = true;
+    material.emissiveColor = new Color3(1, 0.78, 0.52);
+    material.disableLighting = true;
+    material.alphaMode = Constants.ALPHA_ADD;
+    material.zOffset = -0.15;
+    material.backFaceCulling = false;
+    this.#materials.push(material);
+
+    const proto = CreatePlane('scenery:lamplight:proto', { size: 2 }, scene);
+    proto.rotation.x = Math.PI / 2;
+    proto.bakeCurrentTransformIntoVertices();
+    proto.material = material;
+
+    const copies = spots.map((spot, index) => {
+      const copy = proto.clone(`scenery:lamplight:${index}`);
+      copy.scaling.setAll(LAMP_POOL_RADIUS);
+      // Centred under the head, which overhangs roadward of the pole.
+      copy.position.set(
+        spot.x - Math.cos(spot.angle) * LAMP_ARM,
+        0.02,
+        spot.z + Math.sin(spot.angle) * LAMP_ARM,
+      );
+      copy.computeWorldMatrix(true);
+      return copy;
+    });
+    proto.dispose();
+    const merged = Mesh.MergeMeshes(copies, true, true, undefined, false, false);
+    if (!merged) return;
+    merged.name = 'scenery:lamplight';
+    merged.isPickable = false;
+    merged.receiveShadows = false;
+    this.#keep(merged);
   }
 
   /** A pole with a small platform: somewhere for a flag to be waved from. */

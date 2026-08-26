@@ -198,6 +198,7 @@ async function launch(app: HTMLElement, options: LaunchOptions): Promise<void> {
       sprites: options.sprites ?? mode.sprites ?? false,
       ...(options.quality !== undefined ? { quality: options.quality } : {}),
       ...(options.forceDressing ? { forceDressing: true } : {}),
+      ...(mode.furniture !== undefined ? { furniture: mode.furniture } : {}),
     });
   } catch (error) {
     log.error('failed to start the 3D engine', error);

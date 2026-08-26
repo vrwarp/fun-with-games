@@ -83,6 +83,8 @@ export interface RendererOptions {
    * GPU-less box can still see the full scene.
    */
   forceDressing?: boolean;
+  /** Extra trackside furniture the mode asks for (see `GameModeInfo`). */
+  furniture?: 'street';
 }
 
 const log = createLogger('render:renderer');
@@ -301,7 +303,9 @@ export class Renderer {
     // `#dressing` rather than the tier: the game is complete without it, and
     // a machine shading fragments on the CPU cannot pay for it.
     if (this.#dressing) {
-      this.#scenery = new Scenery(this.scene, options.config);
+      this.#scenery = new Scenery(this.scene, options.config, {
+        ...(options.furniture !== undefined ? { furniture: options.furniture } : {}),
+      });
       if (this.#shadows && qualitySettings(this.#governor.tier).cascadedShadows) {
         this.#scenery.addCastersTo(this.#shadows);
         this.#scenery.setReceiveShadows(true);

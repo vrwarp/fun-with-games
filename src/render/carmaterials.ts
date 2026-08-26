@@ -102,8 +102,11 @@ export class CarFinishes {
       strength: 6,
     });
     const grain = this.#surface('car:rubber', tyreRubber(SURFACE_SIZE), {
-      uScale: 2,
-      strength: 4,
+      // Fine and faint: at 2 tiles and full strength the grain bristled the
+      // tyres' silhouette in an elevation, and a slick's outline must be a
+      // clean arc — the texture is for close-ups, not for the profile.
+      uScale: 4,
+      strength: 1.4,
     });
 
     this.carbon = new PBRMaterial('car:carbon', scene);
@@ -173,7 +176,16 @@ export class CarFinishes {
     // is white. At 0.35 every livery came out pastel. Colour is how a player
     // finds their own car, so the flake loses this argument.
     paint.metallic = 0.12;
-    paint.roughness = 0.34;
+    // Rough enough that a rear quarter at a glancing angle stays its own
+    // colour: at 0.34 the specular lobe washed the red to pink wherever the
+    // warm sky grazed it, and a livery that changes hue by angle defeats
+    // the find-your-own-car job the albedo just protected.
+    paint.roughness = 0.45;
+    // And the environment's share trimmed on top: the pink wash on upward
+    // faces (worst on the engine cover) is the warm sky reflecting, and
+    // cutting the paint's own environment intensity tames exactly that
+    // term while leaving the sun's direct gloss alone.
+    paint.environmentIntensity = 0.65;
     this.#lacquer(paint, 0.06);
     return paint;
   }

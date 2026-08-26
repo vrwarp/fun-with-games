@@ -93,8 +93,9 @@ export interface CarMesh {
   readonly parts: Mesh[];
 }
 
-/** Segments round a wheel. Enough that a tyre reads as round, not as a nut. */
-const WHEEL_SIDES = 18;
+/** Segments round a wheel. Enough that a tyre reads as an arc, not a nut —
+ * 18 still showed facets along the top of the profile silhouette. */
+const WHEEL_SIDES = 24;
 
 /**
  * Builds one car under `root`.
@@ -170,10 +171,13 @@ export function buildCarMesh(
   // Tapered AND drooping: the axis falls toward the tip so the nose dives at
   // the front wing instead of spearing level through the air above it. The
   // droop is most of what separates a modern front end from a Sixties cigar.
+  // Slightly longer than the distance it spans: every telescoped shell on
+  // the car overlaps its neighbour, because a butt joint between primitives
+  // leaks a sliver of background the moment the light grazes it.
   const nose = tube(
     'nosecone',
-    { top: r * 0.18, bottom: r * 0.66, height: r * 1.4, sides: 10 },
-    { x: 0, y: r * 0.51, z: r * 2.65 },
+    { top: r * 0.18, bottom: r * 0.7, height: r * 1.55, sides: 10 },
+    { x: 0, y: r * 0.52, z: r * 2.58 },
     'z',
     paint,
   );
@@ -194,8 +198,8 @@ export function buildCarMesh(
   // over the joint the front elevation shows the tub as a bare open ring.
   const shoulder = tube(
     'noseshoulder',
-    { top: r * 0.62, bottom: r * 0.92, height: r * 0.7, sides: 6 },
-    { x: 0, y: r * 0.58, z: r * 2.25 },
+    { top: r * 0.62, bottom: r * 0.95, height: r * 0.85, sides: 6 },
+    { x: 0, y: r * 0.58, z: r * 2.18 },
     'z',
     paint,
   );
@@ -223,8 +227,8 @@ export function buildCarMesh(
     // above is defined by how much naked tyre stands proud of the body.
     const pod = tube(
       `sidepod${side}`,
-      { top: r * 0.68, bottom: r * 0.24, height: r * 2.35, sides: 6 },
-      { x: side * r * 0.62, y: r * 0.43, z: -r * 0.53 },
+      { top: r * 0.68, bottom: r * 0.24, height: r * 2.5, sides: 6 },
+      { x: side * r * 0.62, y: r * 0.43, z: -r * 0.45 },
       'z',
       paint,
     );
@@ -263,8 +267,8 @@ export function buildCarMesh(
   // wing stands alone above it instead of a muzzle poking out beneath.
   const cover = tube(
     'cover',
-    { top: r * 0.72, bottom: r * 0.3, height: r * 2.0, sides: 8 },
-    { x: 0, y: r * 0.84, z: -r * 1.55 },
+    { top: r * 0.74, bottom: r * 0.3, height: r * 2.35, sides: 8 },
+    { x: 0, y: r * 0.86, z: -r * 1.4 },
     'z',
     paint,
   );
@@ -286,6 +290,9 @@ export function buildCarMesh(
   // as a wreath leaning against the airbox. (Rotation sign fixed by
   // measuring the rendered profile: positive x lowers the ring's +Z edge.)
   halo.rotation.x = 0.25;
+  // Stretched vertically into a blade: a round tube reads as a wire in pure
+  // profile, and the real ring is a faired aerofoil deeper than it is wide.
+  halo.scaling.y = 1.7;
   halo.position.set(0, floor + r * 1.26, r * 0.6);
   // Into the RUBBER merge on purpose: the tyre compound's near-black matte
   // grain is the closest material the car carries to real halo carbon, and
@@ -325,15 +332,38 @@ export function buildCarMesh(
   // contact plane — a floor below the tyres' ground line is not only wrong
   // in an elevation, it z-fights the track in game.
   diffuser.rotation.x = -0.35;
-  // The exit cavity: a near-black inset in the diffuser's rear face, so the
-  // rear elevation shows an upswept dark mouth instead of a flat bulkhead.
-  const cavity = box(
-    'diffuser:cavity',
-    { w: r * 1.0, h: r * 0.3, d: r * 0.1 },
-    { x: 0, y: r * 0.3, z: -r * 2.62 },
-    rubber,
+  // The exit cavity: a near-black trapezoid mouth — wide at the floor,
+  // narrowing upward — so the rear elevation shows an upswept expanding
+  // exit instead of a bulkhead. A four-sided tapered tube IS a frustum;
+  // the extra yaw spins its edges off the diagonals so the mouth sits
+  // flat-side-down, and the pitch matches the diffuser's rake.
+  const cavity = CreateCylinder(
+    `${id}:diffuser:cavity`,
+    { diameterTop: r * 0.85, diameterBottom: r * 1.55, height: r * 0.45, tessellation: 4 },
+    scene,
   );
-  cavity.rotation.x = -0.35;
+  // Stood upright, spun 45 degrees so a flat face aims rearward (a
+  // four-sided cylinder's faces sit on the diagonals) — and the spin BAKED
+  // before the squash: scaling squashes along local axes, and squashing a
+  // spun square across its own diagonal shears it into a rhombus, which is
+  // how this slab was a leaning wreck twice. Upright on purpose, too:
+  // composing the diffuser's rake into the same rotation was wreck number
+  // one, and a tilted mouth buys nothing the raked box behind it does not
+  // already say. Verified from the rear elevation.
+  cavity.rotation.y = Math.PI / 4;
+  cavity.bakeCurrentTransformIntoVertices();
+  cavity.scaling.z = 0.12;
+  cavity.position.set(0, floor + r * 0.28, -r * 2.66);
+  rubber.push(cavity);
+  // And a kicked lower lip: a tail that ends in a level shelf reads as a
+  // road car's bumper however dark the hole above it is.
+  const lip = box(
+    'diffuser:lip',
+    { w: r * 1.3, h: r * 0.06, d: r * 0.34 },
+    { x: 0, y: r * 0.16, z: -r * 2.62 },
+    carbon,
+  );
+  lip.rotation.x = -0.55;
 
   // --- Front wing ------------------------------------------------------------
   // Two elements and two endplates, pulled BACK until the trailing edge
@@ -397,6 +427,16 @@ export function buildCarMesh(
       { x: side * r * 0.68, y: r * 1.15, z: -r * 2.3 },
       carbon,
     );
+    // The rolled tip, gestured at with a 45-degree chamfer strake across
+    // the endplate's top outer corner — the squared corner was the one
+    // detail still filed under the previous rules era.
+    const roll = box(
+      `rw:roll${side}`,
+      { w: r * 0.07, h: r * 0.16, d: r * 0.7 },
+      { x: side * r * 0.62, y: r * 1.38, z: -r * 2.3 },
+      carbon,
+    );
+    roll.rotation.z = side * (Math.PI / 4);
   }
   box(
     'rw:pylon',
@@ -530,7 +570,9 @@ export function buildCarMesh(
     for (const level of [0.55, 1.05]) {
       const arm = CreateBox(
         `${id}:wishbone${corner.x}:${level}`,
-        { width: Math.abs(corner.x) - r * 0.35, height: r * 0.07, depth: r * 0.1 },
+        // Blade-chorded: at 0.1r deep the arms vanished in plan and the
+        // wheels floated free of the car in every overhead read.
+        { width: Math.abs(corner.x) - r * 0.35, height: r * 0.06, depth: r * 0.16 },
         scene,
       );
       arm.position.set(
@@ -538,7 +580,11 @@ export function buildCarMesh(
         floor + tyreRadius * level,
         corner.z,
       );
-      arm.rotation.y = side * 0.28;
+      // Front arms sweep rearward, rears sweep forward — both reaching back
+      // toward the car's mass the way real pushrod geometry does, and the
+      // opposition is what stops the four corners reading as one repeated
+      // bracket.
+      arm.rotation.y = side * (corner.front ? 0.28 : -0.2);
       carbon.push(arm);
     }
   }

@@ -23,3 +23,4 @@ Thumbs.db
 .env
 .env.local
 .agent-scratch/
+car-studio-out/

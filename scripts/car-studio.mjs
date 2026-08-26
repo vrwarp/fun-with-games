@@ -9,8 +9,10 @@
  *   node scripts/car-studio.mjs [outDir] [--url http://host:port]
  *
  * With no `--url` it starts its own vite dev server on a spare port and
- * stops it afterwards. Default output: `test-results/car-studio/`
- * (gitignored — the sheet is a working document, not an artefact).
+ * stops it afterwards. Default output: `car-studio-out/` (gitignored — the
+ * sheet is a working document, not an artefact). Deliberately NOT under
+ * `test-results/`: Playwright empties that directory when a run starts,
+ * and it once ate three rounds of reviewed sheets mid-iteration.
  */
 import { spawn } from 'node:child_process';
 import { mkdir } from 'node:fs/promises';
@@ -24,8 +26,7 @@ const urlFlag = args.indexOf('--url');
 const givenUrl = urlFlag >= 0 ? args[urlFlag + 1] : null;
 const urlValueIndex = urlFlag >= 0 ? urlFlag + 1 : -1;
 const outDir = resolve(
-  args.find((a, i) => !a.startsWith('--') && i !== urlValueIndex) ??
-    join(root, 'test-results', 'car-studio'),
+  args.find((a, i) => !a.startsWith('--') && i !== urlValueIndex) ?? join(root, 'car-studio-out'),
 );
 
 const PORT = 4179;

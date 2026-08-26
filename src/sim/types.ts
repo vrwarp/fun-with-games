@@ -269,17 +269,34 @@ export interface BallState {
 }
 
 /**
- * One trackside tyre stack, as a body.
+ * One trackside tyre, as a body.
  *
- * Identified by index: the roster is fixed at construction, derived from the
- * circuit by `tyreStackSpots()`, so a stack's home never needs to travel —
- * only where the racing has since shoved it. Empty on modes with no track.
+ * Identified by index, stack-major: tyre `i` belongs to the stack at
+ * `tyreStackSpots()[floor(i / TYRES_PER_STACK)]`, at tier
+ * `i % TYRES_PER_STACK`. The roster is fixed at construction, derived from
+ * the circuit, so a tyre's home never needs to travel — only where the
+ * racing has since shoved it. Empty on modes with no track. Height is
+ * presentation: a standing stack's three tyres share a position, and the
+ * renderer stacks, slides or rolls them from this state alone.
  */
-export interface TyreStackState {
+export interface TyreState {
   x: number;
   z: number;
   vx: number;
   vz: number;
+}
+
+/**
+ * One stack's home position — DERIVED from the circuit, not state. `World`
+ * computes the list once and hands it to every step through the context, so
+ * the systems that need homes (reset, the at-home fast path in contacts)
+ * never recompute or snapshot them.
+ */
+export interface TyreStackSpot {
+  x: number;
+  z: number;
+  /** Yaw of the road at the spot, for the renderer's paint variation. */
+  angle: number;
 }
 
 export interface ProjectileState {
@@ -352,7 +369,7 @@ export interface WorldSnapshot {
   projectiles: ProjectileState[];
   items: ItemState[];
   zones: ZoneRuntimeState[];
-  tyreStacks: TyreStackState[];
+  tyres: TyreState[];
 }
 
 // ---------------------------------------------------------------------------

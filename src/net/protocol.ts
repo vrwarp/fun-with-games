@@ -10,7 +10,7 @@ import {
   type PlayerInput,
   type PlayerProfile,
   type ProjectileState,
-  type TyreStackState,
+  type TyreState,
   type WorldSnapshot,
   type ZoneRuntimeState,
 } from '../sim/types.js';
@@ -28,8 +28,11 @@ import {
  * projectiles and items, plus jump bookkeeping.
  * v4: racing — per-player lap timing (lap start, last lap, best lap).
  * v5: tyre stacks as bodies — positions and velocities in snapshots.
+ * v6: one body per TYRE, not per stack — same entry shape, three entries per
+ * stack spot (`tyres` replaces `tyreStacks`), so the rosters differ and the
+ * versions must not meet.
  */
-export const PROTOCOL_VERSION = 5;
+export const PROTOCOL_VERSION = 6;
 
 export type MessageType = 'hello' | 'input' | 'snapshot' | 'bye';
 
@@ -85,7 +88,7 @@ const MAX_PICKUPS = 256;
 const MAX_PROJECTILES = 256;
 const MAX_ITEMS = 32;
 const MAX_ZONES = 64;
-const MAX_TYRE_STACKS = 512;
+const MAX_TYRES = 768;
 const MAX_TEAMS = 16;
 const MAX_EFFECTS = 16;
 const EFFECT_ID_PATTERN = /^[a-z][a-z0-9_-]{0,23}$/;
@@ -157,7 +160,7 @@ export function encodeSnapshot(snapshot: WorldSnapshot): WorldSnapshot {
     zones: snapshot.zones.map((z) => ({ ...z })),
     // Centimetres are plenty for a 1.6-metre prop, and the coarser grid keeps
     // a parked wall of them cheap on the wire — every value is a short "0".
-    tyreStacks: snapshot.tyreStacks.map((s) => ({
+    tyres: snapshot.tyres.map((s) => ({
       x: quantize(s.x, 2),
       z: quantize(s.z, 2),
       vx: quantize(s.vx, 2),
@@ -255,8 +258,8 @@ export function decodeWorldSnapshot(snapshot: Record<string, unknown>): WorldSna
   const projectiles = decodeArray(snapshot['projectiles'], MAX_PROJECTILES, decodeProjectile);
   const items = decodeArray(snapshot['items'], MAX_ITEMS, decodeItem);
   const zones = decodeArray(snapshot['zones'], MAX_ZONES, decodeZone);
-  const tyreStacks = decodeArray(snapshot['tyreStacks'], MAX_TYRE_STACKS, decodeTyreStack);
-  if (!players || !pickups || !projectiles || !items || !zones || !tyreStacks) return null;
+  const tyres = decodeArray(snapshot['tyres'], MAX_TYRES, decodeTyre);
+  if (!players || !pickups || !projectiles || !items || !zones || !tyres) return null;
 
   const teamScores = decodeTeamScores(snapshot['teamScores']);
   if (!teamScores) return null;
@@ -279,7 +282,7 @@ export function decodeWorldSnapshot(snapshot: Record<string, unknown>): WorldSna
     projectiles,
     items,
     zones,
-    tyreStacks,
+    tyres,
   };
 }
 
@@ -472,7 +475,7 @@ function decodeBall(raw: unknown): BallState | null {
   };
 }
 
-function decodeTyreStack(raw: unknown): TyreStackState | null {
+function decodeTyre(raw: unknown): TyreState | null {
   if (!isRecord(raw)) return null;
   for (const key of ['x', 'z', 'vx', 'vz'] as const) {
     if (!isFiniteNumber(raw[key])) return null;

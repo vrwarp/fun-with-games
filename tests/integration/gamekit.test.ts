@@ -1,4 +1,12 @@
-import { describe, expect, it, afterEach } from 'vitest';
+import { describe, expect, it, afterEach, vi } from 'vitest';
+
+// Whole-race simulations: each test fast-forwards minutes of a full grid
+// through the real step pipeline, and CI runs them under coverage
+// instrumentation on a slower machine with test files in parallel — several
+// were living within a whisker of vitest's 5s default long before they ever
+// timed out. The budget states what these tests actually are; the suite still
+// finishes in seconds, and a genuine hang still fails.
+vi.setConfig({ testTimeout: 20_000 });
 import { modeOverrides } from '@/sim/presets.js';
 import { effectRemaining } from '@/sim/systems/effects.js';
 import { isOnTrack } from '@/sim/track.js';

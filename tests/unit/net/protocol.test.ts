@@ -415,7 +415,7 @@ describe('decodeMessage: game-kit snapshot fields', () => {
   });
 });
 
-describe('decodeMessage: tyre stacks', () => {
+describe('decodeMessage: tyres', () => {
   /** A circuit world, so the snapshot actually carries a wall of stacks. */
   function circuitMessage(): SnapshotMessage {
     const world = new World({
@@ -443,17 +443,17 @@ describe('decodeMessage: tyre stacks', () => {
 
   it('carries a non-empty wall across the wire', () => {
     const message = circuitMessage();
-    expect(message.snapshot.tyreStacks.length).toBeGreaterThan(4);
+    expect(message.snapshot.tyres.length).toBeGreaterThan(4);
 
     const decoded = decodeMessage(structuredClone(message));
     expect(decoded).not.toBeNull();
     if (decoded && decoded.type === 'snapshot') {
-      expect(decoded.snapshot.tyreStacks).toEqual(message.snapshot.tyreStacks);
+      expect(decoded.snapshot.tyres).toEqual(message.snapshot.tyres);
     }
   });
 
   it('quantizes stacks to centimetres', () => {
-    for (const stack of circuitMessage().snapshot.tyreStacks) {
+    for (const stack of circuitMessage().snapshot.tyres) {
       expect(String(stack.x).split('.')[1]?.length ?? 0).toBeLessThanOrEqual(2);
       expect(String(stack.z).split('.')[1]?.length ?? 0).toBeLessThanOrEqual(2);
     }
@@ -461,18 +461,18 @@ describe('decodeMessage: tyre stacks', () => {
 
   it('rejects a stack with a non-numeric field', () => {
     const message = structuredClone(circuitMessage()) as unknown as {
-      snapshot: { tyreStacks: Array<Record<string, unknown>> };
+      snapshot: { tyres: Array<Record<string, unknown>> };
     };
-    const first = message.snapshot.tyreStacks[0];
+    const first = message.snapshot.tyres[0];
     if (first) first['vx'] = 'sideways';
     expect(decodeMessage(message)).toBeNull();
   });
 
   it('rejects an absurd number of stacks rather than simulating them', () => {
     const message = structuredClone(circuitMessage()) as unknown as {
-      snapshot: { tyreStacks: Array<{ x: number; z: number; vx: number; vz: number }> };
+      snapshot: { tyres: Array<{ x: number; z: number; vx: number; vz: number }> };
     };
-    message.snapshot.tyreStacks = Array.from({ length: 513 }, () => ({
+    message.snapshot.tyres = Array.from({ length: 769 }, () => ({
       x: 0,
       z: 0,
       vx: 0,
@@ -485,7 +485,7 @@ describe('decodeMessage: tyre stacks', () => {
     const message = structuredClone(circuitMessage()) as unknown as {
       snapshot: Record<string, unknown>;
     };
-    delete message.snapshot['tyreStacks'];
+    delete message.snapshot['tyres'];
     expect(decodeMessage(message)).toBeNull();
   });
 });

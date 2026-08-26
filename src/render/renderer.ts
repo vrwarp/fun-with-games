@@ -327,7 +327,7 @@ export class Renderer {
 
     this.#entities.sync(state, deltaSeconds);
     this.#kit.sync(state, deltaSeconds);
-    this.#tyreStacks?.sync(state.tyreStacks);
+    this.#tyreStacks?.sync(state.tyres);
     this.#sinceManualCamera += deltaSeconds;
 
     if (this.#marks || this.#smoke) {
@@ -865,6 +865,16 @@ export class Renderer {
         this.#ssao.totalStrength = 1.15;
         this.#ssao.samples = 12;
         this.#ssao.expensiveBlur = false;
+        // Keep the AO out of the sky, on EVERY depth path. The dome is a
+        // 100-unit box, so its faces sit 50-86 units out — inside the default
+        // maxZ of 100 — and although the dome writes no z-buffer depth, the
+        // prepass that real GPUs feed this pass from writes its depth as a
+        // fragment output, which `disableDepthWrite` cannot suppress. The
+        // shader multiplies occlusion by 1-smoothstep(0.75*maxZ, maxZ, depth),
+        // so 45 zeroes it for anything past 45 units regardless of where the
+        // depth came from. AO is a contact cue; at that distance it was
+        // sub-pixel anyway.
+        this.#ssao.maxZ = 45;
       }
     } catch (error) {
       // A software renderer or a locked-down context can refuse a render

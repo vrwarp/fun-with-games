@@ -57,6 +57,16 @@ export class TyreStackView {
   #axis = new Vector3();
   #swing = new Quaternion();
   #spin = new Quaternion();
+  /**
+   * The stacking metrics of whatever tyre is actually being drawn. They
+   * start as the torus's numbers and are REMEASURED when a vendor tyre
+   * swaps in: a photoscanned tyre is thinner than the torus, and stacking
+   * it at the torus's spacing floats every tier a visible gap above the
+   * one below — the wall reads as levitating rings.
+   */
+  #flatHeight = FLAT_HEIGHT;
+  #thickness = TYRE_THICKNESS;
+  #rollingHeight = ROLLING_HEIGHT;
 
   constructor(scene: Scene, config: SimConfig) {
     this.#spots = tyreStackSpots(config);
@@ -84,6 +94,14 @@ export class TyreStackView {
       prototype.dispose();
       return;
     }
+    // Stack by what the tyre actually measures, not by the torus's numbers:
+    // the scanned tyre is thinner, and the first release stacked it at the
+    // torus spacing — three rings levitating over each other's daylight.
+    const box = prototype.getBoundingInfo().boundingBox;
+    this.#flatHeight = Math.max(0.01, box.extendSize.y);
+    this.#thickness = this.#flatHeight * 2;
+    this.#rollingHeight = Math.max(box.extendSize.x, box.extendSize.z, this.#flatHeight);
+
     for (const mesh of this.#meshes) mesh.dispose();
     this.#meshes = [];
     prototype.setEnabled(false);
@@ -156,12 +174,16 @@ export class TyreStackView {
       Quaternion.RotationAxisToRef(this.#axis, lean + wobble, this.#swing);
       if (roller && stand > 0.01) {
         this.#axis.set(dirZ, 0, -dirX);
-        Quaternion.RotationAxisToRef(this.#axis, (distance / ROLLING_HEIGHT) * stand, this.#spin);
+        Quaternion.RotationAxisToRef(
+          this.#axis,
+          (distance / this.#rollingHeight) * stand,
+          this.#spin,
+        );
         this.#spin.multiplyToRef(this.#swing, this.#swing);
       }
       rotation.copyFrom(this.#swing);
 
-      mesh.position.y = FLAT_HEIGHT + (ROLLING_HEIGHT - FLAT_HEIGHT) * stand;
+      mesh.position.y = this.#flatHeight + (this.#rollingHeight - this.#flatHeight) * stand;
     }
   }
 
@@ -190,7 +212,7 @@ export class TyreStackView {
 
   /** Flat stacking heights: bottom tyre ON the ground, each resting on the last. */
   #tierHeight(index: number): number {
-    return FLAT_HEIGHT + (index % TYRES_PER_STACK) * TYRE_THICKNESS;
+    return this.#flatHeight + (index % TYRES_PER_STACK) * this.#thickness;
   }
 
   /** One tyre torus; the whole stack's paint comes from its stack index. */

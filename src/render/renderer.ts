@@ -1087,7 +1087,16 @@ export class Renderer {
         // The most expensive thing in this file, and desktop-only for that
         // reason. What it buys is contact: without it every object looks like
         // a sticker floating slightly above whatever it stands on.
-        this.#ssao = new SSAO2RenderingPipeline('ssao', this.scene, 0.75, [this.camera]);
+        // forceGeometryBuffer, and this is load-bearing on real phones: the
+        // default PrePass path writes its depth as a fragment output, in a
+        // device-dependent encoding — one shipped fix suppressed the dome's
+        // depth writes (ineffective there) and a second guarded on maxZ
+        // (defeated by a non-linear encoding on at least one mobile GPU),
+        // and the sky still went black. The geometry-buffer path is the one
+        // every headless test was already exercising: it honours
+        // `disableDepthWrite`, so the dome never enters the depth map at
+        // all, and it stores linear view-space depth on every device.
+        this.#ssao = new SSAO2RenderingPipeline('ssao', this.scene, 0.75, [this.camera], true);
         this.#ssao.radius = 1.8;
         // Stronger than before, deliberately. Contact darkening is half of
         // what separates "objects standing on a surface" from "objects pasted
@@ -1096,15 +1105,12 @@ export class Renderer {
         this.#ssao.totalStrength = 1.15;
         this.#ssao.samples = 12;
         this.#ssao.expensiveBlur = false;
-        // Keep the AO out of the sky, on EVERY depth path. The dome is a
-        // 100-unit box, so its faces sit 50-86 units out — inside the default
-        // maxZ of 100 — and although the dome writes no z-buffer depth, the
-        // prepass that real GPUs feed this pass from writes its depth as a
-        // fragment output, which `disableDepthWrite` cannot suppress. The
-        // shader multiplies occlusion by 1-smoothstep(0.75*maxZ, maxZ, depth),
-        // so 45 zeroes it for anything past 45 units regardless of where the
-        // depth came from. AO is a contact cue; at that distance it was
-        // sub-pixel anyway.
+        // Second fence around the sky: the shader multiplies occlusion by
+        // 1-smoothstep(0.75*maxZ, maxZ, depth), so nothing past 45 units is
+        // ever darkened. With the geometry buffer forced above, the dome is
+        // not even in the depth map — but AO is a contact cue, and at 45
+        // units it was sub-pixel anyway, so the clamp stays for everything
+        // else that lives near the horizon.
         this.#ssao.maxZ = 45;
       }
     } catch (error) {

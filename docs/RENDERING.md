@@ -507,6 +507,21 @@ medium  + anti-aliasing, restrained bloom, normal maps, clear coat.
 high    + ambient occlusion, sharper shadows.
 ```
 
+Ambient occlusion runs **only in the perspective views** (`first`, `follow`),
+and the renderer rebuilds the whole post pipeline whenever a view switch
+crosses the perspective/orthographic boundary. Both halves of that are
+deliberate. Babylon's own answer to a projection change is to keep the
+pipeline and recompile the SSAO shader in place with an
+`ORTHOGRAPHIC_CAMERA` define the moment `camera.mode` flips — a
+device-dependent shader path that, on at least one real phone GPU, came back
+from an iso round trip with the sky permanently black while every local
+renderer stayed clean (the third such device-only failure in this one pass).
+Rebuilding on the flip lands the renderer in the exact state a fresh load
+produces, which is the one state every device has demonstrably rendered
+correctly. Not running SSAO in the overhead views at all costs almost
+nothing: at their zoom the occlusion radius is a couple of pixels of
+darkening, priced at a full-scene depth+normal pass.
+
 Tone mapping and the environment are in **all** tiers. The first is nearly free
 and is the largest single difference between a render and a photograph; the
 second is what makes the materials work at all.

@@ -429,6 +429,85 @@ test.describe('racing', () => {
     );
   });
 
+  test('a view round trip at the high tier keeps the sky', async ({ page }) => {
+    // Same DOM-touch economics as the tier cycle above: software rendering
+    // makes every actionability check slow, so the budget is honest instead
+    // of the sequence trimmed.
+    test.slow();
+
+    const errors: string[] = [];
+    page.on('pageerror', (error) => errors.push(error.message));
+
+    await page.goto('/?net=broadcast&autojoin=1&room=e2e-viewtrip&mode=grandprix&name=Driver');
+    await waitForHud(page);
+    await expect
+      .poll(() => page.evaluate(() => window.__FWG__.tick), { timeout: 30_000 })
+      .toBeGreaterThan(30);
+
+    await page.getByTestId('settings-button').click();
+    const quality = page.getByTestId('settings-quality');
+    await expect(quality).toBeVisible();
+    await quality.selectOption('high');
+
+    // Cockpit to isometric and back crosses the perspective/orthographic
+    // boundary twice, and each crossing rebuilds the post pipeline. On a real
+    // phone GPU the old code path — one pipeline, its SSAO shader recompiled
+    // in place when `camera.mode` flipped — came back from exactly this trip
+    // with the sky permanently black. The tick poll after each hop proves the
+    // rebuild did not wedge the renderer; the screenshot at the end proves
+    // the backdrop survived.
+    const view = page.getByTestId('settings-view');
+    for (const target of ['iso', 'first'] as const) {
+      await view.selectOption(target);
+      const before = await page.evaluate(() => window.__FWG__.tick);
+      await expect
+        .poll(() => page.evaluate(() => window.__FWG__.tick), { timeout: 30_000 })
+        .toBeGreaterThan(before + 10);
+    }
+
+    await page.getByTestId('settings-close').click();
+    expect(errors).toEqual([]);
+
+    // Same open-sky quadrant as the tier cycle: black reads ~10, a healthy
+    // sky well over 100.
+    const frame = await page.screenshot({ timeout: 60_000 });
+    expect(regionLevel(frame, { left: 0.72, top: 0.1, right: 0.95, bottom: 0.2 })).toBeGreaterThan(
+      60,
+    );
+  });
+
+  test('the art gate veils the start, holds the clock, then lifts', async ({ page }) => {
+    // Vendor art settling costs real time on a software renderer (the HDR
+    // sky decodes on the CPU), which is exactly what makes the veil
+    // observable here at all.
+    test.slow();
+
+    const errors: string[] = [];
+    page.on('pageerror', (error) => errors.push(error.message));
+
+    await page.goto('/?net=broadcast&autojoin=1&room=e2e-artgate&mode=grandprix&name=Driver');
+    await waitForHud(page);
+
+    // One atomic look: if the veil is still up, the room's clock must not
+    // have started — that pairing is the whole feature. Read together
+    // because the veil lifts on its own schedule, and a test that asserted
+    // the two separately would race it.
+    const held = await page.evaluate(() => ({
+      veiled: document.querySelector('[data-testid="loading-veil"]:not(.is-leaving)') !== null,
+      tick: window.__FWG__.tick,
+    }));
+    if (held.veiled) expect(held.tick).toBe(0);
+
+    // The veil lifts by itself — settled or timed out, never wedged — and
+    // only then does the race actually run.
+    await expect(page.getByTestId('loading-veil')).toBeHidden({ timeout: 60_000 });
+    await expect
+      .poll(() => page.evaluate(() => window.__FWG__.tick), { timeout: 30_000 })
+      .toBeGreaterThan(30);
+
+    expect(errors).toEqual([]);
+  });
+
   test('a grand prix renders, grids up and drives', async ({ page }) => {
     const errors: string[] = [];
     page.on('pageerror', (error) => errors.push(error.message));

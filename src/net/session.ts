@@ -95,6 +95,7 @@ export class NetSession {
 
   #accumulatorMs = 0;
   #lastUpdateMs: number | null = null;
+  #simHold = false;
   #disposed = false;
 
   constructor(options: NetSessionOptions) {
@@ -194,6 +195,29 @@ export class NetSession {
     this.#broadcastHello();
   }
 
+  /**
+   * Holds the simulation without leaving the room.
+   *
+   * While held, `update` keeps the clock honest — snapshot timestamps and
+   * interpolation smoothing continue — but no ticks fire and none accumulate,
+   * so releasing the hold resumes cleanly rather than replaying the held
+   * time as a burst of catch-up ticks.
+   *
+   * What that means depends on the role, and both meanings are the point.
+   * A held HOST does not step the authoritative world, so the room's clock
+   * — countdowns included — genuinely waits; peers can still join and be
+   * rostered, they just see nothing moving yet. A held CLIENT keeps
+   * receiving and buffering the host's snapshots (the race is not theirs to
+   * pause) and simply is not sending inputs yet.
+   *
+   * The composition root uses this to keep a race from starting before the
+   * scene's art has settled. The caller owns bounding the hold; nothing
+   * here times out on its own.
+   */
+  setSimHold(on: boolean): void {
+    this.#simHold = on;
+  }
+
   // ------------------------------------------------------------------ frame
 
   /**
@@ -212,6 +236,12 @@ export class NetSession {
     const delta = Math.min(nowMs - this.#lastUpdateMs, MAX_FRAME_DELTA_MS);
     this.#lastUpdateMs = nowMs;
     if (delta <= 0) return;
+
+    if (this.#simHold) {
+      this.#accumulatorMs = 0;
+      this.#view.advanceSmoothing(delta);
+      return;
+    }
 
     const tickMs = 1000 / this.config.tickRate;
     this.#accumulatorMs += delta;

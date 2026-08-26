@@ -223,6 +223,14 @@ export class Renderer {
   #tierIsChosen = false;
   #cameraTarget = new Vector3(0, 0, 0);
   #disposed = false;
+  /**
+   * How many vendor-art loads have been started, and how many have finished
+   * — loaded or failed, both count. The pair exists for one caller: the
+   * pre-race loading gate, which holds the simulation until the art settles
+   * and needs a number to put on its veil.
+   */
+  #artTotal = 0;
+  #artSettled = 0;
 
   #canvas: HTMLCanvasElement;
   #config: SimConfig;
@@ -659,6 +667,7 @@ export class Renderer {
    */
   setView(view: ViewMode): void {
     if (view === this.#view) return;
+    const wasOrtho = viewSpec(this.#view).orthoHalfHeight !== undefined;
     this.#view = view;
     const spec = viewSpec(view);
 
@@ -674,6 +683,19 @@ export class Renderer {
 
     this.#entities.setFirstPerson(spec.eye !== undefined);
     this.#applyViewportFraming(true);
+
+    // Crossing between projections rebuilds the post pipeline from scratch,
+    // AFTER the framing above has already put the camera in its new mode.
+    // Babylon's alternative — keeping the pipeline and recompiling its SSAO
+    // shader with an ORTHOGRAPHIC_CAMERA define whenever `camera.mode`
+    // flips — is exactly the kind of device-dependent shader path that has
+    // twice produced a black sky on a real phone while every local run
+    // stayed clean. A rebuild lands the renderer in the same state a fresh
+    // load produces, which is the one state every device has demonstrably
+    // rendered correctly.
+    if ((spec.orthoHalfHeight !== undefined) !== wasOrtho) {
+      this.#applyQuality(this.#governor.tier);
+    }
   }
 
   /** Draw players as sprites or as bodies, from now on. */
@@ -812,6 +834,53 @@ export class Renderer {
   }
 
   /**
+   * Registers one outstanding art load. The returned function marks it
+   * settled — loaded or failed, whichever came — and is idempotent, because
+   * the sites that call it wire it into both an onLoad and an onError.
+   */
+  #beginArtLoad(): () => void {
+    this.#artTotal++;
+    let done = false;
+    return () => {
+      if (done) return;
+      done = true;
+      this.#artSettled++;
+    };
+  }
+
+  /** Counts an art load the composition root runs itself (the player model). */
+  trackArtLoad(load: Promise<unknown>): void {
+    const done = this.#beginArtLoad();
+    void load.then(done, done);
+  }
+
+  /** How much of the vendor art has arrived, for a loading veil. */
+  get artProgress(): { settled: number; total: number } {
+    return { settled: this.#artSettled, total: this.#artTotal };
+  }
+
+  /**
+   * Resolves once every tracked art load has settled, or after `timeoutMs` —
+   * whichever comes first. The timeout is the fail-soft half of the bargain:
+   * art must never be able to hold the game hostage, so a hung request costs
+   * a bounded wait and then the race starts on whatever has arrived.
+   */
+  whenArtSettled(timeoutMs: number): Promise<void> {
+    return new Promise((resolve) => {
+      const started = performance.now();
+      const check = (): void => {
+        const settled = this.#artSettled >= this.#artTotal;
+        if (settled || this.#disposed || performance.now() - started >= timeoutMs) {
+          resolve();
+          return;
+        }
+        setTimeout(check, 50);
+      };
+      check();
+    });
+  }
+
+  /**
    * Upgrades the scene with whatever CC0 art the manifest offers.
    *
    * Called once the manifest has loaded, which is deliberately AFTER the
@@ -860,19 +929,23 @@ export class Renderer {
         this.#groundMaterial,
         this.#vendorArt.grass.diffuse,
         this.#vendorArt.grass.normal,
-        { ...(this.#vendorArt.grass.arm ? { armUrl: this.#vendorArt.grass.arm } : {}) },
+        {
+          ...(this.#vendorArt.grass.arm ? { armUrl: this.#vendorArt.grass.arm } : {}),
+          onSettle: this.#beginArtLoad(),
+        },
       );
     }
     this.#applyVendorTrack();
 
     const bark = find('bark-diff');
-    if (bark) this.#scenery?.applyVendorBark(assetUrl(bark, baseUrl));
+    if (bark) this.#scenery?.applyVendorBark(assetUrl(bark, baseUrl), this.#beginArtLoad());
 
     // The photographed tyre rides the dressing gate: a software rasteriser
     // gets the cheap torus, exactly as it gets no trees and no smoke.
     const tyre = find('tyre-model');
     if (tyre?.meta?.kind === 'model' && this.#dressing && this.#tyreStacks) {
-      void this.#applyVendorTyres(tyre, baseUrl);
+      const done = this.#beginArtLoad();
+      void this.#applyVendorTyres(tyre, baseUrl).finally(done);
     }
   }
 
@@ -883,12 +956,14 @@ export class Renderer {
         this.#vendorArt.road.diffuse,
         this.#vendorArt.road.normal,
         this.#vendorArt.road.arm,
+        this.#beginArtLoad(),
       );
     }
     if (this.#vendorArt.barrier) {
       this.#track.applyVendorBarrier(
         this.#vendorArt.barrier.diffuse,
         this.#vendorArt.barrier.normal,
+        this.#beginArtLoad(),
       );
     }
   }
@@ -943,6 +1018,8 @@ export class Renderer {
     const material = dome.material;
     if (!(material instanceof StandardMaterial)) return;
 
+    const domeSettled = this.#beginArtLoad();
+    const envSettled = this.#beginArtLoad();
     const domeTexture = new HDRCubeTexture(
       sky.url,
       this.scene,
@@ -971,10 +1048,12 @@ export class Renderer {
           if (sky.sun.color) this.#sun.diffuse = new Color3(...sky.sun.color);
           if (sky.sun.intensity !== undefined) this.#sun.intensity = sky.sun.intensity;
         }
+        domeSettled();
       },
       (message) => {
         log.info('vendor sky unavailable; keeping the painted one', message);
         domeTexture.dispose();
+        domeSettled();
       },
     );
     domeTexture.coordinatesMode = Texture.SKYBOX_MODE;
@@ -992,10 +1071,12 @@ export class Renderer {
         const old = this.scene.environmentTexture;
         this.scene.environmentTexture = envTexture;
         old?.dispose();
+        envSettled();
       },
       (message) => {
         log.info('vendor environment unavailable; keeping the generated one', message);
         envTexture.dispose();
+        envSettled();
       },
     );
     envTexture.rotationY = sky.rotationY;
@@ -1059,7 +1140,11 @@ export class Renderer {
 
     this.#pipeline?.dispose();
     this.#pipeline = null;
-    this.#ssao?.dispose();
+    // `true` tears the geometry buffer down with it. Without that flag the
+    // scene keeps rendering a full depth+normal pass every frame for a
+    // pipeline that no longer exists — a leak the cheapest tier exists to
+    // avoid paying.
+    this.#ssao?.dispose(true);
     this.#ssao = null;
 
     // Nothing at all on the cheapest tier. Not a pipeline with everything
@@ -1083,7 +1168,18 @@ export class Renderer {
       }
       this.#pipeline = pipeline;
 
-      if (quality.ambientOcclusion) {
+      if (quality.ambientOcclusion && viewSpec(this.#view).orthoHalfHeight === undefined) {
+        // Perspective views only. An orthographic camera makes Babylon
+        // recompile this pass's shader with an ORTHOGRAPHIC_CAMERA define the
+        // moment `camera.mode` flips, and on at least one real phone GPU a
+        // view round trip through that recompile left the sky permanently
+        // black — unreproducible on any local renderer, third such failure in
+        // this pass. The overhead views also spend it worst: at their zoom a
+        // 1.8-unit occlusion radius is a couple of pixels of darkening, priced
+        // at a full-scene depth+normal pass. So the ortho views simply do not
+        // run it, and `setView` rebuilds this pipeline when a switch crosses
+        // the projection boundary.
+        //
         // The most expensive thing in this file, and desktop-only for that
         // reason. What it buys is contact: without it every object looks like
         // a sticker floating slightly above whatever it stands on.

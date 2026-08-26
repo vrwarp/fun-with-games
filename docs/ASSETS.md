@@ -20,6 +20,18 @@ This is what keeps CI fast (no binaries to download), keeps `npm install &&
 npm run dev` working offline, and keeps a broken asset from turning into a
 broken game.
 
+The one concession the schedule makes to art is a **bounded pre-race gate**:
+`main.ts` holds the simulation (`session.setSimHold`) behind a loading veil
+while the vendor art settles, so a race counts down over a dressed circuit
+instead of textures popping in on lap one. Every tracked load counts on the
+veil whether it succeeds or fails, `renderer.whenArtSettled` gives up after a
+fixed ceiling, and a missing manifest releases immediately — the rule above
+still holds: art can delay a start by seconds, it can never prevent one. The
+hold is honest per role: a solo or hosting player's room clock genuinely
+waits (nothing has ticked), while a client joining a running race merely
+enters a few seconds later, fully dressed — the race was never theirs to
+pause.
+
 ## The four ways to get an asset
 
 Ranked by how well they suit an agent working unattended.

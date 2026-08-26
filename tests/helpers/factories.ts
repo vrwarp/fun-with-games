@@ -1,6 +1,7 @@
 import { makeSimConfig, type SimConfigOverrides } from '@/sim/config.js';
 import { obstacleTop } from '@/sim/systems/arena.js';
 import { Rng } from '@/sim/rng.js';
+import { tyreStackSpots } from '@/sim/systems/tyrestacks.js';
 import type { SimEventRecord, StepContext } from '@/sim/step.js';
 import {
   EMPTY_INPUT,
@@ -114,6 +115,7 @@ export interface StepContextOverrides {
       | 'zones'
       | 'obstacles'
       | 'tyres'
+      | 'tyreSpots'
     >
   >;
 }
@@ -138,6 +140,9 @@ export function makeStepContext(overrides: StepContextOverrides = {}): StepConte
     items: overrides.ctx?.items ?? [],
     zones: overrides.ctx?.zones ?? [],
     tyres: overrides.ctx?.tyres ?? [],
+    // Derived from the config exactly as `World` derives it, so a test that
+    // hands in tyres from `createTyres` gets the matching homes for free.
+    tyreSpots: overrides.ctx?.tyreSpots ?? tyreStackSpots(config),
     out: [],
   };
 }

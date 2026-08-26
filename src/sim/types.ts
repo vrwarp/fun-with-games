@@ -286,6 +286,19 @@ export interface TyreState {
   vz: number;
 }
 
+/**
+ * One stack's home position — DERIVED from the circuit, not state. `World`
+ * computes the list once and hands it to every step through the context, so
+ * the systems that need homes (reset, the at-home fast path in contacts)
+ * never recompute or snapshot them.
+ */
+export interface TyreStackSpot {
+  x: number;
+  z: number;
+  /** Yaw of the road at the spot, for the renderer's paint variation. */
+  angle: number;
+}
+
 export interface ProjectileState {
   id: number;
   ownerId: PlayerId;

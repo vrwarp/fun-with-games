@@ -1,7 +1,9 @@
 import { tickDeltaSeconds, type SimConfig } from '../config.js';
 import type { StepContext } from '../step.js';
 import { hasTrack, trackLength, trackPoseAt } from '../track.js';
-import type { TyreState } from '../types.js';
+import type { TyreStackSpot, TyreState } from '../types.js';
+
+export type { TyreStackSpot } from '../types.js';
 
 /**
  * The tyre walls as bodies — one body per TYRE, not per stack.
@@ -73,13 +75,6 @@ const STACK_SPACING = 2.2;
 const TURN_THRESHOLD = 0.18;
 const TURN_CHORD = 4;
 
-export interface TyreStackSpot {
-  x: number;
-  z: number;
-  /** Yaw of the road at the spot, for the renderer's paint variation. */
-  angle: number;
-}
-
 /**
  * Deterministic home positions for every STACK on a circuit (each spawns
  * `TYRES_PER_STACK` tyres). Pure function of the config — no RNG, so
@@ -136,9 +131,8 @@ export function createTyres(config: SimConfig): TyreState[] {
 
 /** Puts every tyre back on its stack's spot; a new round gets a fresh wall. */
 export function resetTyres(ctx: StepContext): void {
-  const spots = tyreStackSpots(ctx.config);
   ctx.tyres.forEach((tyre, index) => {
-    const spot = spots[Math.floor(index / TYRES_PER_STACK)];
+    const spot = ctx.tyreSpots[Math.floor(index / TYRES_PER_STACK)];
     if (!spot) return;
     tyre.x = spot.x;
     tyre.z = spot.z;
@@ -155,6 +149,17 @@ export function resetTyres(ctx: StepContext): void {
 export function updateTyres(ctx: StepContext): void {
   const tyres = ctx.tyres;
   if (tyres.length === 0) return;
+
+  // The do-nothing gate, and the most load-bearing lines in the file. For
+  // every tick of a clean race — which is nearly all of them — no tyre is
+  // loose and no car is anywhere near a wall (the closest spot sits further
+  // off the tarmac than a car's contact range reaches), so the whole system
+  // is two flat scans with no allocations and no maths beyond compares.
+  // Tests fast-forward entire grands prix through here under coverage
+  // instrumentation; anything heavier than this on the calm path shows up
+  // as minutes.
+  if (!anyTyreLoose(ctx) && !anyPlayerNearWall(ctx)) return;
+
   const dt = tickDeltaSeconds(ctx.config);
 
   carContacts(ctx);
@@ -184,6 +189,35 @@ export function updateTyres(ctx: StepContext): void {
   tyreContacts(tyres);
 }
 
+/** Any tyre moving, or resting anywhere but exactly on its home spot. */
+function anyTyreLoose(ctx: StepContext): boolean {
+  const tyres = ctx.tyres;
+  const spots = ctx.tyreSpots;
+  for (let i = 0; i < tyres.length; i++) {
+    const tyre = tyres[i];
+    const spot = spots[Math.floor(i / TYRES_PER_STACK)];
+    if (!tyre) continue;
+    if (tyre.vx !== 0 || tyre.vz !== 0 || !spot || tyre.x !== spot.x || tyre.z !== spot.z) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Any car within contact range of any stack spot (where home tyres sit). */
+function anyPlayerNearWall(ctx: StepContext): boolean {
+  const range = ctx.config.playerRadius + TYRE_RADIUS;
+  const rangeSq = range * range;
+  for (const player of ctx.players) {
+    for (const spot of ctx.tyreSpots) {
+      const dx = spot.x - player.x;
+      const dz = spot.z - player.z;
+      if (dx * dx + dz * dz < rangeSq) return true;
+    }
+  }
+  return false;
+}
+
 /**
  * Car meets tyre: separate by inverse mass along the true normal, then
  * exchange momentum along a per-tier FANNED normal. A standing stack's three
@@ -191,13 +225,61 @@ export function updateTyres(ctx: StepContext): void {
  * formation; the fan and the kick scale are what burst it. Both sides of the
  * exchange use the same fanned direction, so momentum stays conserved — it
  * is a glancing-contact model, not a cheat.
+ *
+ * Candidates come at STACK granularity, and that is the other load-bearing
+ * economy here: every tyre is either exactly on its home spot (found by
+ * checking the few dozen spots instead of the few hundred tyres) or away
+ * from it (kept in a list that is empty for every tick of a clean race).
+ * A car in the middle of the road costs a handful of spot distances per
+ * tick; the full per-tyre maths only ever runs against a candidate the
+ * cheap pass proved close. Candidates are processed in ascending tyre
+ * index, so the physics is bit-identical to the all-tyres scan it replaced
+ * — the order is part of determinism.
  */
 function carContacts(ctx: StepContext): void {
   const range = ctx.config.playerRadius + TYRE_RADIUS;
   const rangeSq = range * range;
+  const tyres = ctx.tyres;
+  const spots = ctx.tyreSpots;
 
+  // Tyres not sitting exactly on their home spot (or still moving), built
+  // ONCE per tick — a parked wall has none, and this single pass is most of
+  // what a calm tick pays. A tyre a car dislodges below is promoted into the
+  // set immediately, so a second car this same tick still sees it. A freshly
+  // restored host replica may list every tyre (quantized positions no longer
+  // equal their homes exactly), which is only slower, never wrong.
+  const away: number[] = [];
+  const isAway = new Uint8Array(tyres.length);
+  for (let i = 0; i < tyres.length; i++) {
+    const tyre = tyres[i];
+    const spot = spots[Math.floor(i / TYRES_PER_STACK)];
+    if (!tyre) continue;
+    if (tyre.vx !== 0 || tyre.vz !== 0 || !spot || tyre.x !== spot.x || tyre.z !== spot.z) {
+      away.push(i);
+      isAway[i] = 1;
+    }
+  }
+
+  const candidates: number[] = [];
   for (const player of ctx.players) {
-    for (let i = 0; i < ctx.tyres.length; i++) {
+    candidates.length = 0;
+    for (const i of away) candidates.push(i);
+    for (let s = 0; s < spots.length; s++) {
+      const spot = spots[s];
+      if (!spot) continue;
+      const sx = spot.x - player.x;
+      const sz = spot.z - player.z;
+      // At-home tyres sit exactly on the spot, so the spot's own distance is
+      // theirs; members that have left it are in the away set instead.
+      if (sx * sx + sz * sz >= rangeSq) continue;
+      for (let tier = 0; tier < TYRES_PER_STACK; tier++) {
+        const i = s * TYRES_PER_STACK + tier;
+        if (!isAway[i] && tyres[i]) candidates.push(i);
+      }
+    }
+    candidates.sort((a, b) => a - b);
+
+    for (const i of candidates) {
       const tyre = ctx.tyres[i];
       if (!tyre) continue;
       const dx = tyre.x - player.x;
@@ -216,6 +298,12 @@ function carContacts(ctx: StepContext): void {
       player.z -= nz * overlap * carShare;
       tyre.x += nx * overlap * (1 - carShare);
       tyre.z += nz * overlap * (1 - carShare);
+
+      // Dislodged: later cars this tick find it through the away set.
+      if (!isAway[i]) {
+        away.push(i);
+        isAway[i] = 1;
+      }
 
       // Fan the exchange direction by tier.
       const tier = i % TYRES_PER_STACK;

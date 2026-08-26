@@ -12,7 +12,7 @@ import { isMovementLocked, updatePhase } from './systems/phase.js';
 import { createPickups, updatePickups } from './systems/pickups.js';
 import { updateProjectiles } from './systems/projectiles.js';
 import { updateBall } from './systems/ball.js';
-import { createTyres, updateTyres } from './systems/tyrestacks.js';
+import { createTyres, tyreStackSpots, updateTyres } from './systems/tyrestacks.js';
 import { updateItems } from './systems/items.js';
 import { updateTag } from './systems/tag.js';
 import { updateRace } from './systems/race.js';
@@ -33,6 +33,7 @@ import {
   type PlayerState,
   type ProjectileState,
   type SimEvents,
+  type TyreStackSpot,
   type TyreState,
   type WorldSnapshot,
   type ZoneRuntimeState,
@@ -81,6 +82,8 @@ export class World {
   #items: ItemState[];
   #zones: ZoneRuntimeState[];
   #tyres: TyreState[];
+  /** Derived once from the config — the tyres' home spots, never state. */
+  readonly #tyreSpots: readonly TyreStackSpot[];
   /** Player ids in sorted order — the canonical iteration order. */
   #sortedIds: PlayerId[] = [];
   #spawnCounter = 0;
@@ -115,8 +118,9 @@ export class World {
       ownerTeam: TEAM_NONE,
       ownerId: '',
     }));
-    // Pure function of the config — draws nothing from the RNG stream, so it
-    // is free to sit after the two lines above that do.
+    // Pure functions of the config — they draw nothing from the RNG stream,
+    // so they are free to sit after the two lines above that do.
+    this.#tyreSpots = tyreStackSpots(this.config);
     this.#tyres = createTyres(this.config);
   }
 
@@ -298,6 +302,7 @@ export class World {
       items: this.#items,
       zones: this.#zones,
       tyres: this.#tyres,
+      tyreSpots: this.#tyreSpots,
       out: [],
     };
 

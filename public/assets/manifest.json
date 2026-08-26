@@ -191,7 +191,11 @@
       "meta": {
         "kind": "environment",
         "rotationY": -1.161,
-        "horizon": [0.603, 0.646, 0.632]
+        "horizon": [
+          0.603,
+          0.646,
+          0.632
+        ]
       },
       "license": {
         "name": "CC0-1.0",
@@ -209,9 +213,17 @@
       "meta": {
         "kind": "environment",
         "rotationY": -1.515,
-        "horizon": [0.447, 0.543, 0.626],
+        "horizon": [
+          0.447,
+          0.543,
+          0.626
+        ],
         "sun": {
-          "color": [1, 0.72, 0.5],
+          "color": [
+            1,
+            0.72,
+            0.5
+          ],
           "intensity": 3.6
         },
         "envLevel": 0.5

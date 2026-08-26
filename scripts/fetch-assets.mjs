@@ -20,7 +20,7 @@
 
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { join, relative } from 'node:path';
+import { dirname, join, relative } from 'node:path';
 import {
   ROOT as root,
   loadManifest,
@@ -49,6 +49,17 @@ async function readCatalog() {
   }
 }
 
+/**
+ * A safe path fragment: every segment a plain filename, no way to climb out
+ * of the vendor directory. Used for `file` (single segment) and for the
+ * relative paths of a multi-file asset's `include` map.
+ */
+function isSafeRelativePath(path, { allowSeparators }) {
+  const segments = String(path).split('/');
+  if (!allowSeparators && segments.length !== 1) return false;
+  return segments.every((segment) => /^[\w.-]+$/.test(segment) && /[\w]/.test(segment));
+}
+
 function validateEntry(entry) {
   const problems = [];
   if (!entry.id) problems.push('missing "id"');
@@ -57,9 +68,22 @@ function validateEntry(entry) {
   if (!entry.license?.name) problems.push('missing "license.name"');
   if (!entry.license?.source) problems.push('missing "license.source"');
   if (entry.url && !/^https:\/\//.test(entry.url)) problems.push('"url" must be https');
-  if (entry.file && !/^[\w.-]+$/.test(entry.file)) {
+  if (entry.file && !isSafeRelativePath(entry.file, { allowSeparators: false })) {
     // A `file` containing a path separator could escape the vendor directory.
     problems.push('"file" must be a bare filename');
+  }
+  if (entry.include !== undefined) {
+    // Multi-file assets (a .gltf with its buffers and textures) are namespaced
+    // under vendor/<id>/, so the id doubles as a directory name.
+    if (!/^[\w-]+$/.test(entry.id ?? '')) problems.push('"id" must be directory-safe');
+    for (const [relpath, file] of Object.entries(entry.include)) {
+      if (!isSafeRelativePath(relpath, { allowSeparators: true })) {
+        problems.push(`include path "${relpath}" is not a safe relative path`);
+      }
+      if (!file?.url || !/^https:\/\//.test(file.url)) {
+        problems.push(`include "${relpath}" needs an https "url"`);
+      }
+    }
   }
   return problems;
 }
@@ -115,21 +139,42 @@ async function main() {
     }
 
     try {
+      // A multi-file asset (glTF + buffers + textures) is namespaced under its
+      // own directory so its relative references resolve exactly as authored.
+      const dir = entry.include ? join(vendorDir, entry.id) : vendorDir;
+      const relUrl = entry.include
+        ? `assets/vendor/${entry.id}/${entry.file}`
+        : `assets/vendor/${entry.file}`;
+
       const { buffer, sha256 } = await download(entry);
-      const path = join(vendorDir, entry.file);
+      const path = join(dir, entry.file);
+      await mkdir(dirname(path), { recursive: true });
       await writeFile(path, buffer);
+      let bytes = buffer.byteLength;
+
+      for (const [relpath, file] of Object.entries(entry.include ?? {})) {
+        const part = await download(file);
+        const partPath = join(dir, relpath);
+        await mkdir(dirname(partPath), { recursive: true });
+        await writeFile(partPath, part.buffer);
+        bytes += part.buffer.byteLength;
+        if (!file.sha256) {
+          console.log(`  add "sha256": "${part.sha256}" to pin include "${relpath}"`);
+        }
+      }
 
       entries.push({
         id: entry.id,
-        url: `assets/vendor/${entry.file}`,
+        url: relUrl,
         scale: entry.scale ?? 1,
         origin: ORIGIN,
         sha256,
         ...(entry.description ? { description: entry.description } : {}),
+        ...(entry.meta ? { meta: entry.meta } : {}),
         license: entry.license,
       });
 
-      console.log(`fetched ${entry.id} -> ${relative(root, path)} (${buffer.byteLength} bytes)`);
+      console.log(`fetched ${entry.id} -> ${relative(root, path)} (${bytes} bytes)`);
       if (!entry.sha256) console.log(`  add "sha256": "${sha256}" to pin this file`);
     } catch (error) {
       failures.push(`${entry.id}: ${error.message}`);

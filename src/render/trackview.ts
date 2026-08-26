@@ -1,5 +1,6 @@
 import { Color3 } from '@babylonjs/core/Maths/math.color.js';
 import { Vector3 } from '@babylonjs/core/Maths/math.vector.js';
+import { applyPhotoSurface } from './assets.js';
 import { Constants } from '@babylonjs/core/Engines/constants.js';
 import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial.js';
 import { PBRMaterial } from '@babylonjs/core/Materials/PBR/pbrMaterial.js';
@@ -201,6 +202,8 @@ export class TrackView {
   readonly #scene: Scene;
   readonly #normalMaps: boolean;
   #meshes: Mesh[] = [];
+  #roadMat: PBRMaterial | null = null;
+  #barrierMat: PBRMaterial | null = null;
   #pitMaterial: StandardMaterial | null = null;
   #materials: Material[] = [];
   #surfaces: Surface[] = [];
@@ -564,7 +567,41 @@ export class TrackView {
     material.environmentIntensity = 0.35;
     material.backFaceCulling = CULL_BACK_FACES;
     this.#materials.push(material);
+    this.#roadMat = material;
     return material;
+  }
+
+  /**
+   * Trades the arithmetic tarmac for photographed asphalt, when the vendor
+   * files exist. Fail-soft and tier-respecting — see `applyPhotoSurface` —
+   * and called again by the renderer after every tier rebuild, because this
+   * whole view is torn down and remade when the quality changes.
+   */
+  applyVendorRoad(diffuseUrl: string, normalUrl: string | null, armUrl: string | null): void {
+    if (!this.#roadMat) return;
+    this.#textures.push(
+      ...applyPhotoSurface(this.#scene, this.#roadMat, diffuseUrl, normalUrl, {
+        ...(armUrl ? { armUrl } : {}),
+      }),
+    );
+  }
+
+  /**
+   * Same trade for the corrugated barriers. The ribbon's V already spans
+   * foot-to-top exactly once and its U carries the tiling, so a photographed
+   * sheet drops onto the geometry the procedural corrugation was drawn for.
+   * The tint knocks the photo down: the sheet was photographed near-white,
+   * and the procedural wall was deliberately a step darker than the horizon
+   * so a hundred metres of barrier never becomes the brightest thing in
+   * frame — the photograph has to honour that call too.
+   */
+  applyVendorBarrier(diffuseUrl: string, normalUrl: string | null): void {
+    if (!this.#barrierMat) return;
+    this.#textures.push(
+      ...applyPhotoSurface(this.#scene, this.#barrierMat, diffuseUrl, normalUrl, {
+        albedoColor: [0.58, 0.6, 0.63],
+      }),
+    );
   }
 
   /**
@@ -732,6 +769,7 @@ export class TrackView {
     material.roughness = 0.5;
     material.backFaceCulling = false;
     this.#materials.push(material);
+    this.#barrierMat = material;
     return material;
   }
 

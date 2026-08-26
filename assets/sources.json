@@ -12,6 +12,225 @@
   ],
   "assets": [
     {
+      "id": "sky",
+      "url": "https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/2k/wasteland_clouds_puresky_2k.hdr",
+      "file": "sky.hdr",
+      "enabled": true,
+      "description": "Late-afternoon partly-cloudy sky with a low warm sun and horizon haze. Serves as both the visible sky dome and the image-based lighting environment.",
+      "meta": {
+        "kind": "environment",
+        "rotationY": -1.161,
+        "horizon": [0.603, 0.646, 0.632]
+      },
+      "license": {
+        "name": "CC0-1.0",
+        "source": "https://polyhaven.com/a/wasteland_clouds_puresky",
+        "author": "Sergej Majboroda (original); Jarod Guest (sky edits)"
+      },
+      "sha256": "c9be5b722797528f2deae5969d6af061e75fca912675bcb11d467de5eea427c6"
+    },
+    {
+      "id": "asphalt-diff",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/asphalt_02/asphalt_02_diff_1k.jpg",
+      "file": "asphalt_diff.jpg",
+      "enabled": true,
+      "description": "Photographed dark asphalt albedo for the racing surface.",
+      "meta": {
+        "kind": "texture"
+      },
+      "license": {
+        "name": "CC0-1.0",
+        "source": "https://polyhaven.com/a/asphalt_02",
+        "author": "Rob Tuytel"
+      },
+      "sha256": "1aa5ce99f58a625c71d48cfc3e68b65ca85ccb00f39e045c0a928608a0ea25ed"
+    },
+    {
+      "id": "asphalt-normal",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/asphalt_02/asphalt_02_nor_gl_1k.jpg",
+      "file": "asphalt_nor.jpg",
+      "enabled": true,
+      "description": "OpenGL-convention normal map paired with asphalt-diff.",
+      "meta": {
+        "kind": "texture"
+      },
+      "license": {
+        "name": "CC0-1.0",
+        "source": "https://polyhaven.com/a/asphalt_02",
+        "author": "Rob Tuytel"
+      },
+      "sha256": "42a1c381b53204e83a982db2864479a30bc127bbdeebb1006f8ee51bff099df3"
+    },
+    {
+      "id": "grass-diff",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/aerial_grass_rock/aerial_grass_rock_diff_1k.jpg",
+      "file": "grass_diff.jpg",
+      "enabled": true,
+      "description": "Aerial-scale patchy grass albedo for the verges and infield.",
+      "meta": {
+        "kind": "texture"
+      },
+      "license": {
+        "name": "CC0-1.0",
+        "source": "https://polyhaven.com/a/aerial_grass_rock",
+        "author": "Rob Tuytel"
+      },
+      "sha256": "57b8041bfe0d0f01430e4dbaad45e7ddddf0a9fc97317f90dbc51f7b0d9e1b5d"
+    },
+    {
+      "id": "grass-normal",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/aerial_grass_rock/aerial_grass_rock_nor_gl_1k.jpg",
+      "file": "grass_nor.jpg",
+      "enabled": true,
+      "description": "OpenGL-convention normal map paired with grass-diff.",
+      "meta": {
+        "kind": "texture"
+      },
+      "license": {
+        "name": "CC0-1.0",
+        "source": "https://polyhaven.com/a/aerial_grass_rock",
+        "author": "Rob Tuytel"
+      },
+      "sha256": "1aa3e23bff453f152e089b9f83aa36b4901651e019f7e2ca01d5331a9bbbda78"
+    },
+    {
+      "id": "sky-street",
+      "url": "https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/2k/industrial_sunset_02_puresky_2k.hdr",
+      "file": "sky_street.hdr",
+      "enabled": true,
+      "description": "Hazy industrial sunset with a low orange sun. Street mode's own sky: the isometric chase at golden hour, while grandprix keeps the afternoon.",
+      "meta": {
+        "kind": "environment",
+        "rotationY": -1.515,
+        "horizon": [0.447, 0.543, 0.626],
+        "sun": {
+          "color": [1, 0.72, 0.5],
+          "intensity": 3.6
+        },
+        "envLevel": 0.5
+      },
+      "license": {
+        "name": "CC0-1.0",
+        "source": "https://polyhaven.com/a/industrial_sunset_02_puresky",
+        "author": "Sergej Majboroda (original); Jarod Guest (sky edits)"
+      },
+      "sha256": "439d7e99b34bd3727896d9a06247d4bd80d8276f208f4fdefce919ce74b602c3"
+    },
+    {
+      "id": "asphalt-arm",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/asphalt_02/asphalt_02_arm_1k.jpg",
+      "file": "asphalt_arm.jpg",
+      "enabled": true,
+      "description": "Packed AO/roughness/metallic map paired with asphalt-diff.",
+      "meta": {
+        "kind": "texture"
+      },
+      "license": {
+        "name": "CC0-1.0",
+        "source": "https://polyhaven.com/a/asphalt_02",
+        "author": "Rob Tuytel"
+      },
+      "sha256": "56bd8e591a3db579846fcb5185f60b0651e0bd4ea85c3529c339e6746243c9cf"
+    },
+    {
+      "id": "grass-arm",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/aerial_grass_rock/aerial_grass_rock_arm_1k.jpg",
+      "file": "grass_arm.jpg",
+      "enabled": true,
+      "description": "Packed AO/roughness/metallic map paired with grass-diff.",
+      "meta": {
+        "kind": "texture"
+      },
+      "license": {
+        "name": "CC0-1.0",
+        "source": "https://polyhaven.com/a/aerial_grass_rock",
+        "author": "Rob Tuytel"
+      },
+      "sha256": "95d8f5180bafaab3f76c394cee3dca9b4f8ca6531281c00c4a06e4485d0ab956"
+    },
+    {
+      "id": "barrier-diff",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/corrugated_iron_02/corrugated_iron_02_diff_1k.jpg",
+      "file": "barrier_diff.jpg",
+      "enabled": true,
+      "description": "Galvanised corrugated sheet albedo for the trackside barriers.",
+      "meta": {
+        "kind": "texture"
+      },
+      "license": {
+        "name": "CC0-1.0",
+        "source": "https://polyhaven.com/a/corrugated_iron_02",
+        "author": "Sergej Majboroda (photography); Jenelle van Heerden (processing)"
+      },
+      "sha256": "7a7b43099d015c1b08ebb175da5965caeae44b86de65a727b3fffa20a7c69a93"
+    },
+    {
+      "id": "barrier-normal",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/corrugated_iron_02/corrugated_iron_02_nor_gl_1k.jpg",
+      "file": "barrier_nor.jpg",
+      "enabled": true,
+      "description": "OpenGL-convention normal map paired with barrier-diff.",
+      "meta": {
+        "kind": "texture"
+      },
+      "license": {
+        "name": "CC0-1.0",
+        "source": "https://polyhaven.com/a/corrugated_iron_02",
+        "author": "Sergej Majboroda (photography); Jenelle van Heerden (processing)"
+      },
+      "sha256": "9743c93668689c36a67e9c4dc8d6a0870fe91202f82dcdaf70ddc330c12f9ecb"
+    },
+    {
+      "id": "bark-diff",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/japanese_cedar_bark/japanese_cedar_bark_diff_1k.jpg",
+      "file": "bark_diff.jpg",
+      "enabled": true,
+      "description": "Fibrous cedar bark albedo for the trackside pine trunks.",
+      "meta": {
+        "kind": "texture"
+      },
+      "license": {
+        "name": "CC0-1.0",
+        "source": "https://polyhaven.com/a/japanese_cedar_bark",
+        "author": "Charlotte Baglioni"
+      },
+      "sha256": "fa240510e9ef127a8979ebd63628950abdc048a1e091d8a1611c86bbe2c6cda4"
+    },
+    {
+      "id": "tyre-model",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Models/gltf/1k/old_tyre/old_tyre_1k.gltf",
+      "file": "old_tyre_1k.gltf",
+      "enabled": true,
+      "description": "Photoscanned car tyre; replaces the torus in every tyre wall on devices that can afford dressing.",
+      "meta": {
+        "kind": "model"
+      },
+      "include": {
+        "old_tyre.bin": {
+          "url": "https://dl.polyhaven.org/file/ph-assets/Models/gltf/4k/old_tyre/old_tyre.bin",
+          "sha256": "659e7982c2de92ca1d13194c97bf112b6dec22d91daecc88e3912d37ce1b7252"
+        },
+        "textures/old_tyre_diff_1k.jpg": {
+          "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/1k/old_tyre/old_tyre_diff_1k.jpg",
+          "sha256": "0e34ce658c0844c0c94022233226d495930d514c917a5fa15ffee4760567439e"
+        },
+        "textures/old_tyre_nor_gl_1k.jpg": {
+          "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/1k/old_tyre/old_tyre_nor_gl_1k.jpg",
+          "sha256": "34b716e140408985ddbab7d4bf1d8d430edf834cd2fd4639d82b14cb393fa73e"
+        },
+        "textures/old_tyre_arm_1k.jpg": {
+          "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/1k/old_tyre/old_tyre_arm_1k.jpg",
+          "sha256": "3bcf192f5b99a7a574f9e21e75927043e6726c601a5da15e3210a31db05e12d4"
+        }
+      },
+      "license": {
+        "name": "CC0-1.0",
+        "source": "https://polyhaven.com/a/old_tyre",
+        "author": "MP (Poly Haven)"
+      },
+      "sha256": "ba7b417eb3dc747c356ac3cd1f125754755684eb664737a9f1fc9e490c0b766e"
+    },
+    {
       "id": "fox",
       "url": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/Fox/glTF-Binary/Fox.glb",
       "file": "fox.glb",

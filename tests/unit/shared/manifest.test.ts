@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { EMPTY_MANIFEST, normalizeManifest, requiresAttribution } from '@/shared/manifest.js';
+import {
+  EMPTY_MANIFEST,
+  findSkyEntry,
+  normalizeManifest,
+  requiresAttribution,
+} from '@/shared/manifest.js';
 
 describe('normalizeManifest', () => {
   it('keeps well-formed entries', () => {
@@ -75,6 +80,84 @@ describe('normalizeManifest', () => {
     ['models that is not an array', { models: 'nope' }],
   ])('returns the empty manifest for %s', (_label, input) => {
     expect(normalizeManifest(input)).toEqual(EMPTY_MANIFEST);
+  });
+});
+
+describe('normalizeManifest meta', () => {
+  const entry = (meta: unknown) => ({
+    id: 'sky',
+    url: 'assets/vendor/sky.hdr',
+    license: { name: 'CC0-1.0', source: 'x' },
+    meta,
+  });
+
+  it('parses the full environment meta', () => {
+    const manifest = normalizeManifest({
+      models: [
+        entry({
+          kind: 'environment',
+          rotationY: -1.5,
+          horizon: [0.4, 0.5, 0.6],
+          sun: { color: [1, 0.7, 0.5], intensity: 3.6 },
+          envLevel: 0.5,
+        }),
+      ],
+    });
+    expect(manifest.models[0]?.meta).toEqual({
+      kind: 'environment',
+      rotationY: -1.5,
+      horizon: [0.4, 0.5, 0.6],
+      sun: { color: [1, 0.7, 0.5], intensity: 3.6 },
+      envLevel: 0.5,
+    });
+  });
+
+  it('keeps a sun with only one of its two knobs', () => {
+    const manifest = normalizeManifest({
+      models: [entry({ sun: { intensity: 4 } })],
+    });
+    expect(manifest.models[0]?.meta).toEqual({ sun: { intensity: 4 } });
+  });
+
+  it.each([
+    ['a sun that is not an object', { sun: 'bright' }],
+    ['a sun with malformed fields', { sun: { color: [1, 2], intensity: 'lots' } }],
+    ['a non-finite envLevel', { envLevel: Number.NaN }],
+    ['an unknown kind', { kind: 'shader' }],
+  ])('drops %s rather than half-parsing it', (_label, meta) => {
+    const manifest = normalizeManifest({ models: [entry(meta)] });
+    expect(manifest.models[0]?.meta).toBeUndefined();
+  });
+});
+
+describe('findSkyEntry', () => {
+  const sky = (id: string, kind?: string) => ({
+    id,
+    url: `assets/vendor/${id}.hdr`,
+    ...(kind !== undefined ? { meta: { kind } } : {}),
+    license: { name: 'CC0-1.0', source: 'x' },
+  });
+
+  it('prefers the mode-specific sky over the generic one', () => {
+    const manifest = normalizeManifest({
+      models: [sky('sky', 'environment'), sky('sky-street', 'environment')],
+    });
+    expect(findSkyEntry(manifest, 'street')?.id).toBe('sky-street');
+    expect(findSkyEntry(manifest, 'grandprix')?.id).toBe('sky');
+  });
+
+  it('ignores an id collision that is not an environment', () => {
+    // A future texture named sky-street must degrade to the generic sky,
+    // never to a JPEG fed to the cube-map decoder.
+    const manifest = normalizeManifest({
+      models: [sky('sky', 'environment'), sky('sky-street', 'texture')],
+    });
+    expect(findSkyEntry(manifest, 'street')?.id).toBe('sky');
+  });
+
+  it('finds nothing when no environment is catalogued', () => {
+    const manifest = normalizeManifest({ models: [sky('sky')] });
+    expect(findSkyEntry(manifest, 'street')).toBeUndefined();
   });
 });
 

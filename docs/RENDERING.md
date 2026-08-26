@@ -30,7 +30,7 @@ Nothing below quietly restyles them: every branch is on
 | ----------------- | ----------------------------------------------------------------------- |
 | `renderer.ts`     | Engine, scene, camera, lights, shadows, fog, arena, post                |
 | `environment.ts`  | The generated sky: sun, clouds, a reflection probe and a visible dome   |
-| `scenery.ts`      | Trees, guard posts, sponsor boards — merged static meshes               |
+| `scenery.ts`      | Trees, guard posts, boards, street lamps — merged static meshes         |
 | `tyrestacks.ts`   | The tyre walls, drawn from simulation state — they are bodies now       |
 | `cardynamics.ts`  | Wheel spin, recovered steering, body lean, brake glow — pure            |
 | `smoke.ts`        | Tyre smoke and dust, gated by the same slip functions as the marks      |
@@ -42,6 +42,7 @@ Nothing below quietly restyles them: every branch is on
 | `entities.ts`     | Player and pickup meshes                                                |
 | `trackview.ts`    | Tarmac, kerbs, start line, zone marks, barriers, gantry                 |
 | `marks.ts`        | Tyre marks and dust                                                     |
+| `assets.ts`       | Loading catalogued art: models, photo surfaces — every path fails soft  |
 
 ---
 
@@ -192,6 +193,79 @@ per tile, in both directions, so the stones stay square.
 
 ---
 
+## 5b. Photographs over the procedural look
+
+Everything above is the **baseline**: generated, committed, always present.
+On top of it, `Renderer.applyVendorArt` swaps in catalogued CC0 photographs —
+HDRI skies, photo asphalt/grass/barrier/bark, and a photoscanned tyre model —
+when `assets:fetch` has put them in `public/assets/vendor/`. The deployed
+site has them; a fresh clone plays the procedural look until it fetches.
+Every path in this section **fails soft**: a missing file or a failed decode
+logs at `info` and leaves the procedural art standing, per the first rule of
+`ASSETS.md`.
+
+The sky is **chosen per mode** (`findSkyEntry`: `sky-street` outranks `sky`
+in street), and two of its catalogue knobs reach beyond the dome: `meta.sun`
+retunes the key light to the lamp the photo was shot under — the reason the
+street circuit's whole scene goes golden-hour rather than just its backdrop —
+and `meta.horizon` recolours the fog and clear colour. All of it applies in
+the texture's `onLoad`, so a failed download changes nothing.
+
+The sky is one `.hdr` loaded **twice**, because the dome and the probe answer
+different questions (§4 again):
+
+- the **dome** gets a 512px `HDRCubeTexture` in `SKYBOX_MODE`, no prefilter —
+  it only has to be looked at;
+- `scene.environmentTexture` gets a 128px prefiltered one with harmonics —
+  it has to light things, so it needs the roughness mip chain.
+
+Two knobs travel with the file as catalogue `meta` (see `ASSETS.md` §3), not
+as code: `rotationY` turns the photo until its sun sits where `SUN_TRAVEL`
+says the key light is, and `horizon` is the image's own haze colour, which
+**replaces the fog colour** (`.toLinearSpace()`, and the clear colour with
+it). Fog tuned for the painted sky read as a grey wash over the photo one.
+
+The environment copy is applied at `level = 0.5`. A photographic sun carries
+hundreds of times the energy of the painted sun lobe, and at full level every
+glossy highlight on the cars blew out into a white streak. Halving the
+texture's level tames the reflections without touching
+`scene.environmentIntensity`, which would dim the lighting of everything else
+too.
+
+Photo surfaces go through `applyPhotoSurface`, which exists so a swap cannot
+lose what the procedural material established: it copies `uScale`/`vScale`
+and the anisotropy level off the outgoing texture (the tiling maths of §5
+still stands; explicit tiling covers materials that had no texture, like the
+bark), sets `gammaSpace` only on the albedo slot — a normal map read as sRGB
+tilts wrong everywhere — and swaps the bump **only if the tier had one**, so
+a photo normal map cannot sneak per-pixel lighting onto a tier that turned it
+off. This is why the barrier's corrugation is visible on medium and high but
+not low: a galvanised sheet's colour is nearly uniform — the ribs live in
+the normal map, and the cheap tier declined normal maps on purpose. The
+road and grass also take a packed **ARM** map (AO / roughness / metallic in
+the glTF channel layout); when it lands, the procedural metallic/roughness
+scalars step aside and the photographed roughness takes over — the low-sun
+glare corridor down the tarmac is that map at work. An `albedoColor` option
+covers two traps at once: lifting a flat-colour material's near-black tint
+before it multiplies the photo away (bark), and knocking a photographed
+sheet DOWN so the barrier stays a step darker than the horizon (the same
+call §5 made about the procedural wall).
+
+A quality-tier switch rebuilds `TrackView` on procedural tarmac;
+`#applyTierToScene` re-applies the road and barrier photographs after it.
+Scenery, the ground and the tyres are built once and keep theirs.
+
+The **tyre model** rides the `#dressing` gate — a software rasteriser keeps
+the cheap torus, exactly as it gets no trees — which also keeps CI's
+SwiftShader e2e runs off the heavy geometry. One mesh from the glTF becomes
+the clone prototype for every tyre in every wall; `normalizeTyrePrototype`
+measures rather than trusts it (hole axis from the smallest bounding extent,
+size from the largest), so a swapped model with different authoring
+conventions still lands stacked flat and right-sized. The swap is invisible
+above the view: the same simulation state poses photograph and torus alike.
+
+---
+
 ## 6. Overlays on a dark road
 
 Zone marks (sector gates, DRS zones) are unlit emissive quads blended by alpha,
@@ -278,8 +352,13 @@ The scene used to end at the kerb: grass, then a grey wall, then sky. A circuit
 drawn that way is a road on a plane, and no amount of work on the road fixes
 it — what tells you a track is somewhere is the stuff you are not looking at.
 
-`scenery.ts` plants trees, tyre walls and marshal posts. Three rules make it
-affordable and correct:
+`scenery.ts` plants trees, guard posts, boards and marshal posts — and, in a
+mode whose metadata asks for `'street'` furniture, paired **street lamps**:
+a thin pole, an arm, an unlit-emissive head, and an additive pool of warm
+lamplight painted on the ground under it (the contact-shadow trick run the
+other way). The heads glow instead of casting light — dozens of point lights
+is a budget nobody has — and at dusk the pools are most of what "lit street"
+means, on every tier. Three rules make all of it affordable and correct:
 
 - **Thin instances.** One mesh, one material, one draw call, and a buffer of
   transforms. Five hundred trees cost about what one tree costs.

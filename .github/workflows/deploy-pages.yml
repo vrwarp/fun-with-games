@@ -35,6 +35,15 @@ jobs:
 
       - run: npm ci
 
+      - name: Fetch CC0 vendor art
+        # The catalogued third-party assets (sky, ground photographs) are
+        # gitignored binaries; the production site is where they matter most.
+        # Checksums are pinned in assets/sources.json, so a changed upstream
+        # file fails here loudly instead of shipping silently. The game runs
+        # art-free by design, but a deploy that WOULD ship art-free because an
+        # upstream URL died should be a visible decision, not a surprise.
+        run: npm run assets:fetch
+
       - name: Build
         # Pages serves the site from https://<owner>.github.io/<repo>/, so the
         # bundle needs a matching base path. `configure-pages` resolves the

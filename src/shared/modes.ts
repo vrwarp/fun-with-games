@@ -129,6 +129,14 @@ export interface GameModeInfo {
   readonly secondaryLabel?: string;
   /** Suggested minimum players — the lobby hints to add bots below this. */
   readonly suggestedPlayers: number;
+  /**
+   * Trackside furniture set the renderer dresses the circuit with, beyond
+   * the default treeline-and-boards kit. `'street'` adds lit street lamps —
+   * paired with the mode's sunset sky, they are what says "city at dusk"
+   * rather than "test track after hours". Purely presentational: nothing in
+   * the simulation reads it.
+   */
+  readonly furniture?: 'street';
 }
 
 export const DEFAULT_MODE_ID: GameModeId = 'gather';
@@ -270,6 +278,7 @@ export const GAME_MODES: readonly GameModeInfo[] = [
     usesSecondaryAction: false,
     view: 'iso',
     suggestedPlayers: 2,
+    furniture: 'street',
   },
   {
     id: 'dungeon',

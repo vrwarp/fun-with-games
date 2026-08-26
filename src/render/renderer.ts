@@ -29,7 +29,7 @@ import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial.js'
 import type { Material } from '@babylonjs/core/Materials/material.js';
 import { Texture } from '@babylonjs/core/Materials/Textures/texture.js';
 import { CreateBox } from '@babylonjs/core/Meshes/Builders/boxBuilder.js';
-import type { Mesh } from '@babylonjs/core/Meshes/mesh.js';
+import { Mesh } from '@babylonjs/core/Meshes/mesh.js';
 
 // Side-effect import: registers the scene component that makes shadow
 // generators actually render. Deep imports skip it, and the failure mode is a
@@ -40,12 +40,20 @@ import { lerpAngle } from '../shared/math.js';
 import type { SimConfig } from '../sim/config.js';
 import type { Obstacle } from '../sim/types.js';
 import type { RenderState } from '../net/view.js';
+import {
+  findSkyEntry,
+  type AssetEntry,
+  type AssetManifest,
+  type AssetMeta,
+} from '../shared/manifest.js';
+import { HDRCubeTexture } from '@babylonjs/core/Materials/Textures/hdrCubeTexture.js';
+import { applyPhotoSurface, assetUrl, loadModel } from './assets.js';
 import { EntityViews } from './entities.js';
 import { finishOptions } from './carmaterials.js';
 import { KitViews } from './kitviews.js';
 import { TrackView } from './trackview.js';
 import { Scenery } from './scenery.js';
-import { TyreStackView } from './tyrestacks.js';
+import { TyreStackView, normalizeTyrePrototype } from './tyrestacks.js';
 import {
   applyView,
   groundFootprint,
@@ -75,6 +83,8 @@ export interface RendererOptions {
    * GPU-less box can still see the full scene.
    */
   forceDressing?: boolean;
+  /** Extra trackside furniture the mode asks for (see `GameModeInfo`). */
+  furniture?: 'street';
 }
 
 const log = createLogger('render:renderer');
@@ -156,6 +166,26 @@ export class Renderer {
    * collide with, so a device that hides it would be hiding gameplay.
    */
   #tyreStacks: TyreStackView | null = null;
+  #skyDome: Mesh | null = null;
+  #groundMaterial: PBRMaterial | null = null;
+  /**
+   * Vendor art the manifest offered, remembered past the moment it was
+   * applied: the track view is torn down and rebuilt on every tier change,
+   * and a rebuild that forgot the photographed tarmac would quietly revert
+   * the road to arithmetic the first time somebody moved the quality slider.
+   */
+  #vendorArt: {
+    sky?: {
+      url: string;
+      rotationY: number;
+      envLevel: number;
+      horizon?: [number, number, number];
+      sun?: NonNullable<AssetMeta['sun']>;
+    };
+    road?: { diffuse: string; normal: string | null; arm: string | null };
+    grass?: { diffuse: string; normal: string | null; arm: string | null };
+    barrier?: { diffuse: string; normal: string | null };
+  } = {};
   /**
    * Whether this device can afford pure dressing — trackside scenery, tyre
    * smoke. A software rasteriser shades every fragment on the CPU, so its
@@ -273,7 +303,9 @@ export class Renderer {
     // `#dressing` rather than the tier: the game is complete without it, and
     // a machine shading fragments on the CPU cannot pay for it.
     if (this.#dressing) {
-      this.#scenery = new Scenery(this.scene, options.config);
+      this.#scenery = new Scenery(this.scene, options.config, {
+        ...(options.furniture !== undefined ? { furniture: options.furniture } : {}),
+      });
       if (this.#shadows && qualitySettings(this.#governor.tier).cascadedShadows) {
         this.#scenery.addCastersTo(this.#shadows);
         this.#scenery.setReceiveShadows(true);
@@ -780,6 +812,203 @@ export class Renderer {
   }
 
   /**
+   * Upgrades the scene with whatever CC0 art the manifest offers.
+   *
+   * Called once the manifest has loaded, which is deliberately AFTER the
+   * game is already playable: art is an enhancement, never a dependency. A
+   * missing file, a dead URL or an empty vendor directory leaves every
+   * procedural surface exactly as it was — the whole path is fail-soft, and
+   * the only trace of a failure is one log line.
+   */
+  applyVendorArt(manifest: AssetManifest, baseUrl: string, modeId: string): void {
+    const find = (id: string) => manifest.models.find((entry) => entry.id === id);
+    const photoSet = (diffId: string, normalId: string, armId?: string) => {
+      const diff = find(diffId);
+      if (!diff) return undefined;
+      const normal = find(normalId);
+      const arm = armId !== undefined ? find(armId) : undefined;
+      return {
+        diffuse: assetUrl(diff, baseUrl),
+        normal: normal ? assetUrl(normal, baseUrl) : null,
+        arm: arm ? assetUrl(arm, baseUrl) : null,
+      };
+    };
+
+    // The sky is chosen per mode — `sky-street` outranks `sky` in street —
+    // because an environment is art direction for a place, not a global.
+    const sky = findSkyEntry(manifest, modeId);
+    if (sky) {
+      this.#vendorArt.sky = {
+        url: assetUrl(sky, baseUrl),
+        rotationY: sky.meta?.rotationY ?? 0,
+        envLevel: sky.meta?.envLevel ?? 0.5,
+        ...(sky.meta?.horizon ? { horizon: sky.meta.horizon } : {}),
+        ...(sky.meta?.sun ? { sun: sky.meta.sun } : {}),
+      };
+    }
+    const road = photoSet('asphalt-diff', 'asphalt-normal', 'asphalt-arm');
+    if (road) this.#vendorArt.road = road;
+    const grass = photoSet('grass-diff', 'grass-normal', 'grass-arm');
+    if (grass) this.#vendorArt.grass = grass;
+    const barrier = photoSet('barrier-diff', 'barrier-normal');
+    if (barrier) this.#vendorArt.barrier = barrier;
+
+    this.#applyVendorSky();
+    if (this.#vendorArt.grass && this.#groundMaterial) {
+      applyPhotoSurface(
+        this.scene,
+        this.#groundMaterial,
+        this.#vendorArt.grass.diffuse,
+        this.#vendorArt.grass.normal,
+        { ...(this.#vendorArt.grass.arm ? { armUrl: this.#vendorArt.grass.arm } : {}) },
+      );
+    }
+    this.#applyVendorTrack();
+
+    const bark = find('bark-diff');
+    if (bark) this.#scenery?.applyVendorBark(assetUrl(bark, baseUrl));
+
+    // The photographed tyre rides the dressing gate: a software rasteriser
+    // gets the cheap torus, exactly as it gets no trees and no smoke.
+    const tyre = find('tyre-model');
+    if (tyre?.meta?.kind === 'model' && this.#dressing && this.#tyreStacks) {
+      void this.#applyVendorTyres(tyre, baseUrl);
+    }
+  }
+
+  /** The TrackView half of the vendor pass, re-run after every tier rebuild. */
+  #applyVendorTrack(): void {
+    if (this.#vendorArt.road) {
+      this.#track.applyVendorRoad(
+        this.#vendorArt.road.diffuse,
+        this.#vendorArt.road.normal,
+        this.#vendorArt.road.arm,
+      );
+    }
+    if (this.#vendorArt.barrier) {
+      this.#track.applyVendorBarrier(
+        this.#vendorArt.barrier.diffuse,
+        this.#vendorArt.barrier.normal,
+      );
+    }
+  }
+
+  /**
+   * Swaps the torus tyre walls for a photographed tyre, once it has loaded.
+   *
+   * The model arrives as a whole glTF container; one mesh of it becomes the
+   * clone prototype after `normalizeTyrePrototype` stands it up and sizes it
+   * to the torus's footprint, and the container's transform scaffolding is
+   * shed. Anything failing along the way leaves the torus standing.
+   */
+  async #applyVendorTyres(entry: AssetEntry, baseUrl: string): Promise<void> {
+    const container = await loadModel(this.scene, entry, baseUrl);
+    if (!container) return;
+    container.addAllToScene();
+    const source = container.meshes.find(
+      (mesh): mesh is Mesh => mesh instanceof Mesh && mesh.getTotalVertices() > 0,
+    );
+    if (!source || !this.#tyreStacks) {
+      container.removeAllFromScene();
+      container.dispose();
+      return;
+    }
+    const prototype = normalizeTyrePrototype(source);
+    for (const node of container.meshes) {
+      if (node !== source && !node.isDisposed()) node.dispose();
+    }
+    this.#tyreStacks.applyVendorTyre(prototype);
+    if (this.#shadows && qualitySettings(this.#governor.tier).cascadedShadows) {
+      this.#tyreStacks.addCastersTo(this.#shadows);
+      this.#tyreStacks.setReceiveShadows(true);
+    }
+  }
+
+  /**
+   * Swaps the painted sky for a photographed one: the same file drives the
+   * visible dome and the image-based lighting, so the clouds the player sees
+   * are the clouds the bodywork reflects — the exact property the painted
+   * pair was built to protect.
+   *
+   * Two cube textures from one URL on purpose (the browser fetches it once):
+   * the dome wants resolution and skybox sampling, the environment wants
+   * prefiltered mips and harmonics, and sharing one texture between those
+   * two shader paths is how subtle sampling bugs get in. Each swap happens
+   * only in its own onLoad, so a failure changes nothing.
+   */
+  #applyVendorSky(): void {
+    const sky = this.#vendorArt.sky;
+    const dome = this.#skyDome;
+    if (!sky || !dome) return;
+    const material = dome.material;
+    if (!(material instanceof StandardMaterial)) return;
+
+    const domeTexture = new HDRCubeTexture(
+      sky.url,
+      this.scene,
+      512,
+      false,
+      false,
+      false,
+      false,
+      () => {
+        const old = material.reflectionTexture;
+        material.reflectionTexture = domeTexture;
+        old?.dispose();
+        // The distance fog fades toward the sky it now has to blend into.
+        // Measured from the photograph, carried in its catalogue entry, and
+        // taken to linear space where the fog shader blends (same rule as
+        // the painted horizon it replaces).
+        if (sky.horizon) {
+          const horizon = new Color3(...sky.horizon);
+          this.scene.fogColor = horizon.toLinearSpace();
+          this.scene.clearColor = horizon.toColor4(1);
+        }
+        // The photograph knows what lamp it was shot under; the key light
+        // follows it, or a dusk sky would hang over a noon-lit road. Same
+        // colour convention as the hard-coded daylight values it replaces.
+        if (sky.sun && this.#sun) {
+          if (sky.sun.color) this.#sun.diffuse = new Color3(...sky.sun.color);
+          if (sky.sun.intensity !== undefined) this.#sun.intensity = sky.sun.intensity;
+        }
+      },
+      (message) => {
+        log.info('vendor sky unavailable; keeping the painted one', message);
+        domeTexture.dispose();
+      },
+    );
+    domeTexture.coordinatesMode = Texture.SKYBOX_MODE;
+    domeTexture.rotationY = sky.rotationY;
+
+    const envTexture = new HDRCubeTexture(
+      sky.url,
+      this.scene,
+      128,
+      false,
+      true,
+      false,
+      true,
+      () => {
+        const old = this.scene.environmentTexture;
+        this.scene.environmentTexture = envTexture;
+        old?.dispose();
+      },
+      (message) => {
+        log.info('vendor environment unavailable; keeping the generated one', message);
+        envTexture.dispose();
+      },
+    );
+    envTexture.rotationY = sky.rotationY;
+    // A photographic sun carries hundreds of times the energy of the painted
+    // one every material in the scene was tuned against, and the first thing
+    // it bought was a blown glint streak down the whole road. Scaling THIS
+    // texture (not the scene) trims the imported energy while leaving each
+    // material's own environment tuning alone. The trim is per-file
+    // (`meta.envLevel`): a dusk sky and a noon sky import different suns.
+    envTexture.level = sky.envLevel;
+  }
+
+  /**
    * The half of a tier change that lives in the scene rather than the pipeline.
    *
    * Whether a surface has a normal map is compiled into its shader, so neither
@@ -806,6 +1035,8 @@ export class Renderer {
     this.#track = new TrackView(this.scene, this.#config, {
       normalMaps: qualitySettings(tier).normalMaps,
     });
+    // The rebuild came up on procedural tarmac; put the photographs back.
+    this.#applyVendorTrack();
   }
 
   /**
@@ -955,7 +1186,7 @@ export class Renderer {
     // gradient the cars reflect, which is the point: a car mirroring a sky
     // nobody can see is a car from a different scene. The other modes keep
     // their flat backdrop — the arena is meant to read as a room.
-    if (racing) createSkyDome(this.scene);
+    if (racing) this.#skyDome = createSkyDome(this.scene);
 
     if (racing) {
       // Aerial perspective, not weather. Exponential-squared, because linear
@@ -1186,6 +1417,7 @@ export class Renderer {
       material.roughness = 0.96;
       ground.material = material;
       ground.receiveShadows = true;
+      this.#groundMaterial = material;
     } else {
       const groundMaterial = new StandardMaterial('ground:mat', this.scene);
       const checker = createCheckerTexture(this.scene, { cells: Math.round(width / 3) });

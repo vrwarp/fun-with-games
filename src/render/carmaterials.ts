@@ -102,8 +102,11 @@ export class CarFinishes {
       strength: 6,
     });
     const grain = this.#surface('car:rubber', tyreRubber(SURFACE_SIZE), {
-      uScale: 2,
-      strength: 4,
+      // Fine and faint: at 2 tiles and full strength the grain bristled the
+      // tyres' silhouette in an elevation, and a slick's outline must be a
+      // clean arc — the texture is for close-ups, not for the profile.
+      uScale: 4,
+      strength: 2,
     });
 
     this.carbon = new PBRMaterial('car:carbon', scene);

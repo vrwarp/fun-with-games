@@ -22,8 +22,9 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const args = process.argv.slice(2);
 const urlFlag = args.indexOf('--url');
 const givenUrl = urlFlag >= 0 ? args[urlFlag + 1] : null;
+const urlValueIndex = urlFlag >= 0 ? urlFlag + 1 : -1;
 const outDir = resolve(
-  args.find((a, i) => !a.startsWith('--') && i !== urlFlag + 1) ??
+  args.find((a, i) => !a.startsWith('--') && i !== urlValueIndex) ??
     join(root, 'test-results', 'car-studio'),
 );
 

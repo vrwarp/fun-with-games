@@ -547,18 +547,35 @@ it describes a device, not the game somebody was invited to.
 
 ## 11. The car
 
-`carmesh.ts` builds about forty primitives — tapered nose, six-sided monocoque,
-tapering sidepods, airbox and engine cover, halo, floor and raked diffuser,
-two-element front wing with endplates, rear wing, exhaust, and four wheels with
-rims, spokes and wishbones — then **merges them by material into five meshes**.
+`carmesh.ts` builds about fifty primitives — drooping nose married to a
+two-element front wing, six-sided monocoque with a shoulder fairing, halo
+with its pillar, coke-bottle sidepods riding the floor, airbox, falling
+engine-cover spine into a tail fairing, raked diffuser with a dark exit
+cavity, a rear wing assembly (endplates, main plane, beam wing, one centre
+pylon), exhaust, and four wheels with rims, spokes and wishbones — then
+**merges them by material into a handful of meshes**.
 
 The counter-intuitive part, and why this is affordable on a phone: _more
-geometry here means fewer draw calls than before._ The car it replaced was five
-boxes and four cylinders — nine draw calls. This one is five. A GPU at this
-scale cares about state changes, not triangles.
+geometry here means fewer draw calls than before._ The car it replaced was
+five boxes and four cylinders — nine draw calls. A GPU at this scale cares
+about state changes, not triangles.
 
-The rear wing flap is the one part kept out of every merge, because DRS has to
-lay it flat.
+The proportions are not folklore: the shape was iterated against a
+turnaround sheet (`/studio.html` + `scripts/car-studio.mjs`) reviewed by
+the `f1-superfan` agent, whose prescriptions are what set the 4.1r
+wheelbase, the near-equal 18-inch-era wheel diameters with wider rears, the
+square front/rear track in plan, and the halo's size and rake. Two
+non-negotiables to preserve when editing it: the halo must break the cowl
+line in profile, and the steering wheel's position is a cockpit-camera
+compromise — sunk low, but far enough forward that its top arc stays in
+that camera's frame, because counter-rotating there is its whole job.
+Rotation signs in the file were fixed by measuring rendered elevations;
+trust the comments, not intuition about handedness.
+
+The rear wing flap is the one part kept out of every merge, because DRS has
+to lay it flat. The halo and its pillar merge into the RUBBER group on
+purpose — the tyre compound's matte near-black is the closest material the
+car carries to real halo carbon, and the glossy weave read as chrome.
 
 Everything is a multiple of `playerRadius`, which is what the simulation
 actually collides with, so a car that looks like it fits through a gap does.

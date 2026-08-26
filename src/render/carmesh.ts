@@ -172,20 +172,21 @@ export function buildCarMesh(
   // droop is most of what separates a modern front end from a Sixties cigar.
   const nose = tube(
     'nosecone',
-    { top: r * 0.28, bottom: r * 0.66, height: r * 1.4, sides: 10 },
+    { top: r * 0.18, bottom: r * 0.66, height: r * 1.4, sides: 10 },
     { x: 0, y: r * 0.51, z: r * 2.65 },
     'z',
     paint,
   );
   nose.rotation.x = Math.PI / 2 + 0.16;
-  // The tip: a flat pad, not a ball. A sphere on the end of a cone catches a
-  // specular point that glows like a klaxon in every head-on shot.
+  // The tip: a slim flat pad, not a ball and not a log end — a sphere
+  // caught a klaxon specular head-on, and a wide facet read as sawn timber
+  // from three-quarters.
   const tip = CreateBox(
     `${id}:nosetip`,
-    { width: r * 0.28, height: r * 0.14, depth: r * 0.2 },
+    { width: r * 0.16, height: r * 0.12, depth: r * 0.16 },
     scene,
   );
-  tip.position.set(0, floor + r * 0.4, r * 3.35);
+  tip.position.set(0, floor + r * 0.4, r * 3.36);
   tip.rotation.x = -0.16;
   paint.push(tip);
   // The shoulder where the drooping nose leaves the tub: the droop swings
@@ -218,21 +219,23 @@ export function buildCarMesh(
   // toward the centreline (yaw) and the bellies ride the floor all the way
   // back (pitch), so the waist shows in plan and nothing floats in profile.
   for (const side of [1, -1]) {
+    // Pulled well inboard of the tyre faces: an open-wheeler read from
+    // above is defined by how much naked tyre stands proud of the body.
     const pod = tube(
       `sidepod${side}`,
-      { top: r * 0.74, bottom: r * 0.26, height: r * 2.0, sides: 6 },
-      { x: side * r * 0.72, y: r * 0.43, z: -r * 0.35 },
+      { top: r * 0.68, bottom: r * 0.24, height: r * 2.35, sides: 6 },
+      { x: side * r * 0.62, y: r * 0.43, z: -r * 0.53 },
       'z',
       paint,
     );
-    pod.rotation.x = Math.PI / 2 - 0.12;
+    pod.rotation.x = Math.PI / 2 - 0.11;
     pod.rotation.y = side * 0.16;
 
     // The inlet, dark and recessed, at the pod's fat front face.
     box(
       `inlet${side}`,
-      { w: r * 0.46, h: r * 0.44, d: r * 0.14 },
-      { x: side * r * 0.72, y: r * 0.52, z: r * 0.62 },
+      { w: r * 0.42, h: r * 0.42, d: r * 0.14 },
+      { x: side * r * 0.63, y: r * 0.52, z: r * 0.62 },
       carbon,
     );
   }
@@ -242,16 +245,16 @@ export function buildCarMesh(
   // airbox is a mouth at the front that narrows toward the engine behind it.
   tube(
     'airbox',
-    { top: r * 0.62, bottom: r * 0.46, height: r * 0.6, sides: 8 },
-    { x: 0, y: r * 1.32, z: -r * 0.5 },
+    { top: r * 0.6, bottom: r * 0.44, height: r * 0.6, sides: 8 },
+    { x: 0, y: r * 1.2, z: -r * 0.5 },
     'z',
     paint,
   );
   // The intake mouth: a dark disc set into the front of the airbox.
   tube(
     'intake',
-    { top: r * 0.34, bottom: r * 0.34, height: r * 0.1, sides: 10 },
-    { x: 0, y: r * 1.34, z: -r * 0.22 },
+    { top: r * 0.32, bottom: r * 0.32, height: r * 0.1, sides: 10 },
+    { x: 0, y: r * 1.22, z: -r * 0.22 },
     'z',
     carbon,
   );
@@ -273,27 +276,29 @@ export function buildCarMesh(
   // its facets are as close to the eye as the wheel's.
   const halo = CreateTorus(
     `${id}:halo`,
-    { diameter: r * 1.15, thickness: r * 0.11, tessellation: 28 },
+    { diameter: r * 1.1, thickness: r * 0.1, tessellation: 28 },
     scene,
   );
   // A torus is already flat in XZ, which is how a halo sits — a ring around
-  // the cockpit opening, not a hoop the driver looks through. Tilted hard
-  // nose-down: the front edge dips to the tub while the rear rises over the
-  // seat, which is what makes the ring BREAK the cowl line in profile — an
-  // invisible halo un-moderns the whole car. (Sign fixed by measuring the
-  // rendered profile, not by arguing about handedness: positive x-rotation
-  // LOWERS the ring's +Z edge.)
-  halo.rotation.x = 0.35;
-  halo.position.set(0, floor + r * 1.1, r * 0.6);
-  carbon.push(halo);
+  // the cockpit opening, not a hoop the driver looks through. Barely tilted
+  // and held ABOVE the cowl line: what a head-on view may show is the top
+  // arc and the pillar, never a closed circle — a full ring face-on reads
+  // as a wreath leaning against the airbox. (Rotation sign fixed by
+  // measuring the rendered profile: positive x lowers the ring's +Z edge.)
+  halo.rotation.x = 0.25;
+  halo.position.set(0, floor + r * 1.26, r * 0.6);
+  // Into the RUBBER merge on purpose: the tyre compound's near-black matte
+  // grain is the closest material the car carries to real halo carbon, and
+  // the glossy weave read as a chromed hula-hoop from every angle.
+  rubber.push(halo);
   // The central pillar, from the tub up to the ring's front edge — the strut
   // the driver actually looks past, and the strut that holds the ring up.
   tube(
     'halopost',
-    { top: r * 0.09, bottom: r * 0.11, height: r * 0.42, sides: 6 },
-    { x: 0, y: r * 0.82, z: r * 1.12 },
+    { top: r * 0.09, bottom: r * 0.11, height: r * 0.55, sides: 6 },
+    { x: 0, y: r * 0.87, z: r * 1.05 },
     'y',
-    carbon,
+    rubber,
   );
 
   // --- Floor and diffuser ----------------------------------------------------
@@ -311,12 +316,24 @@ export function buildCarMesh(
   // behind it. Detached, it read as a slab of debris being towed.
   const diffuser = box(
     'diffuser',
-    { w: r * 1.34, h: r * 0.4, d: r * 0.8 },
-    { x: 0, y: r * 0.28, z: -r * 2.3 },
+    { w: r * 1.34, h: r * 0.34, d: r * 0.8 },
+    { x: 0, y: r * 0.33, z: -r * 2.3 },
     carbon,
   );
-  // Raked, which is what a diffuser IS.
+  // Raked, which is what a diffuser IS. The rake swings the box's corners,
+  // so the height and seat are chosen to keep the lowest one just above the
+  // contact plane — a floor below the tyres' ground line is not only wrong
+  // in an elevation, it z-fights the track in game.
   diffuser.rotation.x = -0.35;
+  // The exit cavity: a near-black inset in the diffuser's rear face, so the
+  // rear elevation shows an upswept dark mouth instead of a flat bulkhead.
+  const cavity = box(
+    'diffuser:cavity',
+    { w: r * 1.0, h: r * 0.3, d: r * 0.1 },
+    { x: 0, y: r * 0.3, z: -r * 2.62 },
+    rubber,
+  );
+  cavity.rotation.x = -0.35;
 
   // --- Front wing ------------------------------------------------------------
   // Two elements and two endplates, pulled BACK until the trailing edge
@@ -343,44 +360,60 @@ export function buildCarMesh(
     { x: 0, y: r * 0.3, z: r * 3.12 },
     carbon,
   );
+  // Endplates capped LOW: in a pure profile every part of the wing projects
+  // onto the same silhouette, and full-height plates entombed the dropped
+  // nose tip the rest of the front end was rebuilt to show off.
   for (const side of [1, -1]) {
     box(
       `fw:endplate${side}`,
-      { w: r * 0.07, h: r * 0.42, d: r * 0.85 },
-      { x: side * r * 1.15, y: r * 0.28, z: r * 3.15 },
+      { w: r * 0.07, h: r * 0.26, d: r * 0.85 },
+      { x: side * r * 1.15, y: r * 0.2, z: r * 3.15 },
       carbon,
     );
   }
 
+  // --- Tail fairing ----------------------------------------------------------
+  // The gearbox bodywork between the sidepod tails and the wing pylon. Ends
+  // the "wing on stilts" read: the pylon roots into this instead of air,
+  // and the coke-bottle waist has something to converge onto.
+  tube(
+    'tail',
+    { top: r * 0.5, bottom: r * 0.2, height: r * 1.05, sides: 6 },
+    { x: 0, y: r * 0.55, z: -r * 1.87 },
+    'z',
+    paint,
+  );
+
   // --- Rear wing -------------------------------------------------------------
-  // One assembly, not scattered parts: tall endplates carry the main plane
-  // and the DRS flap between them, a beam wing closes the bottom against
-  // the diffuser's exit, and a single centre pylon holds the lot above the
-  // low tail — with daylight under the wing, which is the modern signature.
+  // One assembly, essentially over the axle: endplates just inside the rear
+  // tyres carry the main plane and the DRS flap, a beam wing closes the
+  // bottom against the diffuser's exit, and a single centre pylon roots the
+  // lot into the tail fairing — daylight under the wing, but only a wing's
+  // worth: the top plane clears the rear tyre by a fraction, not a storey.
   for (const side of [1, -1]) {
     box(
       `rw:endplate${side}`,
-      { w: r * 0.07, h: r * 0.85, d: r * 0.8 },
-      { x: side * r * 0.9, y: r * 1.2, z: -r * 2.6 },
+      { w: r * 0.07, h: r * 0.5, d: r * 0.7 },
+      { x: side * r * 0.68, y: r * 1.15, z: -r * 2.3 },
       carbon,
     );
   }
   box(
     'rw:pylon',
-    { w: r * 0.09, h: r * 0.75, d: r * 0.22 },
-    { x: 0, y: r * 1.05, z: -r * 2.5 },
+    { w: r * 0.09, h: r * 0.45, d: r * 0.2 },
+    { x: 0, y: r * 1.05, z: -r * 2.25 },
     carbon,
   );
   box(
     'rw:main',
-    { w: r * 1.72, h: r * 0.07, d: r * 0.5 },
-    { x: 0, y: r * 1.42, z: -r * 2.6 },
+    { w: r * 1.35, h: r * 0.07, d: r * 0.48 },
+    { x: 0, y: r * 1.26, z: -r * 2.3 },
     carbon,
   );
   const beam = box(
     'rw:beam',
-    { w: r * 1.6, h: r * 0.06, d: r * 0.34 },
-    { x: 0, y: r * 0.78, z: -r * 2.55 },
+    { w: r * 1.25, h: r * 0.06, d: r * 0.32 },
+    { x: 0, y: r * 0.78, z: -r * 2.28 },
     carbon,
   );
   beam.rotation.x = 0.25;
@@ -388,10 +421,10 @@ export function buildCarMesh(
   // The flap DRS lays flat. Built last and kept out of every merge list.
   const wing = CreateBox(
     `${id}:rw:flap`,
-    { width: r * 1.68, height: r * 0.06, depth: r * 0.38 },
+    { width: r * 1.32, height: r * 0.06, depth: r * 0.36 },
     scene,
   );
-  wing.position.set(0, floor + r * 1.56, -r * 2.76);
+  wing.position.set(0, floor + r * 1.37, -r * 2.44);
 
   // --- Exhaust ---------------------------------------------------------------
   // Low and tucked under the beam wing, where the tailpipe actually lives —
@@ -399,7 +432,7 @@ export function buildCarMesh(
   tube(
     'exhaust',
     { top: r * 0.15, bottom: r * 0.18, height: r * 0.35, sides: 8 },
-    { x: 0, y: r * 0.6, z: -r * 2.62 },
+    { x: 0, y: r * 0.58, z: -r * 2.35 },
     'z',
     metal,
   );
@@ -430,7 +463,7 @@ export function buildCarMesh(
   // away, and at 12 sides the rim read as a dodecagonal nut in every frame.
   const rim = CreateTorus(
     `${id}:swheel:rim`,
-    { diameter: r * 0.42, thickness: r * 0.05, tessellation: 36 },
+    { diameter: r * 0.36, thickness: r * 0.045, tessellation: 36 },
     scene,
   );
   // A torus lies flat; stand it up to face the driver.
@@ -441,7 +474,7 @@ export function buildCarMesh(
   rim.isPickable = false;
   const spokeBar = CreateBox(
     `${id}:swheel:spoke`,
-    { width: r * 0.4, height: r * 0.07, depth: r * 0.05 },
+    { width: r * 0.32, height: r * 0.06, depth: r * 0.05 },
     scene,
   );
   spokeBar.parent = steeringWheel;
@@ -458,22 +491,26 @@ export function buildCarMesh(
   // strongest proportion cue a single-seater has, and the 18-inch era's other
   // signature is diameters within a few percent of each other — the rears
   // are WIDER, not taller. Big-rear stagger is a vintage tell.
+  // Front wheels sit further outboard than the rears' centres so that with
+  // their narrower section the OUTER faces line up in plan — a square
+  // stance at both axles is the ground-effect era's footprint, and a
+  // pigeon-toed front is what the old numbers read as from above.
   const corners: Array<{ x: number; z: number; front: boolean }> = [
-    { x: r * 0.95, z: r * 2.15, front: true },
-    { x: -r * 0.95, z: r * 2.15, front: true },
+    { x: r * 1.05, z: r * 2.15, front: true },
+    { x: -r * 1.05, z: r * 2.15, front: true },
     { x: r * 0.98, z: -r * 1.95, front: false },
     { x: -r * 0.98, z: -r * 1.95, front: false },
   ];
 
-  // One prototype per axle — the pairs differ only in placement, and clones
-  // share geometry.
-  const frontProto = buildWheel(scene, `${id}:wheel:front`, r * 0.52, r * 0.5, r, materials);
+  // One prototype per axle: equal diameters — the modern signature — with
+  // the rears wider, and clones share geometry.
+  const frontProto = buildWheel(scene, `${id}:wheel:front`, r * 0.55, r * 0.5, r, materials);
   const rearProto = buildWheel(scene, `${id}:wheel:rear`, r * 0.55, r * 0.65, r, materials);
 
   const wheels: CarWheel[] = corners.map((corner, index) => {
     const proto = corner.front ? frontProto : rearProto;
     const mesh = index % 2 === 0 ? proto : proto.clone(`${proto.name}:${index}`);
-    const tyreRadius = corner.front ? r * 0.52 : r * 0.55;
+    const tyreRadius = r * 0.55;
 
     const pivot = new TransformNode(`${id}:pivot${index}`, scene);
     pivot.parent = root;
@@ -488,7 +525,7 @@ export function buildCarMesh(
   // with the BODY: the mismatch as a wheel steers a few visual degrees is
   // invisible, and merging them keeps the corner at one mesh.
   for (const corner of corners) {
-    const tyreRadius = corner.front ? r * 0.52 : r * 0.55;
+    const tyreRadius = r * 0.55;
     const side = Math.sign(corner.x);
     for (const level of [0.55, 1.05]) {
       const arm = CreateBox(

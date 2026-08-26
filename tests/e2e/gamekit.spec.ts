@@ -553,6 +553,12 @@ test.describe('racing', () => {
   });
 
   test('muting mid-race silences the engines cleanly', async ({ page }) => {
+    // Everything here happens on a live racing scene, and on a software
+    // rasteriser that scene is expensive to stand up — with vendor art
+    // fetched, decoding the HDR sky on the CPU put the whole sequence at
+    // 59 seconds of a 60-second budget. The work is legitimate, so the
+    // budget is honest (3x) rather than the sequence trimmed.
+    test.slow();
     // Mute closes the whole context, which is the one moment a continuous
     // sound can leave a dangling node behind and throw on the next frame.
     const errors: string[] = [];

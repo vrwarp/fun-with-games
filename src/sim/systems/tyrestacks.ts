@@ -242,18 +242,40 @@ function carContacts(ctx: StepContext): void {
 
 /**
  * Loose tyres shoving each other: what turns one hit into a scattering wall.
- * Exactly-coincident pairs — the tyres of a standing stack — are skipped, so
- * a parked wall costs one rejected comparison per pair and never explodes.
+ *
+ * Only MOVING tyres are candidates, and that gate is load-bearing: a circuit
+ * carries a couple of hundred tyres, an all-pairs scan is tens of thousands
+ * of checks, and it runs every tick of every race — which is invisible at
+ * play speed and ruinous in a test fast-forwarding six laps. A sleeping tyre
+ * cannot start a contact (positions only change through this system, and
+ * every processed pair leaves separated), so the moving few against the
+ * field covers every pair that could possibly touch. A parked wall costs one
+ * velocity check per tyre and no pairs at all.
+ *
+ * Pairs are still resolved lowest-index-first with the normal from `a` to
+ * `b`, exactly as the all-pairs scan did — the order is part of determinism.
  */
 function tyreContacts(tyres: TyreState[]): void {
   const minDistance = TYRE_RADIUS * 2;
   const minDistanceSq = minDistance * minDistance;
 
+  let anyAwake = false;
+  for (const tyre of tyres) {
+    if (tyre.vx !== 0 || tyre.vz !== 0) {
+      anyAwake = true;
+      break;
+    }
+  }
+  if (!anyAwake) return;
+
   for (let i = 0; i < tyres.length; i++) {
+    const a = tyres[i];
+    if (!a) continue;
+    const aAwake = a.vx !== 0 || a.vz !== 0;
     for (let j = i + 1; j < tyres.length; j++) {
-      const a = tyres[i];
       const b = tyres[j];
-      if (!a || !b) continue;
+      if (!b) continue;
+      if (!aAwake && b.vx === 0 && b.vz === 0) continue;
 
       const dx = b.x - a.x;
       const dz = b.z - a.z;

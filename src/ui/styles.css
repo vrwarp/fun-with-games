@@ -1162,6 +1162,52 @@ body {
   color: var(--accent);
 }
 
+/* --------------------------------------------------------- loading veil */
+
+/* Informational only: no pointer events, so nothing underneath is blocked
+   and the circuit dressing itself stays visible behind the tint. Above the
+   HUD, below the lobby. */
+.loading-veil {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: max(1rem, env(safe-area-inset-top)) max(1rem, env(safe-area-inset-right))
+    max(1rem, env(safe-area-inset-bottom)) max(1rem, env(safe-area-inset-left));
+  background: rgba(8, 10, 14, 0.45);
+  z-index: 8;
+  pointer-events: none;
+  opacity: 1;
+  transition: opacity 0.35s ease;
+}
+
+.loading-veil.is-leaving {
+  opacity: 0;
+}
+
+.loading-veil__card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 1rem 1.5rem;
+  background: rgba(14, 17, 23, 0.85);
+  border-radius: var(--radius);
+  text-align: center;
+}
+
+.loading-veil__title {
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.loading-veil__count {
+  min-height: 1.2em;
+  font-size: 0.9rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+}
+
 /* ----------------------------------------------------------------- error */
 
 .fatal {

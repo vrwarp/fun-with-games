@@ -57,6 +57,14 @@ export interface PhotoSurfaceOptions {
    * place it would multiply the photograph nearly to black.
    */
   albedoColor?: [number, number, number];
+  /**
+   * Called exactly once when every texture this call started has finished —
+   * loaded OR failed, deliberately both: a settle signal that only fired on
+   * success would leave anything waiting on it (a loading gate) hanging on
+   * the first 404, and failure already has its own answer (the procedural
+   * surface stays).
+   */
+  onSettle?: () => void;
 }
 
 export function applyPhotoSurface(
@@ -74,11 +82,18 @@ export function applyPhotoSurface(
   const anisotropy = outgoing ? outgoing.anisotropicFilteringLevel : 4;
   const created: Texture[] = [];
 
+  let outstanding = 0;
+  const settleOne = (): void => {
+    outstanding--;
+    if (outstanding === 0) options.onSettle?.();
+  };
+
   const swapIn = (
     url: string,
     slot: 'albedoTexture' | 'bumpTexture' | 'metallicTexture',
     onLoad?: () => void,
   ): void => {
+    outstanding++;
     const texture: Texture = new Texture(
       url,
       scene,
@@ -90,10 +105,12 @@ export function applyPhotoSurface(
         material[slot] = texture;
         old?.dispose();
         onLoad?.();
+        settleOne();
       },
       (message) => {
         log.info(`photo surface unavailable (${url}); keeping the procedural one`, message);
         texture.dispose();
+        settleOne();
       },
     );
     texture.wrapU = Texture.WRAP_ADDRESSMODE;

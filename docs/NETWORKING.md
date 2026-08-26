@@ -230,6 +230,19 @@ way — and it is the standard fixed-timestep rendering trade. Two details matte
 Interpolation delay must stay above the snapshot interval, or there is nothing
 to interpolate towards and remote players stutter.
 
+### The sim hold
+
+`session.setSimHold(true)` keeps a peer in the room but stops it ticking: the
+clock stays honest (snapshot timestamps and smoothing continue) while no
+simulation steps fire and none accumulate, so releasing the hold resumes at
+the tick rate rather than replaying the held time as a burst. A held **host**
+is a room whose clock has genuinely not started — peers can join and be
+rostered, countdowns wait. A held **client** still receives and renders the
+host's snapshots (the race is not theirs to pause); it just is not sending
+inputs yet. The composition root uses this for the pre-race art gate
+(`docs/ASSETS.md`); the caller owns bounding the hold — nothing in the
+session times out on its own.
+
 ## Testing it
 
 `MemoryNetwork` implements `Transport` in-process against a **virtual clock**,

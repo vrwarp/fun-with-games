@@ -429,3 +429,59 @@ describe('malicious peers', () => {
     expect(h.score('bravo', 'zulu')).toBe(0);
   });
 });
+
+describe('the sim hold', () => {
+  it('holds a host world with no catch-up burst on release', () => {
+    const h = makeHarness();
+    h.join('solo');
+    h.peer('solo').session.setSimHold(true);
+    h.advance(2000);
+
+    // Held: the room's clock has genuinely not started.
+    expect(h.peer('solo').session.world.tick).toBe(0);
+
+    h.peer('solo').session.setSimHold(false);
+    h.advance(100);
+
+    // Released: ticking resumes at the tick rate. The two seconds spent held
+    // must NOT replay as a burst — a race that starts with a 60-tick lurch
+    // has already skipped its own countdown.
+    const tick = h.peer('solo').session.world.tick;
+    expect(tick).toBeGreaterThan(0);
+    expect(tick).toBeLessThanOrEqual(6);
+  });
+
+  it('lets peers join and be rostered while the host is held', () => {
+    const h = makeHarness();
+    h.join('alpha');
+    h.peer('alpha').session.setSimHold(true);
+    h.advance(300);
+    h.join('bravo');
+    h.advance(300);
+
+    // The roster is event-driven, so a held host still seats newcomers; it
+    // just has not started the clock for anyone yet.
+    expect(h.peer('alpha').session.world.hasPlayer('bravo')).toBe(true);
+    expect(h.peer('alpha').session.world.tick).toBe(0);
+
+    h.peer('alpha').session.setSimHold(false);
+    h.advance(1000);
+    expect(h.state('bravo').players).toHaveLength(2);
+  });
+
+  it('a held client still watches the race it cannot pause', () => {
+    const h = makeHarness();
+    h.join('alpha');
+    h.advance(500);
+    h.join('bravo');
+    h.peer('bravo').session.setSimHold(true);
+    h.advance(1000);
+
+    // The race is the host's to run, not the client's to hold: snapshots keep
+    // arriving and rendering, stamped with a live clock, so the veil period
+    // shows the real match rather than a freeze-frame.
+    const seen = h.state('bravo');
+    expect(seen.players).toHaveLength(2);
+    expect(seen.tick).toBeGreaterThan(20);
+  });
+});

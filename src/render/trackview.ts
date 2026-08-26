@@ -577,11 +577,20 @@ export class TrackView {
    * and called again by the renderer after every tier rebuild, because this
    * whole view is torn down and remade when the quality changes.
    */
-  applyVendorRoad(diffuseUrl: string, normalUrl: string | null, armUrl: string | null): void {
-    if (!this.#roadMat) return;
+  applyVendorRoad(
+    diffuseUrl: string,
+    normalUrl: string | null,
+    armUrl: string | null,
+    onSettle?: () => void,
+  ): void {
+    if (!this.#roadMat) {
+      onSettle?.();
+      return;
+    }
     this.#textures.push(
       ...applyPhotoSurface(this.#scene, this.#roadMat, diffuseUrl, normalUrl, {
         ...(armUrl ? { armUrl } : {}),
+        ...(onSettle ? { onSettle } : {}),
       }),
     );
   }
@@ -595,11 +604,15 @@ export class TrackView {
    * so a hundred metres of barrier never becomes the brightest thing in
    * frame — the photograph has to honour that call too.
    */
-  applyVendorBarrier(diffuseUrl: string, normalUrl: string | null): void {
-    if (!this.#barrierMat) return;
+  applyVendorBarrier(diffuseUrl: string, normalUrl: string | null, onSettle?: () => void): void {
+    if (!this.#barrierMat) {
+      onSettle?.();
+      return;
+    }
     this.#textures.push(
       ...applyPhotoSurface(this.#scene, this.#barrierMat, diffuseUrl, normalUrl, {
         albedoColor: [0.58, 0.6, 0.63],
+        ...(onSettle ? { onSettle } : {}),
       }),
     );
   }

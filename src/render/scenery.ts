@@ -642,13 +642,17 @@ export class Scenery {
    * Unlike the track, scenery materials are built once and survive tier
    * changes, so this needs no reapply hook.
    */
-  applyVendorBark(diffuseUrl: string): void {
-    if (!this.#bark) return;
+  applyVendorBark(diffuseUrl: string, onSettle?: () => void): void {
+    if (!this.#bark) {
+      onSettle?.();
+      return;
+    }
     this.#textures.push(
       ...applyPhotoSurface(this.#scene, this.#bark, diffuseUrl, null, {
         uScale: 1,
         vScale: 2,
         albedoColor: [0.72, 0.66, 0.6],
+        ...(onSettle ? { onSettle } : {}),
       }),
     );
   }

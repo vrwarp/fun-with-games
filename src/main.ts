@@ -24,6 +24,7 @@ import { loadManifest, loadModel } from './render/assets.js';
 import type { AssetManifest } from './shared/manifest.js';
 import { Announcer } from './ui/announcer.js';
 import { Credits } from './ui/credits.js';
+import { LoadingVeil } from './ui/loading.js';
 import { Settings } from './ui/settings.js';
 import { readPreferences, writePreferences } from './ui/preferences.js';
 import { Hud } from './ui/hud.js';
@@ -36,6 +37,18 @@ const log = createLogger('main');
  * fork the project, or your rooms will collide with everyone else's.
  */
 const APP_ID = 'fun-with-games-starter';
+
+/**
+ * How long the pre-race art gate may hold the simulation, at most.
+ *
+ * The gate exists so a race starts on a dressed circuit instead of counting
+ * down over textures that are still arriving; the ceiling exists because art
+ * must never be able to hold the game hostage — that is the repo's oldest
+ * rule. Sized for a phone pulling a few megabytes of sky and photographs
+ * over cellular; a repeat visit settles from cache in well under a second,
+ * and a build with no art at all releases the moment the manifest 404s.
+ */
+const ART_SETTLE_TIMEOUT_MS = 12_000;
 
 interface LaunchOptions {
   roomId: string;
@@ -361,12 +374,28 @@ async function launch(app: HTMLElement, options: LaunchOptions): Promise<void> {
 
   // The manifest is read once and shared: the renderer needs it to upgrade the
   // player model, and the credits panel needs it to show licences. Art is
-  // optional, so this runs in the background and upgrades things if it lands.
-  void loadManifest(import.meta.env.BASE_URL).then((manifest) => {
-    void applyOptionalAssets(renderer, manifest);
-    renderer.applyVendorArt(manifest, import.meta.env.BASE_URL, options.modeId);
-    credits = new Credits(utility, manifest);
-  });
+  // optional — a missing manifest changes nothing — but art that IS coming
+  // should not arrive mid-race, so the simulation is held behind a veil while
+  // it settles. The hold is the honest kind for each role: a host's room
+  // clock genuinely waits (the countdown has not started), a client just
+  // joins the running race a moment later, fully dressed. Bounded by the
+  // timeout above and released on any failure, so the game can never be held
+  // hostage by a hung download — the same fail-soft bargain the loaders
+  // themselves make.
+  const veil = new LoadingVeil(app);
+  session.setSimHold(true);
+  void (async () => {
+    try {
+      const manifest = await loadManifest(import.meta.env.BASE_URL);
+      renderer.trackArtLoad(applyOptionalAssets(renderer, manifest));
+      renderer.applyVendorArt(manifest, import.meta.env.BASE_URL, options.modeId);
+      credits = new Credits(utility, manifest);
+      await renderer.whenArtSettled(ART_SETTLE_TIMEOUT_MS);
+    } finally {
+      session.setSimHold(false);
+      veil.dismiss();
+    }
+  })();
 
   // A phone dims and locks after seconds of not being touched — including
   // while a player stands still watching the scoreboard.
@@ -472,6 +501,10 @@ async function launch(app: HTMLElement, options: LaunchOptions): Promise<void> {
       pendingInputs: session.pendingInputCount,
     });
     settings.setBotCount(session.botCount, session.isHost);
+    if (!veil.dismissed) {
+      const art = renderer.artProgress;
+      veil.update(art.settled, art.total);
+    }
   });
 
   const teardown = (): void => {
@@ -488,6 +521,7 @@ async function launch(app: HTMLElement, options: LaunchOptions): Promise<void> {
     audio.dispose();
     announcer.dispose();
     credits?.dispose();
+    veil.dismiss();
     settings.dispose();
     utility.remove();
     hud.dispose();

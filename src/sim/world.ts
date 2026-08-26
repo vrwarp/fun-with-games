@@ -12,7 +12,7 @@ import { isMovementLocked, updatePhase } from './systems/phase.js';
 import { createPickups, updatePickups } from './systems/pickups.js';
 import { updateProjectiles } from './systems/projectiles.js';
 import { updateBall } from './systems/ball.js';
-import { createTyreStacks, updateTyreStacks } from './systems/tyrestacks.js';
+import { createTyres, updateTyres } from './systems/tyrestacks.js';
 import { updateItems } from './systems/items.js';
 import { updateTag } from './systems/tag.js';
 import { updateRace } from './systems/race.js';
@@ -33,7 +33,7 @@ import {
   type PlayerState,
   type ProjectileState,
   type SimEvents,
-  type TyreStackState,
+  type TyreState,
   type WorldSnapshot,
   type ZoneRuntimeState,
 } from './types.js';
@@ -80,7 +80,7 @@ export class World {
   #projectiles: ProjectileState[] = [];
   #items: ItemState[];
   #zones: ZoneRuntimeState[];
-  #tyreStacks: TyreStackState[];
+  #tyres: TyreState[];
   /** Player ids in sorted order — the canonical iteration order. */
   #sortedIds: PlayerId[] = [];
   #spawnCounter = 0;
@@ -117,7 +117,7 @@ export class World {
     }));
     // Pure function of the config — draws nothing from the RNG stream, so it
     // is free to sit after the two lines above that do.
-    this.#tyreStacks = createTyreStacks(this.config);
+    this.#tyres = createTyres(this.config);
   }
 
   // ---------------------------------------------------------------- players
@@ -297,7 +297,7 @@ export class World {
       projectiles: this.#projectiles,
       items: this.#items,
       zones: this.#zones,
-      tyreStacks: this.#tyreStacks,
+      tyres: this.#tyres,
       out: [],
     };
 
@@ -315,7 +315,7 @@ export class World {
       integratePlayer(player, player.input, this.config, this.obstacles, dt, this.tick, locked);
     }
     resolvePlayerCollisions(players, this.config, this.tick);
-    updateTyreStacks(ctx); // trackside bodies: car thumps, then the pile
+    updateTyres(ctx); // trackside bodies: car thumps, then the pile scatters
 
     // 4. Interactions, in fixed order.
     updateCombat(ctx); //     respawns KO'd players whose timer expired
@@ -368,7 +368,7 @@ export class World {
       projectiles: this.#projectiles.map((p) => ({ ...p })),
       items: this.#items.map((i) => ({ ...i })),
       zones: this.#zones.map((z) => ({ ...z })),
-      tyreStacks: this.#tyreStacks.map((s) => ({ ...s })),
+      tyres: this.#tyres.map((s) => ({ ...s })),
     };
   }
 
@@ -410,7 +410,7 @@ export class World {
     this.#projectiles = snapshot.projectiles.map((p) => ({ ...p }));
     this.#items = snapshot.items.map((i) => ({ ...i }));
     this.#zones = snapshot.zones.map((z) => ({ ...z }));
-    this.#tyreStacks = snapshot.tyreStacks.map((s) => ({ ...s }));
+    this.#tyres = snapshot.tyres.map((s) => ({ ...s }));
     this.#reindex();
   }
 
@@ -522,11 +522,11 @@ export class World {
       mixString(zone.ownerId);
     }
 
-    for (const stack of this.#tyreStacks) {
-      mixFloat(stack.x);
-      mixFloat(stack.z);
-      mixFloat(stack.vx);
-      mixFloat(stack.vz);
+    for (const tyre of this.#tyres) {
+      mixFloat(tyre.x);
+      mixFloat(tyre.z);
+      mixFloat(tyre.vx);
+      mixFloat(tyre.vz);
     }
 
     return hash >>> 0;

@@ -9,7 +9,7 @@ import type {
   PlayerState,
   ProjectileState,
   SimEvents,
-  TyreStackState,
+  TyreState,
   ZoneRuntimeState,
 } from './types.js';
 
@@ -48,7 +48,7 @@ export interface StepContext {
   projectiles: ProjectileState[];
   readonly items: ItemState[];
   readonly zones: ZoneRuntimeState[];
-  readonly tyreStacks: TyreStackState[];
+  readonly tyres: TyreState[];
   /** Events raised this tick; `World` emits them after the step. */
   readonly out: SimEventRecord[];
 }

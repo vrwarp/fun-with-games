@@ -297,14 +297,17 @@ would invent contacts that never happened.
 ### Tyre stacks — `systems/tyrestacks.ts`, no config section
 
 Any mode with a circuit gets tyre-wall stacks on the outside of its corners,
-and they are **bodies, not scenery**: much lighter than a car, so clipping one
-costs a thump of speed and sends the stack flying, shoving its neighbours as
-it goes. Friction grinds a loose stack to a dead stop; a round reset stands
-the whole wall back up. Placement is a pure function of the circuit
-(`tyreStackSpots`), so their homes never travel — snapshots carry only where
-the racing has since left each stack, and the renderer derives the topple and
-roll from that displacement alone. Drawn by `src/render/tyrestacks.ts` on
-every device (they are collidable, so they cannot hide behind the
+and they are **bodies, not scenery** — one body per TYRE, three per stack.
+A standing stack's tyres are coincident (height is presentation); a hit
+bursts them apart with per-tier kicks — the top tyre takes the biggest,
+widest one — so a clipped stack scatters instead of falling over as a welded
+unit, each loose tyre shoves whatever it lands against, friction grinds them
+to a dead stop, and a round reset restacks the wall. Placement is a pure
+function of the circuit (`tyreStackSpots`), so homes never travel —
+snapshots carry only where the racing has since left each tyre, and the
+renderer derives every pose (stacked, sliding flat, rolling away on its
+tread) from that state alone. Drawn by `src/render/tyrestacks.ts` on every
+device (they are collidable, so they cannot hide behind the
 software-rasteriser dressing gate the way the trees do).
 
 The match state machine: `lobby → countdown → playing → ended → countdown…`.

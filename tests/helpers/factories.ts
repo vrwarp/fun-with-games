@@ -74,7 +74,7 @@ export function makeSnapshot(
     projectiles: [],
     items: [],
     zones: [],
-    tyreStacks: [],
+    tyres: [],
     ...extra,
   };
 }
@@ -113,7 +113,7 @@ export interface StepContextOverrides {
       | 'items'
       | 'zones'
       | 'obstacles'
-      | 'tyreStacks'
+      | 'tyres'
     >
   >;
 }
@@ -137,7 +137,7 @@ export function makeStepContext(overrides: StepContextOverrides = {}): StepConte
     projectiles: overrides.ctx?.projectiles ?? [],
     items: overrides.ctx?.items ?? [],
     zones: overrides.ctx?.zones ?? [],
-    tyreStacks: overrides.ctx?.tyreStacks ?? [],
+    tyres: overrides.ctx?.tyres ?? [],
     out: [],
   };
 }

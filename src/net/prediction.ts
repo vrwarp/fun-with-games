@@ -15,7 +15,7 @@ import {
   type RenderPickup,
   type RenderProjectile,
   type RenderState,
-  type RenderTyreStack,
+  type RenderTyre,
   type RenderZone,
 } from './view.js';
 
@@ -265,7 +265,7 @@ export class ClientView {
       projectiles: this.#projectileViews(from.snapshot, to.snapshot, alpha),
       zones: this.#zoneViews(latest.snapshot),
       items: this.#itemViews(latest.snapshot),
-      tyreStacks: this.#tyreStackViews(from.snapshot, to.snapshot, alpha),
+      tyres: this.#tyreViews(from.snapshot, to.snapshot, alpha),
       maxHp: this.#config.combat.enabled ? this.#config.combat.maxHp : 0,
       totalLaps: this.#isRace ? this.#config.phases.targetScore : 0,
     };
@@ -302,18 +302,18 @@ export class ClientView {
   }
 
   /**
-   * Stacks are index-identified (the roster is fixed by the circuit), so the
+   * Tyres are index-identified (the roster is fixed by the circuit), so the
    * pairing for interpolation is positional — no id search needed.
    */
-  #tyreStackViews(from: WorldSnapshot, to: WorldSnapshot, alpha: number): RenderTyreStack[] {
-    return to.tyreStacks.map((stack, id) => {
-      const previous = from.tyreStacks[id];
+  #tyreViews(from: WorldSnapshot, to: WorldSnapshot, alpha: number): RenderTyre[] {
+    return to.tyres.map((tyre, id) => {
+      const previous = from.tyres[id];
       return {
         id,
-        x: previous ? lerp(previous.x, stack.x, alpha) : stack.x,
-        z: previous ? lerp(previous.z, stack.z, alpha) : stack.z,
-        vx: stack.vx,
-        vz: stack.vz,
+        x: previous ? lerp(previous.x, tyre.x, alpha) : tyre.x,
+        z: previous ? lerp(previous.z, tyre.z, alpha) : tyre.z,
+        vx: tyre.vx,
+        vz: tyre.vz,
       };
     });
   }

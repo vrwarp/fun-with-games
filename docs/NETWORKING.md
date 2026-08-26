@@ -131,10 +131,15 @@ timed effects, and the effects map has always travelled whole.
 
 Protocol **v5** adds the tyre stacks: the trackside walls became bodies the
 cars exchange momentum with, so their positions and velocities are mutable
-state and travel in every snapshot (`tyreStacks`, index-identified — the
-roster is fixed by the circuit, so homes never need to travel, only where
-the racing has since shoved each stack). Quantized to centimetres; a parked
-wall is rows of short zeroes.
+state and travel in every snapshot. Quantized to centimetres; a parked wall
+is rows of short zeroes.
+
+Protocol **v6** splits every stack into its tyres: `tyres` replaces
+`tyreStacks`, three entries per stack spot, same shape per entry
+(index-identified, stack-major — the roster is fixed by the circuit, so
+homes never travel, only where the racing has since shoved each tyre). The
+entry shape did not change but the rosters differ, which is exactly the
+kind of silent desync a version bump exists to prevent.
 
 New abilities that only need a button do **not** bump the version: both
 button bits already travel. Camera view and sprite style never touch the wire

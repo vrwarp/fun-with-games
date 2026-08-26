@@ -68,10 +68,22 @@ async function main() {
   let base = givenUrl;
   if (!base) {
     base = `http://127.0.0.1:${PORT}`;
-    server = spawn('npx', ['vite', '--port', String(PORT), '--host', '127.0.0.1', '--strictPort'], {
-      cwd: root,
-      stdio: 'ignore',
-    });
+    // Spawn vite's entry point directly under node, not via npx: a wrapper
+    // in between means `kill()` reaps the wrapper and orphans the actual
+    // server, which then squats on the port serving stale modules to every
+    // later run — a debugging session nobody needs twice.
+    server = spawn(
+      process.execPath,
+      [
+        join(root, 'node_modules', 'vite', 'bin', 'vite.js'),
+        '--port',
+        String(PORT),
+        '--host',
+        '127.0.0.1',
+        '--strictPort',
+      ],
+      { cwd: root, stdio: 'ignore' },
+    );
   }
 
   try {

@@ -42,6 +42,7 @@ Nothing below quietly restyles them: every branch is on
 | `entities.ts`     | Player and pickup meshes                                                |
 | `trackview.ts`    | Tarmac, kerbs, start line, zone marks, barriers, gantry                 |
 | `marks.ts`        | Tyre marks and dust                                                     |
+| `assets.ts`       | Loading catalogued art: models, photo surfaces — every path fails soft  |
 
 ---
 
@@ -189,6 +190,48 @@ Getting it wrong shows up as a visible grid over the whole circuit, once per
 tile, forever. Ribbon UVs run 0..1 over a whole band, so the road works its
 tiling out from the circuit's real length and width — `ROAD_TILE` world units
 per tile, in both directions, so the stones stay square.
+
+---
+
+## 5b. Photographs over the procedural look
+
+Everything above is the **baseline**: generated, committed, always present.
+On top of it, `Renderer.applyVendorArt` swaps in catalogued CC0 photographs —
+an HDRI sky and photo asphalt/grass — when `assets:fetch` has put them in
+`public/assets/vendor/`. The deployed site has them; a fresh clone plays the
+procedural look until it fetches. Every path in this section **fails soft**:
+a missing file or a failed decode logs at `info` and leaves the procedural
+art standing, per the first rule of `ASSETS.md`.
+
+The sky is one `.hdr` loaded **twice**, because the dome and the probe answer
+different questions (§4 again):
+
+- the **dome** gets a 512px `HDRCubeTexture` in `SKYBOX_MODE`, no prefilter —
+  it only has to be looked at;
+- `scene.environmentTexture` gets a 128px prefiltered one with harmonics —
+  it has to light things, so it needs the roughness mip chain.
+
+Two knobs travel with the file as catalogue `meta` (see `ASSETS.md` §3), not
+as code: `rotationY` turns the photo until its sun sits where `SUN_TRAVEL`
+says the key light is, and `horizon` is the image's own haze colour, which
+**replaces the fog colour** (`.toLinearSpace()`, and the clear colour with
+it). Fog tuned for the painted sky read as a grey wash over the photo one.
+
+The environment copy is applied at `level = 0.5`. A photographic sun carries
+hundreds of times the energy of the painted sun lobe, and at full level every
+glossy highlight on the cars blew out into a white streak. Halving the
+texture's level tames the reflections without touching
+`scene.environmentIntensity`, which would dim the lighting of everything else
+too.
+
+Photo ground goes through `applyPhotoSurface`, which exists so a swap cannot
+lose what the procedural material established: it copies `uScale`/`vScale`
+and the anisotropy level off the outgoing texture (the tiling maths of §5
+still stands), sets `gammaSpace` only on the albedo slot — a normal map read
+as sRGB tilts wrong everywhere — and swaps the bump **only if the tier had
+one**, so a photo normal map cannot sneak per-pixel lighting onto a tier that
+turned it off. A quality-tier switch rebuilds `TrackView` on procedural
+tarmac; `#applyTierToScene` re-applies the photographs after it.
 
 ---
 

@@ -12,6 +12,88 @@
   ],
   "assets": [
     {
+      "id": "sky",
+      "url": "https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/2k/wasteland_clouds_puresky_2k.hdr",
+      "file": "sky.hdr",
+      "enabled": true,
+      "description": "Late-afternoon partly-cloudy sky with a low warm sun and horizon haze. Serves as both the visible sky dome and the image-based lighting environment.",
+      "meta": {
+        "kind": "environment",
+        "rotationY": -1.161,
+        "horizon": [0.603, 0.646, 0.632]
+      },
+      "license": {
+        "name": "CC0-1.0",
+        "source": "https://polyhaven.com/a/wasteland_clouds_puresky",
+        "author": "Sergej Majboroda (original); Jarod Guest (sky edits)"
+      },
+      "sha256": "c9be5b722797528f2deae5969d6af061e75fca912675bcb11d467de5eea427c6"
+    },
+    {
+      "id": "asphalt-diff",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/asphalt_02/asphalt_02_diff_1k.jpg",
+      "file": "asphalt_diff.jpg",
+      "enabled": true,
+      "description": "Photographed dark asphalt albedo for the racing surface.",
+      "meta": {
+        "kind": "texture"
+      },
+      "license": {
+        "name": "CC0-1.0",
+        "source": "https://polyhaven.com/a/asphalt_02",
+        "author": "Rob Tuytel"
+      },
+      "sha256": "1aa5ce99f58a625c71d48cfc3e68b65ca85ccb00f39e045c0a928608a0ea25ed"
+    },
+    {
+      "id": "asphalt-normal",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/asphalt_02/asphalt_02_nor_gl_1k.jpg",
+      "file": "asphalt_nor.jpg",
+      "enabled": true,
+      "description": "OpenGL-convention normal map paired with asphalt-diff.",
+      "meta": {
+        "kind": "texture"
+      },
+      "license": {
+        "name": "CC0-1.0",
+        "source": "https://polyhaven.com/a/asphalt_02",
+        "author": "Rob Tuytel"
+      },
+      "sha256": "42a1c381b53204e83a982db2864479a30bc127bbdeebb1006f8ee51bff099df3"
+    },
+    {
+      "id": "grass-diff",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/aerial_grass_rock/aerial_grass_rock_diff_1k.jpg",
+      "file": "grass_diff.jpg",
+      "enabled": true,
+      "description": "Aerial-scale patchy grass albedo for the verges and infield.",
+      "meta": {
+        "kind": "texture"
+      },
+      "license": {
+        "name": "CC0-1.0",
+        "source": "https://polyhaven.com/a/aerial_grass_rock",
+        "author": "Rob Tuytel"
+      },
+      "sha256": "57b8041bfe0d0f01430e4dbaad45e7ddddf0a9fc97317f90dbc51f7b0d9e1b5d"
+    },
+    {
+      "id": "grass-normal",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/aerial_grass_rock/aerial_grass_rock_nor_gl_1k.jpg",
+      "file": "grass_nor.jpg",
+      "enabled": true,
+      "description": "OpenGL-convention normal map paired with grass-diff.",
+      "meta": {
+        "kind": "texture"
+      },
+      "license": {
+        "name": "CC0-1.0",
+        "source": "https://polyhaven.com/a/aerial_grass_rock",
+        "author": "Rob Tuytel"
+      },
+      "sha256": "1aa3e23bff453f152e089b9f83aa36b4901651e019f7e2ca01d5331a9bbbda78"
+    },
+    {
       "id": "fox",
       "url": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/Fox/glTF-Binary/Fox.glb",
       "file": "fox.glb",

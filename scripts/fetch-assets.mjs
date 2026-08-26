@@ -126,6 +126,7 @@ async function main() {
         origin: ORIGIN,
         sha256,
         ...(entry.description ? { description: entry.description } : {}),
+        ...(entry.meta ? { meta: entry.meta } : {}),
         license: entry.license,
       });
 

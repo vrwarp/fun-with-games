@@ -40,6 +40,9 @@ import { lerpAngle } from '../shared/math.js';
 import type { SimConfig } from '../sim/config.js';
 import type { Obstacle } from '../sim/types.js';
 import type { RenderState } from '../net/view.js';
+import type { AssetManifest } from '../shared/manifest.js';
+import { HDRCubeTexture } from '@babylonjs/core/Materials/Textures/hdrCubeTexture.js';
+import { applyPhotoSurface, assetUrl } from './assets.js';
 import { EntityViews } from './entities.js';
 import { finishOptions } from './carmaterials.js';
 import { KitViews } from './kitviews.js';
@@ -156,6 +159,19 @@ export class Renderer {
    * collide with, so a device that hides it would be hiding gameplay.
    */
   #tyreStacks: TyreStackView | null = null;
+  #skyDome: Mesh | null = null;
+  #groundMaterial: PBRMaterial | null = null;
+  /**
+   * Vendor art the manifest offered, remembered past the moment it was
+   * applied: the track view is torn down and rebuilt on every tier change,
+   * and a rebuild that forgot the photographed tarmac would quietly revert
+   * the road to arithmetic the first time somebody moved the quality slider.
+   */
+  #vendorArt: {
+    sky?: { url: string; rotationY: number; horizon?: [number, number, number] };
+    road?: { diffuse: string; normal: string | null };
+    grass?: { diffuse: string; normal: string | null };
+  } = {};
   /**
    * Whether this device can afford pure dressing — trackside scenery, tyre
    * smoke. A software rasteriser shades every fragment on the CPU, so its
@@ -780,6 +796,133 @@ export class Renderer {
   }
 
   /**
+   * Upgrades the scene with whatever CC0 art the manifest offers.
+   *
+   * Called once the manifest has loaded, which is deliberately AFTER the
+   * game is already playable: art is an enhancement, never a dependency. A
+   * missing file, a dead URL or an empty vendor directory leaves every
+   * procedural surface exactly as it was — the whole path is fail-soft, and
+   * the only trace of a failure is one log line.
+   */
+  applyVendorArt(manifest: AssetManifest, baseUrl: string): void {
+    const find = (id: string) => manifest.models.find((entry) => entry.id === id);
+
+    const sky = find('sky');
+    if (sky && sky.meta?.kind === 'environment') {
+      this.#vendorArt.sky = {
+        url: assetUrl(sky, baseUrl),
+        rotationY: sky.meta.rotationY ?? 0,
+        ...(sky.meta.horizon ? { horizon: sky.meta.horizon } : {}),
+      };
+    }
+    const roadDiff = find('asphalt-diff');
+    if (roadDiff) {
+      const normal = find('asphalt-normal');
+      this.#vendorArt.road = {
+        diffuse: assetUrl(roadDiff, baseUrl),
+        normal: normal ? assetUrl(normal, baseUrl) : null,
+      };
+    }
+    const grassDiff = find('grass-diff');
+    if (grassDiff) {
+      const normal = find('grass-normal');
+      this.#vendorArt.grass = {
+        diffuse: assetUrl(grassDiff, baseUrl),
+        normal: normal ? assetUrl(normal, baseUrl) : null,
+      };
+    }
+
+    this.#applyVendorSky();
+    if (this.#vendorArt.grass && this.#groundMaterial) {
+      applyPhotoSurface(
+        this.scene,
+        this.#groundMaterial,
+        this.#vendorArt.grass.diffuse,
+        this.#vendorArt.grass.normal,
+      );
+    }
+    if (this.#vendorArt.road) {
+      this.#track.applyVendorRoad(this.#vendorArt.road.diffuse, this.#vendorArt.road.normal);
+    }
+  }
+
+  /**
+   * Swaps the painted sky for a photographed one: the same file drives the
+   * visible dome and the image-based lighting, so the clouds the player sees
+   * are the clouds the bodywork reflects — the exact property the painted
+   * pair was built to protect.
+   *
+   * Two cube textures from one URL on purpose (the browser fetches it once):
+   * the dome wants resolution and skybox sampling, the environment wants
+   * prefiltered mips and harmonics, and sharing one texture between those
+   * two shader paths is how subtle sampling bugs get in. Each swap happens
+   * only in its own onLoad, so a failure changes nothing.
+   */
+  #applyVendorSky(): void {
+    const sky = this.#vendorArt.sky;
+    const dome = this.#skyDome;
+    if (!sky || !dome) return;
+    const material = dome.material;
+    if (!(material instanceof StandardMaterial)) return;
+
+    const domeTexture = new HDRCubeTexture(
+      sky.url,
+      this.scene,
+      512,
+      false,
+      false,
+      false,
+      false,
+      () => {
+        const old = material.reflectionTexture;
+        material.reflectionTexture = domeTexture;
+        old?.dispose();
+        // The distance fog fades toward the sky it now has to blend into.
+        // Measured from the photograph, carried in its catalogue entry, and
+        // taken to linear space where the fog shader blends (same rule as
+        // the painted horizon it replaces).
+        if (sky.horizon) {
+          const horizon = new Color3(...sky.horizon);
+          this.scene.fogColor = horizon.toLinearSpace();
+          this.scene.clearColor = horizon.toColor4(1);
+        }
+      },
+      (message) => {
+        log.info('vendor sky unavailable; keeping the painted one', message);
+        domeTexture.dispose();
+      },
+    );
+    domeTexture.coordinatesMode = Texture.SKYBOX_MODE;
+    domeTexture.rotationY = sky.rotationY;
+
+    const envTexture = new HDRCubeTexture(
+      sky.url,
+      this.scene,
+      128,
+      false,
+      true,
+      false,
+      true,
+      () => {
+        const old = this.scene.environmentTexture;
+        this.scene.environmentTexture = envTexture;
+        old?.dispose();
+      },
+      (message) => {
+        log.info('vendor environment unavailable; keeping the generated one', message);
+        envTexture.dispose();
+      },
+    );
+    envTexture.rotationY = sky.rotationY;
+    // A photographic sun carries hundreds of times the energy of the painted
+    // one every material in the scene was tuned against, and the first thing
+    // it bought was a blown glint streak down the whole road. Scaling THIS
+    // texture (not the scene) halves the imported energy while leaving each
+    // material's own environment tuning alone.
+    envTexture.level = 0.5;
+  }
+
+  /**
    * The half of a tier change that lives in the scene rather than the pipeline.
    *
    * Whether a surface has a normal map is compiled into its shader, so neither
@@ -806,6 +949,10 @@ export class Renderer {
     this.#track = new TrackView(this.scene, this.#config, {
       normalMaps: qualitySettings(tier).normalMaps,
     });
+    // The rebuild came up on procedural tarmac; put the photographs back.
+    if (this.#vendorArt.road) {
+      this.#track.applyVendorRoad(this.#vendorArt.road.diffuse, this.#vendorArt.road.normal);
+    }
   }
 
   /**
@@ -955,7 +1102,7 @@ export class Renderer {
     // gradient the cars reflect, which is the point: a car mirroring a sky
     // nobody can see is a car from a different scene. The other modes keep
     // their flat backdrop — the arena is meant to read as a room.
-    if (racing) createSkyDome(this.scene);
+    if (racing) this.#skyDome = createSkyDome(this.scene);
 
     if (racing) {
       // Aerial perspective, not weather. Exponential-squared, because linear
@@ -1186,6 +1333,7 @@ export class Renderer {
       material.roughness = 0.96;
       ground.material = material;
       ground.receiveShadows = true;
+      this.#groundMaterial = material;
     } else {
       const groundMaterial = new StandardMaterial('ground:mat', this.scene);
       const checker = createCheckerTexture(this.scene, { cells: Math.round(width / 3) });

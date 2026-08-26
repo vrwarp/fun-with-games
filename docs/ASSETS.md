@@ -121,6 +121,30 @@ manifest, and regenerates `ATTRIBUTION.md`. Copy the printed checksum into
 `sha256` in the catalogue to pin it — after that, an upstream change is a hard
 failure instead of a surprise.
 
+The catalogue ships five **enabled** entries, all Poly Haven CC0 and all
+pinned: an HDRI sky (`sky`) and diffuse + normal pairs for the racing tarmac
+(`asphalt-diff` / `asphalt-normal`) and the grass (`grass-diff` /
+`grass-normal`). The Pages deploy workflow runs `assets:fetch` before building,
+so the production site ships them; a clone that never fetches simply plays on
+the procedural look. `Renderer.applyVendorArt` is the consumer — the loading
+rules (and the traps) are in `docs/RENDERING.md` §5b.
+
+An entry may carry a `meta` object: renderer-facing knobs that belong to a
+_particular file_ rather than to code, so swapping the file means editing the
+catalogue, not the renderer.
+
+- `kind` — `"model" | "texture" | "environment"`. Anything that is not a
+  loadable model must say what it is, so nothing tries to parse a JPEG as glTF.
+- `rotationY` — yaw in radians for an equirect environment, to put the photo's
+  sun where the simulation's key light already points. Measured, not guessed:
+  read the sun's horizontal position `u` (0–1) off the image, then its angle in
+  Babylon's `atan2(z, x)` convention is `(2u − 1)·π`; the rotation is the
+  difference from the key light's angle.
+- `horizon` — the image's own horizon haze as sRGB `[r, g, b]`, sampled from
+  the picture. Distance fog fades toward this colour once the photo sky is up;
+  fog tuned for the painted sky would silhouette everything far against a
+  horizon it no longer matches.
+
 Note the catalogue's default entry (Khronos's Fox) is `"enabled": false`. It
 is there as a worked example of correct multi-licence metadata, not as
 something the demo needs.
@@ -163,6 +187,7 @@ what they write.
       "scale": 1, // applied after load
       "origin": "generated", // "generated" | "vendor"
       "description": "…",
+      "meta": { "kind": "environment", "rotationY": -1.16 }, // optional, see §3
       "license": { "name": "CC0-1.0", "source": "…", "author": "…" },
     },
   ],

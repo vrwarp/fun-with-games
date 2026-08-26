@@ -1,4 +1,6 @@
 import { LoadAssetContainerAsync } from '@babylonjs/core/Loading/sceneLoader.js';
+import { Texture } from '@babylonjs/core/Materials/Textures/texture.js';
+import type { PBRMaterial } from '@babylonjs/core/Materials/PBR/pbrMaterial.js';
 import type { AssetContainer } from '@babylonjs/core/assetContainer.js';
 import type { Scene } from '@babylonjs/core/scene.js';
 import { createLogger } from '../shared/logger.js';
@@ -10,6 +12,74 @@ import {
 } from '../shared/manifest.js';
 
 const log = createLogger('render:assets');
+
+/** Resolves a manifest-relative asset path against the site base. */
+export function assetUrl(entry: AssetEntry, baseUrl: string): string {
+  return entry.url.startsWith('http')
+    ? entry.url
+    : `${baseUrl.replace(/\/$/, '')}/${entry.url.replace(/^\//, '')}`;
+}
+
+/**
+ * Swaps a material's procedural albedo (and normal map, if it has one) for
+ * photographed textures, in place.
+ *
+ * The procedural surface stays on screen until the photos have actually
+ * arrived, and stays for good if they never do — a 404 or a broken file logs
+ * and leaves the material untouched, which is the same fail-soft bargain the
+ * model loader makes. Tiling, wrap and anisotropy are copied from the
+ * outgoing texture: the procedural surface already knows how many world
+ * units one tile covers, and that fact belongs to the geometry, not to
+ * whichever image happens to be on it.
+ *
+ * The normal map is only swapped where a procedural one exists: its absence
+ * means this material was built for a tier that skips the second fetch and
+ * the per-fragment cost, and a vendor file must not override that decision.
+ */
+export function applyPhotoSurface(
+  scene: Scene,
+  material: PBRMaterial,
+  diffuseUrl: string,
+  normalUrl: string | null,
+): Texture[] {
+  const outgoing = material.albedoTexture;
+  const uScale = outgoing && 'uScale' in outgoing ? (outgoing as Texture).uScale : 1;
+  const vScale = outgoing && 'vScale' in outgoing ? (outgoing as Texture).vScale : 1;
+  const anisotropy = outgoing ? outgoing.anisotropicFilteringLevel : 4;
+  const created: Texture[] = [];
+
+  const swapIn = (url: string, slot: 'albedoTexture' | 'bumpTexture'): void => {
+    const texture: Texture = new Texture(
+      url,
+      scene,
+      false,
+      true,
+      Texture.TRILINEAR_SAMPLINGMODE,
+      () => {
+        const old = material[slot];
+        material[slot] = texture;
+        old?.dispose();
+      },
+      (message) => {
+        log.info(`photo surface unavailable (${url}); keeping the procedural one`, message);
+        texture.dispose();
+      },
+    );
+    texture.wrapU = Texture.WRAP_ADDRESSMODE;
+    texture.wrapV = Texture.WRAP_ADDRESSMODE;
+    texture.uScale = uScale;
+    texture.vScale = vScale;
+    texture.anisotropicFilteringLevel = anisotropy;
+    // Photographs are sRGB; the normal map is data. Getting either wrong
+    // shows up as a washed-out road or relief lit from the wrong side.
+    texture.gammaSpace = slot === 'albedoTexture';
+    created.push(texture);
+  };
+
+  swapIn(diffuseUrl, 'albedoTexture');
+  if (normalUrl && material.bumpTexture) swapIn(normalUrl, 'bumpTexture');
+  return created;
+}
 
 /**
  * The glTF loader is loaded on demand.

@@ -363,7 +363,7 @@ async function launch(app: HTMLElement, options: LaunchOptions): Promise<void> {
   // optional, so this runs in the background and upgrades things if it lands.
   void loadManifest(import.meta.env.BASE_URL).then((manifest) => {
     void applyOptionalAssets(renderer, manifest);
-    renderer.applyVendorArt(manifest, import.meta.env.BASE_URL);
+    renderer.applyVendorArt(manifest, import.meta.env.BASE_URL, options.modeId);
     credits = new Credits(utility, manifest);
   });
 

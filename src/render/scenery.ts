@@ -6,11 +6,13 @@ import { PBRMaterial } from '@babylonjs/core/Materials/PBR/pbrMaterial.js';
 import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial.js';
 import { Color3 } from '@babylonjs/core/Maths/math.color.js';
 import { DynamicTexture } from '@babylonjs/core/Materials/Textures/dynamicTexture.js';
+import type { Texture } from '@babylonjs/core/Materials/Textures/texture.js';
 import { VertexBuffer } from '@babylonjs/core/Buffers/buffer.js';
 import type { Material } from '@babylonjs/core/Materials/material.js';
 import type { Scene } from '@babylonjs/core/scene.js';
 import type { SimConfig } from '../sim/config.js';
 import { sampleTrack, trackLength, trackPoseAt } from '../sim/track.js';
+import { applyPhotoSurface } from './assets.js';
 import { createBoardTexture, createPineTexture } from './textures.js';
 
 /**
@@ -465,13 +467,15 @@ function instance(mesh: Mesh, placements: readonly Placement[], lift = 0): Mesh 
 export class Scenery {
   #meshes: Mesh[] = [];
   #materials: Material[] = [];
-  #textures: DynamicTexture[] = [];
+  #textures: (DynamicTexture | Texture)[] = [];
   /** Everything that should throw a shadow, for the renderer to register. */
   #casters: Mesh[] = [];
   /** One bark material shared by every species' trunk. */
   #bark: PBRMaterial | null = null;
+  #scene: Scene;
 
   constructor(scene: Scene, config: SimConfig) {
+    this.#scene = scene;
     if (!config.track.enabled || config.trackPath.length < 2) return;
 
     const path = config.trackPath;
@@ -587,6 +591,27 @@ export class Scenery {
     for (const mesh of this.#meshes) {
       if (!mesh.isDisposed()) mesh.receiveShadows = on;
     }
+  }
+
+  /**
+   * Photographed bark for every trunk, when the vendor file exists.
+   *
+   * The shared trunk material carried its colour in `albedoColor` with no
+   * texture at all, so `applyPhotoSurface` gets explicit tiling (one wrap
+   * around the circumference, repeating up the height) and a lifted tint —
+   * left at the old near-black, the photo would multiply away to nothing.
+   * Unlike the track, scenery materials are built once and survive tier
+   * changes, so this needs no reapply hook.
+   */
+  applyVendorBark(diffuseUrl: string): void {
+    if (!this.#bark) return;
+    this.#textures.push(
+      ...applyPhotoSurface(this.#scene, this.#bark, diffuseUrl, null, {
+        uScale: 1,
+        vScale: 2,
+        albedoColor: [0.72, 0.66, 0.6],
+      }),
+    );
   }
 
   dispose(): void {

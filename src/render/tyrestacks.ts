@@ -65,11 +65,38 @@ export class TyreStackView {
     this.#prototypes = BUNDLE_COLOURS.map((colour, index) =>
       this.#buildPrototype(scene, colour, index),
     );
+    this.#build((stack) => this.#prototypes[stack % this.#prototypes.length]);
+  }
 
+  /**
+   * Swaps every tyre for a photographed one.
+   *
+   * The prototype must already be normalised — hole axis up, centred, sized
+   * like the torus it replaces (`normalizeTyrePrototype`). The clones are
+   * rebuilt from scratch and the next `sync` poses them from simulation
+   * state, so the swap is invisible to everything above it. The painted
+   * bundle colours go with the torus: a photograph of one real tyre is
+   * worth more than three coats of flat paint. The caller re-registers
+   * shadow casters — this class does not know which tier is active.
+   */
+  applyVendorTyre(prototype: Mesh): void {
+    if (this.#spots.length === 0) {
+      prototype.dispose();
+      return;
+    }
+    for (const mesh of this.#meshes) mesh.dispose();
+    this.#meshes = [];
+    prototype.setEnabled(false);
+    prototype.isPickable = false;
+    this.#prototypes.push(prototype);
+    this.#build(() => prototype);
+  }
+
+  #build(prototypeFor: (stack: number) => Mesh | undefined): void {
     const total = this.#spots.length * TYRES_PER_STACK;
     for (let i = 0; i < total; i++) {
       const stack = Math.floor(i / TYRES_PER_STACK);
-      const prototype = this.#prototypes[stack % this.#prototypes.length];
+      const prototype = prototypeFor(stack);
       const mesh = prototype ? prototype.clone(`tyre:${i}`) : null;
       if (!mesh) throw new Error('tyre prototype missing');
       const spot = this.#spots[stack];
@@ -183,4 +210,41 @@ export class TyreStackView {
     mesh.isPickable = false;
     return mesh;
   }
+}
+
+/**
+ * Beats an arbitrary glTF tyre into the shape this view's pose algebra
+ * assumes: hole axis up (+Y, a stacked tyre lies flat), centred on the
+ * origin, sized like the torus it replaces.
+ *
+ * Every decision is measured rather than configured — the hole runs along
+ * the smallest bounding extent, and the footprint comes from the largest —
+ * so a swapped model with different authoring conventions still lands
+ * standing correctly. Everything is baked into the vertices, leaving a
+ * clean identity transform for `clone` to build on. (Baking also settles
+ * the glTF handedness conversion: Babylon flips faces for a negative
+ * determinant, so a mirrored import does not come out inside-out.)
+ */
+export function normalizeTyrePrototype(source: Mesh): Mesh {
+  source.setParent(null);
+  source.bakeCurrentTransformIntoVertices();
+  source.refreshBoundingInfo();
+
+  const extend = source.getBoundingInfo().boundingBox.extendSize;
+  if (extend.x <= extend.y && extend.x <= extend.z) {
+    source.rotationQuaternion = Quaternion.FromEulerAngles(0, 0, Math.PI / 2);
+  } else if (extend.z <= extend.x && extend.z <= extend.y) {
+    source.rotationQuaternion = Quaternion.FromEulerAngles(Math.PI / 2, 0, 0);
+  }
+  source.bakeCurrentTransformIntoVertices();
+  source.refreshBoundingInfo();
+
+  const box = source.getBoundingInfo().boundingBox;
+  const radius = Math.max(box.extendSize.x, box.extendSize.z);
+  const scale = radius > 1e-6 ? TYRE_DIAMETER / (2 * radius) : 1;
+  source.scaling.setAll(scale);
+  source.position.copyFrom(box.center).scaleInPlace(-scale);
+  source.bakeCurrentTransformIntoVertices();
+  source.refreshBoundingInfo();
+  return source;
 }

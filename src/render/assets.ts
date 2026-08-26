@@ -1,4 +1,5 @@
 import { LoadAssetContainerAsync } from '@babylonjs/core/Loading/sceneLoader.js';
+import { Color3 } from '@babylonjs/core/Maths/math.color.js';
 import { Texture } from '@babylonjs/core/Materials/Textures/texture.js';
 import type { PBRMaterial } from '@babylonjs/core/Materials/PBR/pbrMaterial.js';
 import type { AssetContainer } from '@babylonjs/core/assetContainer.js';
@@ -36,19 +37,48 @@ export function assetUrl(entry: AssetEntry, baseUrl: string): string {
  * means this material was built for a tier that skips the second fetch and
  * the per-fragment cost, and a vendor file must not override that decision.
  */
+export interface PhotoSurfaceOptions {
+  /**
+   * Explicit tiling, for a material whose procedural predecessor had no
+   * texture to copy the world-units-per-tile fact from (a flat-colour trunk).
+   */
+  uScale?: number;
+  vScale?: number;
+  /**
+   * Packed AO / roughness / metallic map in the glTF ORM channel layout.
+   * When it arrives, the material's metallic and roughness scalars step
+   * aside (become 1x factors): the photograph measured the surface the
+   * procedural scalars were guessing at.
+   */
+  armUrl?: string;
+  /**
+   * Albedo tint to install once the photo lands. A procedural material often
+   * carried its colour in `albedoColor` with no texture at all; left in
+   * place it would multiply the photograph nearly to black.
+   */
+  albedoColor?: [number, number, number];
+}
+
 export function applyPhotoSurface(
   scene: Scene,
   material: PBRMaterial,
   diffuseUrl: string,
   normalUrl: string | null,
+  options: PhotoSurfaceOptions = {},
 ): Texture[] {
   const outgoing = material.albedoTexture;
-  const uScale = outgoing && 'uScale' in outgoing ? (outgoing as Texture).uScale : 1;
-  const vScale = outgoing && 'vScale' in outgoing ? (outgoing as Texture).vScale : 1;
+  const uScale =
+    options.uScale ?? (outgoing && 'uScale' in outgoing ? (outgoing as Texture).uScale : 1);
+  const vScale =
+    options.vScale ?? (outgoing && 'vScale' in outgoing ? (outgoing as Texture).vScale : 1);
   const anisotropy = outgoing ? outgoing.anisotropicFilteringLevel : 4;
   const created: Texture[] = [];
 
-  const swapIn = (url: string, slot: 'albedoTexture' | 'bumpTexture'): void => {
+  const swapIn = (
+    url: string,
+    slot: 'albedoTexture' | 'bumpTexture' | 'metallicTexture',
+    onLoad?: () => void,
+  ): void => {
     const texture: Texture = new Texture(
       url,
       scene,
@@ -59,6 +89,7 @@ export function applyPhotoSurface(
         const old = material[slot];
         material[slot] = texture;
         old?.dispose();
+        onLoad?.();
       },
       (message) => {
         log.info(`photo surface unavailable (${url}); keeping the procedural one`, message);
@@ -70,14 +101,28 @@ export function applyPhotoSurface(
     texture.uScale = uScale;
     texture.vScale = vScale;
     texture.anisotropicFilteringLevel = anisotropy;
-    // Photographs are sRGB; the normal map is data. Getting either wrong
-    // shows up as a washed-out road or relief lit from the wrong side.
+    // Photographs are sRGB; the normal and ORM maps are data. Getting either
+    // wrong shows up as a washed-out road or relief lit from the wrong side.
     texture.gammaSpace = slot === 'albedoTexture';
     created.push(texture);
   };
 
-  swapIn(diffuseUrl, 'albedoTexture');
+  swapIn(diffuseUrl, 'albedoTexture', () => {
+    if (options.albedoColor) {
+      material.albedoColor = new Color3(...options.albedoColor).toLinearSpace();
+    }
+  });
   if (normalUrl && material.bumpTexture) swapIn(normalUrl, 'bumpTexture');
+  if (options.armUrl) {
+    swapIn(options.armUrl, 'metallicTexture', () => {
+      material.useAmbientOcclusionFromMetallicTextureRed = true;
+      material.useRoughnessFromMetallicTextureGreen = true;
+      material.useMetallnessFromMetallicTextureBlue = true;
+      material.useRoughnessFromMetallicTextureAlpha = false;
+      material.metallic = 1;
+      material.roughness = 1;
+    });
+  }
   return created;
 }
 

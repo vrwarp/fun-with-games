@@ -197,11 +197,19 @@ per tile, in both directions, so the stones stay square.
 
 Everything above is the **baseline**: generated, committed, always present.
 On top of it, `Renderer.applyVendorArt` swaps in catalogued CC0 photographs —
-an HDRI sky and photo asphalt/grass — when `assets:fetch` has put them in
-`public/assets/vendor/`. The deployed site has them; a fresh clone plays the
-procedural look until it fetches. Every path in this section **fails soft**:
-a missing file or a failed decode logs at `info` and leaves the procedural
-art standing, per the first rule of `ASSETS.md`.
+HDRI skies, photo asphalt/grass/barrier/bark, and a photoscanned tyre model —
+when `assets:fetch` has put them in `public/assets/vendor/`. The deployed
+site has them; a fresh clone plays the procedural look until it fetches.
+Every path in this section **fails soft**: a missing file or a failed decode
+logs at `info` and leaves the procedural art standing, per the first rule of
+`ASSETS.md`.
+
+The sky is **chosen per mode** (`findSkyEntry`: `sky-street` outranks `sky`
+in street), and two of its catalogue knobs reach beyond the dome: `meta.sun`
+retunes the key light to the lamp the photo was shot under — the reason the
+street circuit's whole scene goes golden-hour rather than just its backdrop —
+and `meta.horizon` recolours the fog and clear colour. All of it applies in
+the texture's `onLoad`, so a failed download changes nothing.
 
 The sky is one `.hdr` loaded **twice**, because the dome and the probe answer
 different questions (§4 again):
@@ -224,14 +232,37 @@ texture's level tames the reflections without touching
 `scene.environmentIntensity`, which would dim the lighting of everything else
 too.
 
-Photo ground goes through `applyPhotoSurface`, which exists so a swap cannot
+Photo surfaces go through `applyPhotoSurface`, which exists so a swap cannot
 lose what the procedural material established: it copies `uScale`/`vScale`
 and the anisotropy level off the outgoing texture (the tiling maths of §5
-still stands), sets `gammaSpace` only on the albedo slot — a normal map read
-as sRGB tilts wrong everywhere — and swaps the bump **only if the tier had
-one**, so a photo normal map cannot sneak per-pixel lighting onto a tier that
-turned it off. A quality-tier switch rebuilds `TrackView` on procedural
-tarmac; `#applyTierToScene` re-applies the photographs after it.
+still stands; explicit tiling covers materials that had no texture, like the
+bark), sets `gammaSpace` only on the albedo slot — a normal map read as sRGB
+tilts wrong everywhere — and swaps the bump **only if the tier had one**, so
+a photo normal map cannot sneak per-pixel lighting onto a tier that turned it
+off. This is why the barrier's corrugation is visible on medium and high but
+not low: a galvanised sheet's colour is nearly uniform — the ribs live in
+the normal map, and the cheap tier declined normal maps on purpose. The
+road and grass also take a packed **ARM** map (AO / roughness / metallic in
+the glTF channel layout); when it lands, the procedural metallic/roughness
+scalars step aside and the photographed roughness takes over — the low-sun
+glare corridor down the tarmac is that map at work. An `albedoColor` option
+covers two traps at once: lifting a flat-colour material's near-black tint
+before it multiplies the photo away (bark), and knocking a photographed
+sheet DOWN so the barrier stays a step darker than the horizon (the same
+call §5 made about the procedural wall).
+
+A quality-tier switch rebuilds `TrackView` on procedural tarmac;
+`#applyTierToScene` re-applies the road and barrier photographs after it.
+Scenery, the ground and the tyres are built once and keep theirs.
+
+The **tyre model** rides the `#dressing` gate — a software rasteriser keeps
+the cheap torus, exactly as it gets no trees — which also keeps CI's
+SwiftShader e2e runs off the heavy geometry. One mesh from the glTF becomes
+the clone prototype for every tyre in every wall; `normalizeTyrePrototype`
+measures rather than trusts it (hole axis from the smallest bounding extent,
+size from the largest), so a swapped model with different authoring
+conventions still lands stacked flat and right-sized. The swap is invisible
+above the view: the same simulation state poses photograph and torus alike.
 
 ---
 

@@ -121,13 +121,21 @@ manifest, and regenerates `ATTRIBUTION.md`. Copy the printed checksum into
 `sha256` in the catalogue to pin it — after that, an upstream change is a hard
 failure instead of a surprise.
 
-The catalogue ships five **enabled** entries, all Poly Haven CC0 and all
-pinned: an HDRI sky (`sky`) and diffuse + normal pairs for the racing tarmac
-(`asphalt-diff` / `asphalt-normal`) and the grass (`grass-diff` /
-`grass-normal`). The Pages deploy workflow runs `assets:fetch` before building,
-so the production site ships them; a clone that never fetches simply plays on
-the procedural look. `Renderer.applyVendorArt` is the consumer — the loading
-rules (and the traps) are in `docs/RENDERING.md` §5b.
+The catalogue ships a full **enabled** set, all Poly Haven CC0 and all pinned:
+two HDRI skies (`sky`, and `sky-street` — a mode picks its own sky by id, see
+below), diffuse + normal + packed-ARM sets for the racing tarmac and the grass,
+a corrugated sheet for the barriers (`barrier-diff` / `barrier-normal`), cedar
+bark for the pine trunks (`bark-diff`), and a photoscanned tyre model
+(`tyre-model`) that replaces the torus in every tyre wall. The Pages deploy
+workflow runs `assets:fetch` before building, so the production site ships
+them; a clone that never fetches simply plays on the procedural look.
+`Renderer.applyVendorArt` is the consumer — the loading rules (and the traps)
+are in `docs/RENDERING.md` §5b.
+
+A **multi-file asset** (a `.gltf` with its buffer and textures) adds an
+`include` map — relative path → `{ url, sha256 }` — and the whole thing is
+namespaced under `vendor/<id>/`, so the glTF's own relative references resolve
+exactly as authored. Every included file is pinned individually.
 
 An entry may carry a `meta` object: renderer-facing knobs that belong to a
 _particular file_ rather than to code, so swapping the file means editing the
@@ -144,6 +152,18 @@ catalogue, not the renderer.
   the picture. Distance fog fades toward this colour once the photo sky is up;
   fog tuned for the painted sky would silhouette everything far against a
   horizon it no longer matches.
+- `sun` — `{ color?, intensity? }` for the scene's key light: the lamp this
+  environment was photographed under. A dusk photo behind the noon-tuned lamp
+  reads as two times of day at once, so the light follows the file.
+- `envLevel` — exposure trim on the energy imported for image-based lighting
+  (default 0.5). A photographic sun carries orders of magnitude more energy
+  than the painted probe the materials were tuned against, and each photo
+  imports a different amount of it.
+
+**Per-mode skies** are an id convention, not code: `sky-<modeId>` outranks the
+generic `sky` for that mode (`findSkyEntry` in `src/shared/manifest.ts`).
+`sky-street` is why the street circuit runs at sunset while grandprix keeps
+the afternoon.
 
 Note the catalogue's default entry (Khronos's Fox) is `"enabled": false`. It
 is there as a worked example of correct multi-licence metadata, not as

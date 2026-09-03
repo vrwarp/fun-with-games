@@ -28,8 +28,8 @@
     "verify": "npm run format:check && npm run lint && npm run typecheck && npm run test && npm run build"
   },
   "dependencies": {
-    "@babylonjs/core": "^9.22.2",
-    "@babylonjs/loaders": "^9.21.2",
+    "@babylonjs/core": "^9.23.0",
+    "@babylonjs/loaders": "^9.23.0",
     "trystero": "^0.25.3"
   },
   "devDependencies": {

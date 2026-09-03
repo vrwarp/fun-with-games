@@ -30,7 +30,7 @@
   "dependencies": {
     "@babylonjs/core": "^9.22.2",
     "@babylonjs/loaders": "^9.21.2",
-    "trystero": "^0.25.3"
+    "trystero": "^0.25.4"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
